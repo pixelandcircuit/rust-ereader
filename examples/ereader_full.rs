@@ -868,7 +868,7 @@ fn main() -> ! {
 
     // ── Display ───────────────────────────────────────────────────────────────
     let mut display = Display::new(
-        epaper::pin_config!(peripherals),
+        ereader::pin_config!(peripherals),
         peripherals.DMA_CH0,
         peripherals.LCD_CAM,
         peripherals.RMT,
