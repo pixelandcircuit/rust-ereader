@@ -1,9 +1,12 @@
 [build]
-target    = "xtensa-esp32s3-none-elf"
-rustflags = ["-C", "link-arg=-nostartfiles"]
+target = "xtensa-esp32s3-none-elf"
 
 [target.xtensa-esp32s3-none-elf]
-runner = "espflash flash --monitor --chip esp32s3"
+runner    = "espflash flash --monitor --chip esp32s3"
+rustflags = ["-C", "link-arg=-nostartfiles"]
 
-[unstable]
-build-std = ["alloc", "core"]
+# Use these aliases for ESP device builds (they add -Z build-std=alloc,core).
+# Native/local builds (e.g. epub_test) do NOT use these aliases and run without build-std.
+[alias]
+esp-build = "build -Z build-std=alloc,core"
+esp-run   = "run -Z build-std=alloc,core"

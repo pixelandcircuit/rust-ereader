@@ -1,5 +1,10 @@
+#[cfg(feature = "esp")]
 extern crate alloc;
+
+#[cfg(feature = "esp")]
 use alloc::vec::Vec;
+#[cfg(not(feature = "esp"))]
+use std::vec::Vec;
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -61,7 +66,7 @@ pub fn layout_chapter(text: &str, cfg: &LayoutConfig) -> Layout {
         let pages = if text.is_empty() {
             Vec::new()
         } else {
-            alloc::vec![Page { start: 0, end: text.len() }]
+            vec![Page { start: 0, end: text.len() }]
         };
         return Layout { pages };
     }

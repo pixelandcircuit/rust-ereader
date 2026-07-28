@@ -47,7 +47,7 @@ use sequential_storage::{cache::NoCache, map};
 esp_bootloader_esp_idf::esp_app_desc!();
 
 // ── Book EPUB (embedded in flash at compile time) ─────────────────────────────
-const EPUB_DATA: &[u8] = include_bytes!("moby_dick.epub");
+const EPUB_DATA: &[u8] = include_bytes!("sherlock_holmes.epub");
 
 // ── I2C addresses ─────────────────────────────────────────────────────────────
 const BQ27220_ADDR: u8 = 0x55;
@@ -619,7 +619,7 @@ fn flash_load_position() -> (usize, usize, usize, u32, usize) {
     let pos     = load(0, 0) as usize;
     let chapter = load(1, 0) as usize;
     let font_sz = load(2, DEFAULT_FONT_SIZE as u32) as usize;
-    let ori     = load(3, 0);
+    let ori     = load(3, 1);
     let bl      = load(4, 1) as usize;
 
     println!("flash: ch={} pos={} font={} ori={} bl={}", chapter, pos, font_sz, ori, bl);

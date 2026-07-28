@@ -1,4 +1,4 @@
-static FONT_DATA: &[u8] = include_bytes!("../fonts/Georgia.ttf");
+static FONT_DATA: &[u8] = include_bytes!("../fonts/NoticiaText-Regular.ttf");
 
 pub struct TextRenderer {
     font: fontdue::Font,
@@ -8,7 +8,7 @@ impl TextRenderer {
     pub fn new() -> Self {
         let settings = fontdue::FontSettings::default();
         let font = fontdue::Font::from_bytes(FONT_DATA, settings)
-            .expect("Georgia.ttf parse error");
+            .expect("NoticiaText-Regular.ttf parse error");
         TextRenderer { font }
     }
 

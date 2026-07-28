@@ -1,5 +1,10 @@
+#[cfg(feature = "esp")]
 extern crate alloc;
+
+#[cfg(feature = "esp")]
 use alloc::string::String;
+#[cfg(not(feature = "esp"))]
+use std::string::String;
 
 use crate::layout::{layout_chapter, Layout, LayoutConfig};
 

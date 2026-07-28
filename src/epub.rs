@@ -1,6 +1,14 @@
+#[cfg(feature = "esp")]
 extern crate alloc;
+
+#[cfg(feature = "esp")]
 use alloc::string::{String, ToString};
+#[cfg(feature = "esp")]
 use alloc::vec::Vec;
+#[cfg(not(feature = "esp"))]
+use std::string::{String, ToString};
+#[cfg(not(feature = "esp"))]
+use std::vec::Vec;
 
 // ── Public error type ─────────────────────────────────────────────────────────
 

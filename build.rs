@@ -1,8 +1,11 @@
 use std::{fs, path::PathBuf};
 
 fn main() {
-    linker_be_nice();
-    println!("cargo:rustc-link-arg=-Tlinkall.x");
+    let is_esp = std::env::var("CARGO_FEATURE_ESP").is_ok();
+    if is_esp {
+        linker_be_nice();
+        println!("cargo:rustc-link-arg=-Tlinkall.x");
+    }
 
     // Generate synthetic image data for the graphics_test example.
     // Both files use 4-bit grayscale packed BigEndian: high nibble = left pixel.
