@@ -37,10 +37,10 @@ use embedded_graphics::{
     text::{Alignment, Text},
 };
 
-use epaper::driver::{Display, DrawMode, Gt911};
-use epaper::driver::gt911::GT911_ADDR_PRIMARY;
-use epaper::epub::EpubArchive;
-use epaper::font::TextRenderer;
+use ereader::driver::{Display, DrawMode, Gt911};
+use ereader::driver::gt911::GT911_ADDR_PRIMARY;
+use ereader::epub::EpubArchive;
+use ereader::font::TextRenderer;
 use esp_storage::FlashStorage;
 use sequential_storage::{cache::NoCache, map};
 

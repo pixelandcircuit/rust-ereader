@@ -15,9 +15,9 @@ use esp_println::println;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
-use epaper::epub::EpubArchive;
-use epaper::layout::{FontMetrics, LayoutConfig};
-use epaper::reader::ReaderState;
+use ereader::epub::EpubArchive;
+use ereader::layout::{FontMetrics, LayoutConfig};
+use ereader::reader::ReaderState;
 
 // Embedded test EPUB — place examples/test.epub in the repo (git-ignored if large).
 const EPUB_DATA: &[u8] = include_bytes!("test.epub");

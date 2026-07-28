@@ -24,7 +24,7 @@ use embedded_graphics::{
     text::Text,
 };
 
-use epaper::driver::{Display, DrawMode};
+use ereader::driver::{Display, DrawMode};
 
 esp_bootloader_esp_idf::esp_app_desc!();
 

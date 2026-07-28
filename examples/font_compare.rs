@@ -31,9 +31,9 @@ use embedded_graphics::{
     text::{Alignment, Text},
 };
 
-use epaper::driver::{Display, DrawMode};
-use epaper::driver::display::DisplayRotation;
-use epaper::font::TextRenderer;
+use ereader::driver::{Display, DrawMode};
+use ereader::driver::display::DisplayRotation;
+use ereader::font::TextRenderer;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
