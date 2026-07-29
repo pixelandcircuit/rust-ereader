@@ -83,7 +83,7 @@ const PORT_MARGIN:   i32 = 30;
 
 // ── Font sizes ────────────────────────────────────────────────────────────────
 // Each entry is (landscape_px, portrait_px). Index 1 is the default.
-const FONT_SIZES:  [(f32, f32); 4] = [(15.0, 13.0), (18.0, 16.0), (22.0, 20.0), (28.0, 26.0)];
+const FONT_SIZES:  [(f32, f32); 4] = [(15.0, 15.0), (18.0, 18.0), (22.0, 22.0), (28.0, 28.0)];
 const FONT_LABELS: [&str; 4]       = ["Sm", "Md", "Lg", "XL"];
 const DEFAULT_FONT_SIZE: usize     = 1;
 

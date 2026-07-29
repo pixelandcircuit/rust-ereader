@@ -1,5 +1,11 @@
 # Changes
 
+## 2026-07-28 17:31
+
+- `fonts/NoticiaText-Regular.ttf`: replaced incomplete subset (missing D, E, J, K, M, U, W, X, Z) with full font downloaded from Google Fonts (113 KB); fixes missing uppercase glyphs in rendered text
+- `examples/ereader_full.rs`: unified portrait and landscape font sizes — portrait now uses the same px values as landscape (was smaller before)
+- `src/layout.rs`: replaced `vec![]` macro with explicit `Vec::new()` + `push()` to compile under `no_std` without importing the alloc macro
+
 ## 2026-07-28 (epub_test local run)
 
 - Added `esp` feature (default-on) to `Cargo.toml`; all ESP-specific deps are now optional and gated by it

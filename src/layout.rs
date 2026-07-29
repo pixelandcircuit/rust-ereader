@@ -66,7 +66,7 @@ pub fn layout_chapter(text: &str, cfg: &LayoutConfig) -> Layout {
         let pages = if text.is_empty() {
             Vec::new()
         } else {
-            vec![Page { start: 0, end: text.len() }]
+            { let mut v = Vec::new(); v.push(Page { start: 0, end: text.len() }); v }
         };
         return Layout { pages };
     }
