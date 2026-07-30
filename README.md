@@ -77,19 +77,32 @@ Available fonts in `fonts/`:
 | Example | Description |
 |---------|-------------|
 | `ereader_full` | Full application: EPUB reader with touch, backlight, battery display, flash persistence — also runs in the SDL2 simulator (see below) |
+| `ereader_ui` | iris-ui prototype: portrait panel with buttons — also runs in the SDL2 simulator (see below) |
 | `ebook` | Minimal EPUB reader skeleton |
 | `font_compare` | Side-by-side font comparison across six typefaces |
 | `epub_test` | EPUB library smoke test — runs on device **or** locally (see below) |
 
-## Running ereader_full in the simulator (no device needed)
+## Running examples in the simulator (no device needed)
 
-`ereader_full` supports a desktop simulator via SDL2. It opens a 960×540 window and lets you navigate the book with the keyboard.
+Both `ereader_full` and `ereader_ui` support a desktop SDL2 simulator.
 
-**Prerequisites** — install SDL2:
+**Prerequisites** — install SDL2 (only needed once):
 ```sh
 brew install sdl2          # macOS
 sudo apt install libsdl2-dev  # Debian/Ubuntu
 ```
+
+Run either example with `cargo sim`:
+```sh
+cargo sim --example ereader_full
+cargo sim --example ereader_ui
+```
+
+---
+
+## Running ereader_full in the simulator (no device needed)
+
+`ereader_full` supports a desktop simulator via SDL2. It opens a portrait 540×960 window and lets you navigate the book with the keyboard.
 
 **Run:**
 ```sh
@@ -105,6 +118,15 @@ cargo sim --example ereader_full
 | Close window / Q | Quit |
 
 The `sim` alias expands to `run --no-default-features --features simulator --target aarch64-apple-darwin`. Adjust the target triple in `.cargo/config.toml` if you are on a non-Apple-Silicon machine (see table below).
+
+## Running ereader_ui in the simulator (no device needed)
+
+`ereader_ui` is a UI prototype built with [iris-ui](https://crates.io/crates/iris-ui). It opens a 540×960 portrait window showing a panel with buttons. Click a button to select it.
+
+**Run:**
+```sh
+cargo sim --example ereader_ui
+```
 
 ## Running epub_test locally (no device needed)
 

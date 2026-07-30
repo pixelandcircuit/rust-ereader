@@ -1,5 +1,15 @@
 # Changes
 
+## 2026-07-30 (ereader_ui)
+
+- `Cargo.toml`: added `iris-ui = "0.1.0"` as optional dep; added `"dep:iris-ui"` to both `esp` and `simulator` features
+- `examples/ereader_ui.rs`: new example using iris-ui, runs on both ESP and simulator
+  - 540×960 portrait orientation matching `ereader_full`
+  - `make_scene()` builds a full-screen panel (`layout_vbox`) with three buttons: Previous, Next, Settings
+  - Simulator: `SimulatorDisplay<Rgb565>` at 540×960 + SDL2 `Window`; mouse click dispatched via `click_at`
+  - ESP: `Rgb565ToGray4<'a>` bridge wraps the Gray4 e-paper display; converts Rgb565 luminance to 4-bit gray and rotates coordinates 90° CCW (portrait → physical landscape); flushes only when `dirty_rect` is non-empty
+- `README.md`: added `ereader_ui` to example table; added combined simulator prerequisites section; added `ereader_ui` simulator section
+
 ## 2026-07-30
 
 - `Cargo.toml`: added `simulator` feature; added `embedded-graphics-simulator = "0.8"` optional dep
