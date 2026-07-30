@@ -10,3 +10,4 @@ rustflags = ["-C", "link-arg=-nostartfiles"]
 [alias]
 esp-build = "build -Z build-std=alloc,core"
 esp-run   = "run -Z build-std=alloc,core"
+sim       = "run --no-default-features --features simulator --target aarch64-apple-darwin"
