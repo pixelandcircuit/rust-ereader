@@ -1,5 +1,13 @@
 # Changes
 
+## 2026-07-31 (ereader_ui font size selector)
+
+- `examples/ereader_ui.rs`: font size toggle in settings dialog now changes the content font
+  - Added `FONT_6X10` (Small) and `FONT_10X20` (Large) imports alongside existing `FONT_9X15`/`FONT_9X15_BOLD`
+  - `theme` made mutable in simulator `main`; after a `font_size` click the matching `theme.font`/`theme.bold_font` are swapped and `mark_layout_dirty` triggers a full redraw
+  - Small → `FONT_6X10`, Medium → `FONT_9X15` + `FONT_9X15_BOLD`, Large → `FONT_10X20`
+  - `draw_content` already derives `char_w`/`char_h` from `e.theme.font` so word-wrap and line spacing adapt automatically
+
 ## 2026-07-31 (ereader_ui orientation resize)
 
 - `examples/ereader_ui.rs`: selecting an orientation in the Settings dialog now resizes the simulator window

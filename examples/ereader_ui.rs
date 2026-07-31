@@ -10,7 +10,7 @@
 #[macro_use]
 extern crate alloc;
 
-use embedded_graphics::mono_font::ascii::{FONT_9X15, FONT_9X15_BOLD};
+use embedded_graphics::mono_font::ascii::{FONT_6X10, FONT_9X15, FONT_9X15_BOLD, FONT_10X20};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::RgbColor;
 use iris_ui::button::make_button;
@@ -282,7 +282,7 @@ fn main() {
     let mut window = Window::new("ereader_ui", &settings);
 
     let mut scene = make_scene(win_w, win_h);
-    let theme = make_theme();
+    let mut theme = make_theme();
     let handlers: Vec<Callback> = vec![handle_click];
 
     'running: loop {
@@ -317,6 +317,15 @@ fn main() {
                                 );
                                 window = Window::new("ereader_ui", &settings);
                             }
+                        } else if target == ViewId::new("font_size") {
+                            let (new_font, new_bold) = match cmd.as_str() {
+                                "Small" => (FONT_6X10, FONT_6X10),
+                                "Large" => (FONT_10X20, FONT_10X20),
+                                _ => (FONT_9X15, FONT_9X15_BOLD),
+                            };
+                            theme.font = new_font;
+                            theme.bold_font = new_bold;
+                            scene.mark_layout_dirty();
                         }
                     }
                 }
