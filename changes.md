@@ -1,5 +1,15 @@
 # Changes
 
+## 2026-07-31 (ereader_ui orientation resize)
+
+- `examples/ereader_ui.rs`: selecting an orientation in the Settings dialog now resizes the simulator window
+  - `make_scene` takes explicit `w: i32, h: i32` params instead of using `SCREEN_W`/`SCREEN_H` constants; both ESP and simulator pass the constants; simulator passes updated dims on resize
+  - Simulator `main` collects events into a `Vec` before iterating (required so `window` can be reassigned inside the same loop body)
+  - On orientation click: reads the label string from `Action::Command(cmd)`; `"Land"/"R.Land"` → 960×540, anything else → 540×960; if dims changed, updates `scene.bounds`, calls `scene.mark_layout_dirty()`, recreates `SimulatorDisplay` and `Window`
+  - `layout_dialog`: replaced hardcoded `SCREEN_W`/`SCREEN_H` with `pass.space.w`/`pass.space.h` so the dialog centers correctly after a resize
+  - `content` view: added `layout: Some(layout_std_panel)` so it resizes to fill the flex space properly on any screen size; removed stale manual `bounds`
+  - Added `Action` and `layout_std_panel` to imports
+
 ## 2026-07-30 (ereader_ui settings dialog expanded)
 
 - `examples/ereader_ui.rs`: added three items to the settings dialog

@@ -12,17 +12,17 @@ extern crate alloc;
 
 use embedded_graphics::mono_font::ascii::{FONT_9X15, FONT_9X15_BOLD};
 use embedded_graphics::pixelcolor::Rgb565;
-use embedded_graphics::prelude::{RgbColor, WebColors};
+use embedded_graphics::prelude::RgbColor;
 use iris_ui::button::make_button;
 use iris_ui::device::EmbeddedDrawingContext;
 use iris_ui::geom::{Bounds, Insets, Point as GPoint, Size};
 use iris_ui::gfx::TextStyle;
 use iris_ui::label::make_label;
-use iris_ui::layouts::{layout_hbox, layout_vbox};
+use iris_ui::layouts::{layout_hbox, layout_std_panel, layout_vbox};
 use iris_ui::scene::{click_at, draw_scene, layout_scene, Scene};
 use iris_ui::toggle_group::make_toggle_group;
 use iris_ui::view::{Align, Flex, View, ViewId};
-use iris_ui::{Callback, DrawEvent, GuiEvent, LayoutEvent, Theme};
+use iris_ui::{Action, Callback, DrawEvent, GuiEvent, LayoutEvent, Theme};
 
 const SCREEN_W: i32 = 540;
 const SCREEN_H: i32 = 960;
@@ -129,9 +129,11 @@ fn draw_dialog(e: &mut DrawEvent) {
 }
 
 fn layout_dialog(pass: &mut LayoutEvent) {
+    let sw = pass.space.w;
+    let sh = pass.space.h;
     if let Some(view) = pass.scene.get_view_mut(pass.target) {
-        view.bounds.position.x = (SCREEN_W - DIALOG_W) / 2;
-        view.bounds.position.y = (SCREEN_H - DIALOG_H) / 2;
+        view.bounds.position.x = (sw - DIALOG_W) / 2;
+        view.bounds.position.y = (sh - DIALOG_H) / 2;
         view.bounds.size.w = DIALOG_W;
         view.bounds.size.h = DIALOG_H;
     }
@@ -149,8 +151,8 @@ fn handle_click(event: &mut GuiEvent) {
     }
 }
 
-fn make_scene() -> Scene {
-    let mut scene = Scene::new_with_bounds(Bounds::new(0, 0, SCREEN_W, SCREEN_H));
+fn make_scene(w: i32, h: i32) -> Scene {
+    let mut scene = Scene::new_with_bounds(Bounds::new(0, 0, w, h));
 
     // ── Top bar ──────────────────────────────────────────────────────────────
     let topbar_id = ViewId::new("topbar");
@@ -169,7 +171,7 @@ fn make_scene() -> Scene {
         h_align: Align::Start,
         v_flex: Flex::Resize,
         v_align: Align::Center,
-        bounds: Bounds::new(0, 0, 200, 600),
+        layout: Some(layout_std_panel),
         draw: Some(draw_content),
         ..Default::default()
     };
@@ -241,23 +243,20 @@ fn make_scene() -> Scene {
         h_flex: Flex::Resize,
         v_flex: Flex::Resize,
         layout: Some(layout_vbox),
-        bounds: Bounds::new(0, 0, SCREEN_W, SCREEN_H),
+        bounds: Bounds::new(0, 0, w, h),
         ..Default::default()
     });
 
-    scene.add_view_to_root(
-        View {
-            name: dialog_id,
-            h_flex: Flex::Resize,
-            v_flex: Flex::Resize,
-            layout: Some(layout_dialog),
-            draw: Some(draw_dialog),
-            padding: Insets::new_same(DIALOG_PAD),
-            bounds: Bounds::new(0, 0, 200, 600),
-            visible: false,
-            ..Default::default()
-        },
-    );
+    scene.add_view_to_root(View {
+        name: dialog_id,
+        h_flex: Flex::Resize,
+        v_flex: Flex::Resize,
+        layout: Some(layout_dialog),
+        draw: Some(draw_dialog),
+        padding: Insets::new_same(DIALOG_PAD),
+        visible: false,
+        ..Default::default()
+    });
 
     scene.dump();
     log::info!("scene built");
@@ -274,12 +273,15 @@ fn main() {
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
+    let mut win_w = SCREEN_W;
+    let mut win_h = SCREEN_H;
+
     let mut display: SimulatorDisplay<Rgb565> =
-        SimulatorDisplay::new(Size::new(SCREEN_W as u32, SCREEN_H as u32));
+        SimulatorDisplay::new(Size::new(win_w as u32, win_h as u32));
     let settings = OutputSettingsBuilder::new().scale(1).build();
     let mut window = Window::new("ereader_ui", &settings);
 
-    let mut scene = make_scene();
+    let mut scene = make_scene(win_w, win_h);
     let theme = make_theme();
     let handlers: Vec<Callback> = vec![handle_click];
 
@@ -292,11 +294,31 @@ fn main() {
         }
         window.update(&display);
 
-        for event in window.events() {
+        let events: Vec<_> = window.events().collect();
+        for event in events {
             match event {
                 SimulatorEvent::Quit => break 'running,
                 SimulatorEvent::MouseButtonUp { point, .. } => {
-                    click_at(&mut scene, &handlers, GPoint::new(point.x, point.y));
+                    if let Some((target, Action::Command(cmd))) =
+                        click_at(&mut scene, &handlers, GPoint::new(point.x, point.y))
+                    {
+                        if target == ViewId::new("orientation") {
+                            let (new_w, new_h) = match cmd.as_str() {
+                                "Land" | "R.Land" => (SCREEN_H, SCREEN_W),
+                                _ => (SCREEN_W, SCREEN_H),
+                            };
+                            if new_w != win_w || new_h != win_h {
+                                win_w = new_w;
+                                win_h = new_h;
+                                scene.bounds = Bounds::new(0, 0, win_w, win_h);
+                                scene.mark_layout_dirty();
+                                display = SimulatorDisplay::new(
+                                    Size::new(win_w as u32, win_h as u32),
+                                );
+                                window = Window::new("ereader_ui", &settings);
+                            }
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -403,7 +425,7 @@ fn main() -> ! {
     println!("ereader_ui: display ready");
 
     let mut bridge = Rgb565ToGray4::new(display);
-    let mut scene = make_scene();
+    let mut scene = make_scene(SCREEN_W, SCREEN_H);
     let theme = make_theme();
 
     loop {
