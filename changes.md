@@ -1,5 +1,13 @@
 # Changes
 
+## 2026-07-31 (ereader_ui sync time)
+
+- `examples/ereader_ui.rs`: Sync Time button in settings dialog now sets the time label to the real system clock
+  - `localtime: u64` initialised to 0 before the main loop; time label starts as `--:-- --`
+  - Pressing Sync Time calls `SystemTime::now()`, stores unix timestamp in `localtime`, updates `view.title` on the `"time"` label, and calls `mark_layout_dirty` to trigger a redraw
+  - `format_time_utc(unix_secs)` converts a unix timestamp to a 12-hour `H:MM AM/PM` string (UTC)
+  - Refactored click dispatch from `if let Some((_, Action::Command(cmd)))` to `if let Some((target, action))` so both `Action::Command` (toggle groups) and `Action::Generic` (buttons) can be handled in the same block
+
 ## 2026-07-31 (ereader_ui font size selector)
 
 - `examples/ereader_ui.rs`: font size toggle in settings dialog now changes the content font

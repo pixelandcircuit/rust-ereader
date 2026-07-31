@@ -160,7 +160,7 @@ fn make_scene(w: i32, h: i32) -> Scene {
         make_button(&ViewId::new("settings"), "Settings"),
         &topbar_id,
     );
-    scene.add_view_to_parent(make_label("time", "10:42 AM"), &topbar_id);
+    scene.add_view_to_parent(make_label("time", "--:-- --"), &topbar_id);
     scene.add_view_to_parent(make_label("battery", "85%"), &topbar_id);
     scene.add_view_to_parent(make_label("booktitle", "Sherlock Holmes"), &topbar_id);
 
@@ -265,6 +265,22 @@ fn make_scene(w: i32, h: i32) -> Scene {
 
 // ── Simulator path ────────────────────────────────────────────────────────────
 #[cfg(feature = "simulator")]
+fn format_time_utc(unix_secs: u64) -> String {
+    let h24 = (unix_secs / 3600) % 24;
+    let m = (unix_secs / 60) % 60;
+    let (h12, ampm) = if h24 == 0 {
+        (12u64, "AM")
+    } else if h24 < 12 {
+        (h24, "AM")
+    } else if h24 == 12 {
+        (12u64, "PM")
+    } else {
+        (h24 - 12, "PM")
+    };
+    format!("{}:{:02} {}", h12, m, ampm)
+}
+
+#[cfg(feature = "simulator")]
 fn main() {
     use embedded_graphics::geometry::Size;
     use embedded_graphics_simulator::{
@@ -284,6 +300,7 @@ fn main() {
     let mut scene = make_scene(win_w, win_h);
     let mut theme = make_theme();
     let handlers: Vec<Callback> = vec![handle_click];
+    let mut localtime: u64 = 0;
 
     'running: loop {
         {
@@ -299,32 +316,45 @@ fn main() {
             match event {
                 SimulatorEvent::Quit => break 'running,
                 SimulatorEvent::MouseButtonUp { point, .. } => {
-                    if let Some((target, Action::Command(cmd))) =
+                    if let Some((target, action)) =
                         click_at(&mut scene, &handlers, GPoint::new(point.x, point.y))
                     {
-                        if target == ViewId::new("orientation") {
-                            let (new_w, new_h) = match cmd.as_str() {
-                                "Land" | "R.Land" => (SCREEN_H, SCREEN_W),
-                                _ => (SCREEN_W, SCREEN_H),
-                            };
-                            if new_w != win_w || new_h != win_h {
-                                win_w = new_w;
-                                win_h = new_h;
-                                scene.bounds = Bounds::new(0, 0, win_w, win_h);
+                        if let Action::Command(ref cmd) = action {
+                            if target == ViewId::new("orientation") {
+                                let (new_w, new_h) = match cmd.as_str() {
+                                    "Land" | "R.Land" => (SCREEN_H, SCREEN_W),
+                                    _ => (SCREEN_W, SCREEN_H),
+                                };
+                                if new_w != win_w || new_h != win_h {
+                                    win_w = new_w;
+                                    win_h = new_h;
+                                    scene.bounds = Bounds::new(0, 0, win_w, win_h);
+                                    scene.mark_layout_dirty();
+                                    display = SimulatorDisplay::new(
+                                        Size::new(win_w as u32, win_h as u32),
+                                    );
+                                    window = Window::new("ereader_ui", &settings);
+                                }
+                            } else if target == ViewId::new("font_size") {
+                                let (new_font, new_bold) = match cmd.as_str() {
+                                    "Small" => (FONT_6X10, FONT_6X10),
+                                    "Large" => (FONT_10X20, FONT_10X20),
+                                    _ => (FONT_9X15, FONT_9X15_BOLD),
+                                };
+                                theme.font = new_font;
+                                theme.bold_font = new_bold;
                                 scene.mark_layout_dirty();
-                                display = SimulatorDisplay::new(
-                                    Size::new(win_w as u32, win_h as u32),
-                                );
-                                window = Window::new("ereader_ui", &settings);
                             }
-                        } else if target == ViewId::new("font_size") {
-                            let (new_font, new_bold) = match cmd.as_str() {
-                                "Small" => (FONT_6X10, FONT_6X10),
-                                "Large" => (FONT_10X20, FONT_10X20),
-                                _ => (FONT_9X15, FONT_9X15_BOLD),
-                            };
-                            theme.font = new_font;
-                            theme.bold_font = new_bold;
+                        }
+                        if target == ViewId::new("sync_time") {
+                            use std::time::{SystemTime, UNIX_EPOCH};
+                            localtime = SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs();
+                            if let Some(view) = scene.get_view_mut(&ViewId::new("time")) {
+                                view.title = format_time_utc(localtime);
+                            }
                             scene.mark_layout_dirty();
                         }
                     }
