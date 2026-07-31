@@ -1,5 +1,14 @@
 # Changes
 
+## 2026-07-31 (ereader_ui persistent settings)
+
+- `examples/ereader_ui.rs`: font size and backlight level now persist across reboots via NVS flash (ESP only)
+  - Copied `FlashAdapter`, `block_on` no-std executor, and sequential_storage pattern from `ereader_full`
+  - `load_settings()` / `save_settings()` use keys 10 (font) and 11 (backlight) to avoid collisions with `ereader_full`'s 0–4 key range; defaults are Medium (1) and High (2)
+  - Settings are loaded at startup and applied to `theme.font`/`theme.bold_font` and `bl_ch.set_duty()` before the first render
+  - `save_settings()` is called immediately after each font size or backlight change
+  - Font and backlight commands now track a numeric index (`cur_font_idx`, `cur_bl_idx`) so both the theme and flash store use the same value
+
 ## 2026-07-31 (ereader_ui backlight toggle)
 
 - `examples/ereader_ui.rs`: Backlight toggle group now controls the actual display backlight on the ESP device

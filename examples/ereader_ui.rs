@@ -383,6 +383,102 @@ use ereader::driver::Gt911;
 #[cfg(feature = "esp")]
 use ereader::driver::gt911::GT911_ADDR_PRIMARY;
 
+// ── Flash storage ─────────────────────────────────────────────────────────────
+#[cfg(feature = "esp")]
+use esp_storage::FlashStorage;
+#[cfg(feature = "esp")]
+use sequential_storage::{cache::NoCache, map};
+
+#[cfg(feature = "esp")]
+struct FlashAdapter(FlashStorage);
+
+#[cfg(feature = "esp")]
+impl embedded_storage::nor_flash::ErrorType for FlashAdapter {
+    type Error = esp_storage::FlashStorageError;
+}
+
+#[cfg(feature = "esp")]
+impl embedded_storage_async::nor_flash::ReadNorFlash for FlashAdapter {
+    const READ_SIZE: usize = FlashStorage::WORD_SIZE as usize;
+    async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
+        embedded_storage::nor_flash::ReadNorFlash::read(&mut self.0, offset, bytes)
+    }
+    fn capacity(&self) -> usize {
+        embedded_storage::nor_flash::ReadNorFlash::capacity(&self.0)
+    }
+}
+
+#[cfg(feature = "esp")]
+impl embedded_storage_async::nor_flash::NorFlash for FlashAdapter {
+    const WRITE_SIZE: usize = FlashStorage::WORD_SIZE as usize;
+    const ERASE_SIZE: usize = FlashStorage::SECTOR_SIZE as usize;
+    async fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
+        embedded_storage::nor_flash::NorFlash::erase(&mut self.0, from, to)
+    }
+    async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+        embedded_storage::nor_flash::NorFlash::write(&mut self.0, offset, bytes)
+    }
+}
+
+#[cfg(feature = "esp")]
+fn block_on<F: core::future::Future>(mut f: F) -> F::Output {
+    use core::{pin::Pin, task::{Context, Poll, RawWaker, RawWakerVTable, Waker}};
+    static VTABLE: RawWakerVTable =
+        RawWakerVTable::new(|p| RawWaker::new(p, &VTABLE), |_| {}, |_| {}, |_| {});
+    let waker = unsafe { Waker::from_raw(RawWaker::new(core::ptr::null(), &VTABLE)) };
+    let mut cx = Context::from_waker(&waker);
+    loop {
+        match unsafe { Pin::new_unchecked(&mut f) }.poll(&mut cx) {
+            Poll::Ready(v) => return v,
+            Poll::Pending => {}
+        }
+    }
+}
+
+// Keys 10/11 to avoid collisions with ereader_full (which uses 0–4).
+#[cfg(feature = "esp")]
+const NVS_RANGE: core::ops::Range<u32> = 0x9000..0xF000;
+#[cfg(feature = "esp")]
+const KEY_FONT: u8 = 10;
+#[cfg(feature = "esp")]
+const KEY_BL: u8 = 11;
+
+/// Returns (font_idx, bl_idx). Defaults: Medium (1), High (2).
+#[cfg(feature = "esp")]
+fn load_settings() -> (usize, usize) {
+    let mut flash = FlashAdapter(FlashStorage::new());
+    let mut cache = NoCache::new();
+    let mut buf = [0u8; 64];
+    let mut load = |key: u8, default: u32| -> u32 {
+        match block_on(map::fetch_item::<u8, u32, _>(
+            &mut flash, NVS_RANGE, &mut cache, &mut buf, &key,
+        )) {
+            Ok(Some(v)) => v,
+            _ => default,
+        }
+    };
+    let font = load(KEY_FONT, 1) as usize;
+    let bl   = load(KEY_BL,   2) as usize;
+    log::info!("settings loaded: font={} bl={}", font, bl);
+    (font, bl)
+}
+
+#[cfg(feature = "esp")]
+fn save_settings(font_idx: usize, bl_idx: usize) {
+    let mut flash = FlashAdapter(FlashStorage::new());
+    let mut cache = NoCache::new();
+    let mut buf = [0u8; 64];
+    let mut save = |key: u8, val: u32| {
+        if let Err(e) = block_on(map::store_item::<u8, u32, _>(
+            &mut flash, NVS_RANGE, &mut cache, &mut buf, &key, &val,
+        )) {
+            log::warn!("flash save key {} failed: {:?}", key, e);
+        }
+    };
+    save(KEY_FONT, font_idx as u32);
+    save(KEY_BL,   bl_idx  as u32);
+}
+
 /// Wraps the Gray4 e-paper display and presents an Rgb565 DrawTarget for iris-ui.
 /// Converts luminance to 4-bit gray and rotates coordinates 90° CCW so that
 /// portrait (540×960) logical space maps to the physical landscape (960×540) panel.
@@ -509,11 +605,27 @@ fn main() -> ! {
         duty_pct:   100,
         drive_mode: esp_hal::gpio::DriveMode::PushPull,
     }).unwrap();
-    bl_ch.set_duty(100).unwrap();
+    let (font_idx, bl_idx) = load_settings();
+
+    const BL_DUTY: [u8; 3] = [0, 25, 100];
+    bl_ch.set_duty(BL_DUTY[bl_idx.min(2)]).unwrap();
 
     let mut bridge = Rgb565ToGray4::new(display);
     let mut scene = make_scene(SCREEN_W, SCREEN_H);
     let mut theme = make_theme();
+    // Apply saved font size.
+    theme.font = match font_idx {
+        0 => FONT_6X10,
+        2 => FONT_10X20,
+        _ => FONT_9X15,
+    };
+    theme.bold_font = match font_idx {
+        0 => FONT_6X10,
+        2 => FONT_10X20,
+        _ => FONT_9X15_BOLD,
+    };
+    let mut cur_font_idx = font_idx;
+    let mut cur_bl_idx   = bl_idx;
     let handlers = vec![handle_click as Callback];
     let mut was_touching = false;
 
@@ -550,21 +662,27 @@ fn main() -> ! {
                 {
                     if let Action::Command(ref cmd) = action {
                         if target == ViewId::new("font_size") {
-                            let (new_font, new_bold) = match cmd.as_str() {
-                                "Small" => (FONT_6X10, FONT_6X10),
-                                "Large" => (FONT_10X20, FONT_10X20),
-                                _ => (FONT_9X15, FONT_9X15_BOLD),
+                            cur_font_idx = match cmd.as_str() {
+                                "Small" => 0,
+                                "Large" => 2,
+                                _       => 1,
                             };
-                            theme.font = new_font;
-                            theme.bold_font = new_bold;
+                            (theme.font, theme.bold_font) = match cur_font_idx {
+                                0 => (FONT_6X10,  FONT_6X10),
+                                2 => (FONT_10X20, FONT_10X20),
+                                _ => (FONT_9X15,  FONT_9X15_BOLD),
+                            };
                             scene.mark_layout_dirty();
+                            save_settings(cur_font_idx, cur_bl_idx);
                         } else if target == ViewId::new("backlight") {
-                            let duty: u8 = match cmd.as_str() {
-                                "Off"  => 0,
-                                "Low"  => 25,
-                                _      => 100,
+                            cur_bl_idx = match cmd.as_str() {
+                                "Off" => 0,
+                                "Low" => 1,
+                                _     => 2,
                             };
-                            bl_ch.set_duty(duty).unwrap();
+                            bl_ch.set_duty(BL_DUTY[cur_bl_idx]).unwrap();
+                            scene.mark_dirty_all();
+                            save_settings(cur_font_idx, cur_bl_idx);
                         }
                     }
                 }
