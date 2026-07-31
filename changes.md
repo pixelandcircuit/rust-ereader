@@ -1,5 +1,19 @@
 # Changes
 
+## 2026-07-31 (ereader_ui orientation on device)
+
+- `examples/ereader_ui.rs`: orientation toggle now rotates the display on the ESP device
+  - Added `EspOrientation` enum (`Port`, `Land`, `RPort`, `RLand`) with helpers:
+    - `logical_to_phys(lx, ly)` — pixel mapping for `draw_iter` (replaces hardcoded portrait-only formula)
+    - `phys_to_logical(tx, ty)` — touch coordinate inverse; replaces hardcoded `lx = 539-ty, ly = tx`
+    - `logical_size()` — returns (w, h) for the logical screen; portrait = 540×960, landscape = 960×540
+  - `Rgb565ToGray4` gains an `orientation` field; `draw_iter` and `OriginDimensions::size()` are now orientation-aware
+  - On orientation command: `bridge.orientation` updated, `scene.bounds` resized, `mark_layout_dirty()` triggers full redraw
+  - Orientation persisted to NVS key 12; loaded at startup and applied before the first render
+  - Touch coordinate calculation simplified to a single `orientation.phys_to_logical(tx, ty)` call
+  - `needs_full_refresh` check uses `orientation.logical_size()` instead of the fixed `SCREEN_W`/`SCREEN_H` constants
+  - Dialog height is now dynamic: `layout_dialog` passes unconstrained space (4000px) to `layout_vbox`, measures children's bottom edge, then centers the dialog at the correct height — fixes Close button falling out of dialog at Large font size
+
 ## 2026-07-31 (ereader_ui persistent settings)
 
 - `examples/ereader_ui.rs`: font size and backlight level now persist across reboots via NVS flash (ESP only)

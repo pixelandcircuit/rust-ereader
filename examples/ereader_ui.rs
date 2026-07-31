@@ -28,7 +28,6 @@ const SCREEN_W: i32 = 540;
 const SCREEN_H: i32 = 960;
 
 const DIALOG_W: i32 = 420;
-const DIALOG_H: i32 = 340;
 const DIALOG_PAD: i32 = 16;
 
 const BOOK_TEXT: &str = "My dear fellow, said Sherlock Holmes as we sat on \
@@ -133,14 +132,28 @@ fn draw_dialog(e: &mut DrawEvent) {
 fn layout_dialog(pass: &mut LayoutEvent) {
     let sw = pass.space.w;
     let sh = pass.space.h;
+    // Give children unconstrained vertical space so layout_vbox can measure them.
+    if let Some(view) = pass.scene.get_view_mut(pass.target) {
+        view.bounds.size.w = DIALOG_W;
+        view.bounds.size.h = 4000;
+    }
+    pass.space = Size::new(DIALOG_W, 4000);
+    layout_vbox(pass);
+    // Measure the actual height used by children (positions are in dialog-local space).
+    let dialog_id = pass.target.clone();
+    let mut content_bottom = DIALOG_PAD;
+    for kid in pass.scene.get_children_ids(&dialog_id) {
+        if let Some(child) = pass.scene.get_view(&kid) {
+            content_bottom = content_bottom.max(child.bounds.position.y + child.bounds.size.h);
+        }
+    }
+    let dialog_h = content_bottom + DIALOG_PAD;
+    // Center the dialog using the measured height.
     if let Some(view) = pass.scene.get_view_mut(pass.target) {
         view.bounds.position.x = (sw - DIALOG_W) / 2;
-        view.bounds.position.y = (sh - DIALOG_H) / 2;
-        view.bounds.size.w = DIALOG_W;
-        view.bounds.size.h = DIALOG_H;
+        view.bounds.position.y = (sh - dialog_h) / 2;
+        view.bounds.size.h = dialog_h;
     }
-    pass.space = Size::new(DIALOG_W, DIALOG_H);
-    layout_vbox(pass);
 }
 
 fn handle_click(event: &mut GuiEvent) {
@@ -435,17 +448,19 @@ fn block_on<F: core::future::Future>(mut f: F) -> F::Output {
     }
 }
 
-// Keys 10/11 to avoid collisions with ereader_full (which uses 0–4).
+// Keys 10–12 to avoid collisions with ereader_full (which uses 0–4).
 #[cfg(feature = "esp")]
 const NVS_RANGE: core::ops::Range<u32> = 0x9000..0xF000;
 #[cfg(feature = "esp")]
 const KEY_FONT: u8 = 10;
 #[cfg(feature = "esp")]
 const KEY_BL: u8 = 11;
-
-/// Returns (font_idx, bl_idx). Defaults: Medium (1), High (2).
 #[cfg(feature = "esp")]
-fn load_settings() -> (usize, usize) {
+const KEY_ORI: u8 = 12;
+
+/// Returns (font_idx, bl_idx, ori_idx). Defaults: Medium (1), High (2), Portrait (0).
+#[cfg(feature = "esp")]
+fn load_settings() -> (usize, usize, usize) {
     let mut flash = FlashAdapter(FlashStorage::new());
     let mut cache = NoCache::new();
     let mut buf = [0u8; 64];
@@ -459,12 +474,13 @@ fn load_settings() -> (usize, usize) {
     };
     let font = load(KEY_FONT, 1) as usize;
     let bl   = load(KEY_BL,   2) as usize;
-    log::info!("settings loaded: font={} bl={}", font, bl);
-    (font, bl)
+    let ori  = load(KEY_ORI,  0) as usize;
+    log::info!("settings loaded: font={} bl={} ori={}", font, bl, ori);
+    (font, bl, ori)
 }
 
 #[cfg(feature = "esp")]
-fn save_settings(font_idx: usize, bl_idx: usize) {
+fn save_settings(font_idx: usize, bl_idx: usize, ori_idx: usize) {
     let mut flash = FlashAdapter(FlashStorage::new());
     let mut cache = NoCache::new();
     let mut buf = [0u8; 64];
@@ -476,21 +492,70 @@ fn save_settings(font_idx: usize, bl_idx: usize) {
         }
     };
     save(KEY_FONT, font_idx as u32);
-    save(KEY_BL,   bl_idx  as u32);
+    save(KEY_BL,   bl_idx   as u32);
+    save(KEY_ORI,  ori_idx  as u32);
+}
+
+// ── Orientation ───────────────────────────────────────────────────────────────
+// Index matches the toggle group order: ["Port", "Land", "R.Port", "R.Land"]
+#[cfg(feature = "esp")]
+#[derive(Clone, Copy, PartialEq)]
+enum EspOrientation { Port, Land, RPort, RLand }
+
+#[cfg(feature = "esp")]
+impl EspOrientation {
+    fn from_index(i: usize) -> Self {
+        match i { 1 => Self::Land, 2 => Self::RPort, 3 => Self::RLand, _ => Self::Port }
+    }
+    fn to_index(self) -> usize {
+        match self { Self::Port => 0, Self::Land => 1, Self::RPort => 2, Self::RLand => 3 }
+    }
+    fn from_cmd(cmd: &str) -> Self {
+        match cmd { "Land" => Self::Land, "R.Port" => Self::RPort, "R.Land" => Self::RLand, _ => Self::Port }
+    }
+    fn is_portrait(self) -> bool { matches!(self, Self::Port | Self::RPort) }
+    /// Logical screen size for this orientation.
+    fn logical_size(self) -> (i32, i32) {
+        if self.is_portrait() { (SCREEN_W, SCREEN_H) } else { (SCREEN_H, SCREEN_W) }
+    }
+    /// Convert physical touch (tx, ty) to logical (lx, ly).
+    fn phys_to_logical(self, tx: u16, ty: u16) -> (i32, i32) {
+        const W: i32 = 960; // Display::WIDTH
+        const H: i32 = 540; // Display::HEIGHT
+        let (tx, ty) = (tx as i32, ty as i32);
+        match self {
+            Self::Port  => (H - 1 - ty, tx      ),
+            Self::Land  => (tx,         ty       ),
+            Self::RPort => (ty,         W - 1 - tx),
+            Self::RLand => (W - 1 - tx, H - 1 - ty),
+        }
+    }
+    /// Convert logical pixel (lx, ly) to physical (px, py).
+    fn logical_to_phys(self, lx: u16, ly: u16) -> (u16, u16) {
+        const W: u16 = 960;
+        const H: u16 = 540;
+        match self {
+            Self::Port  => (ly,         H - 1 - lx),
+            Self::Land  => (lx,         ly         ),
+            Self::RPort => (W - 1 - ly, lx         ),
+            Self::RLand => (W - 1 - lx, H - 1 - ly ),
+        }
+    }
 }
 
 /// Wraps the Gray4 e-paper display and presents an Rgb565 DrawTarget for iris-ui.
-/// Converts luminance to 4-bit gray and rotates coordinates 90° CCW so that
-/// portrait (540×960) logical space maps to the physical landscape (960×540) panel.
+/// Converts Rgb565 luminance to 4-bit gray and applies orientation rotation so
+/// the logical coordinate space matches what the user sees.
 #[cfg(feature = "esp")]
 struct Rgb565ToGray4<'a> {
-    display: Display<'a>,
+    display:     Display<'a>,
+    orientation: EspOrientation,
 }
 
 #[cfg(feature = "esp")]
 impl<'a> Rgb565ToGray4<'a> {
-    fn new(display: Display<'a>) -> Self {
-        Self { display }
+    fn new(display: Display<'a>, orientation: EspOrientation) -> Self {
+        Self { display, orientation }
     }
     fn flush(&mut self) {
         self.display.flush(DrawMode::BlackOnWhite).unwrap();
@@ -515,8 +580,9 @@ impl<'a> embedded_graphics::draw_target::DrawTarget for Rgb565ToGray4<'a> {
             let b8 = (b << 3) | (b >> 2);
             let luma8 = (77 * r8 + 150 * g8 + 29 * b8) >> 8;
             let gray4 = (luma8 >> 4) as u8;
-            let px = pix.0.y as u16;
-            let py = Display::HEIGHT - 1 - pix.0.x as u16;
+            let (px, py) = self.orientation.logical_to_phys(
+                pix.0.x as u16, pix.0.y as u16,
+            );
             let _ = self.display.set_pixel(px, py, gray4);
         }
         Ok(())
@@ -526,7 +592,8 @@ impl<'a> embedded_graphics::draw_target::DrawTarget for Rgb565ToGray4<'a> {
 #[cfg(feature = "esp")]
 impl<'a> embedded_graphics::geometry::OriginDimensions for Rgb565ToGray4<'a> {
     fn size(&self) -> embedded_graphics::geometry::Size {
-        embedded_graphics::geometry::Size::new(SCREEN_W as u32, SCREEN_H as u32)
+        let (w, h) = self.orientation.logical_size();
+        embedded_graphics::geometry::Size::new(w as u32, h as u32)
     }
 }
 
@@ -605,13 +672,15 @@ fn main() -> ! {
         duty_pct:   100,
         drive_mode: esp_hal::gpio::DriveMode::PushPull,
     }).unwrap();
-    let (font_idx, bl_idx) = load_settings();
+    let (font_idx, bl_idx, ori_idx) = load_settings();
 
     const BL_DUTY: [u8; 3] = [0, 25, 100];
     bl_ch.set_duty(BL_DUTY[bl_idx.min(2)]).unwrap();
 
-    let mut bridge = Rgb565ToGray4::new(display);
-    let mut scene = make_scene(SCREEN_W, SCREEN_H);
+    let mut orientation = EspOrientation::from_index(ori_idx);
+    let (lw, lh) = orientation.logical_size();
+    let mut bridge = Rgb565ToGray4::new(display, orientation);
+    let mut scene = make_scene(lw, lh);
     let mut theme = make_theme();
     // Apply saved font size.
     theme.font = match font_idx {
@@ -632,7 +701,8 @@ fn main() -> ! {
     loop {
         let dirty_rect = scene.dirty_rect.clone();
         let was_dirty = !dirty_rect.is_empty();
-        let needs_full_refresh = dirty_rect.size.w >= SCREEN_W && dirty_rect.size.h >= SCREEN_H;
+        let (scene_w, scene_h) = orientation.logical_size();
+        let needs_full_refresh = dirty_rect.size.w >= scene_w && dirty_rect.size.h >= scene_h;
 
         if was_dirty {
             if needs_full_refresh {
@@ -652,11 +722,7 @@ fn main() -> ! {
 
         if let Some((tx, ty)) = bridge.display.read_touch(&mut gt911) {
             if !was_touching {
-                // Physical (960×540) → logical portrait (540×960):
-                //   draw maps logical (lx,ly) → physical (ly, 539−lx)
-                //   so inverse: lx = 539−ty, ly = tx
-                let lx = (Display::HEIGHT as i32 - 1) - ty as i32;
-                let ly = tx as i32;
+                let (lx, ly) = orientation.phys_to_logical(tx, ty);
                 if let Some((target, action)) =
                     click_at(&mut scene, &handlers, GPoint::new(lx, ly))
                 {
@@ -673,7 +739,7 @@ fn main() -> ! {
                                 _ => (FONT_9X15,  FONT_9X15_BOLD),
                             };
                             scene.mark_layout_dirty();
-                            save_settings(cur_font_idx, cur_bl_idx);
+                            save_settings(cur_font_idx, cur_bl_idx, orientation.to_index());
                         } else if target == ViewId::new("backlight") {
                             cur_bl_idx = match cmd.as_str() {
                                 "Off" => 0,
@@ -682,7 +748,14 @@ fn main() -> ! {
                             };
                             bl_ch.set_duty(BL_DUTY[cur_bl_idx]).unwrap();
                             scene.mark_dirty_all();
-                            save_settings(cur_font_idx, cur_bl_idx);
+                            save_settings(cur_font_idx, cur_bl_idx, orientation.to_index());
+                        } else if target == ViewId::new("orientation") {
+                            orientation = EspOrientation::from_cmd(cmd.as_str());
+                            bridge.orientation = orientation;
+                            let (new_w, new_h) = orientation.logical_size();
+                            scene.bounds = Bounds::new(0, 0, new_w, new_h);
+                            scene.mark_layout_dirty();
+                            save_settings(cur_font_idx, cur_bl_idx, orientation.to_index());
                         }
                     }
                 }
