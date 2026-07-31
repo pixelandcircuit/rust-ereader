@@ -224,19 +224,6 @@ fn make_scene() -> Scene {
         &dialog_id,
     );
     scene.add_view_to_parent(make_button(&ViewId::new("dialog_close"), "Close"), &dialog_id);
-    scene.add_view_to_parent(
-        View {
-            name: dialog_id,
-            h_flex: Flex::Resize,
-            v_flex: Flex::Resize,
-            layout: Some(layout_dialog),
-            draw: Some(draw_dialog),
-            padding: Insets::new_same(DIALOG_PAD),
-            visible: false,
-            ..Default::default()
-        },
-        &main_id,
-    );
 
     scene.add_view_to_root(View {
         name: main_id,
@@ -246,6 +233,20 @@ fn make_scene() -> Scene {
         bounds: Bounds::new(0, 0, SCREEN_W, SCREEN_H),
         ..Default::default()
     });
+
+    scene.add_view_to_root(
+        View {
+            name: dialog_id,
+            h_flex: Flex::Resize,
+            v_flex: Flex::Resize,
+            layout: Some(layout_dialog),
+            draw: Some(draw_dialog),
+            padding: Insets::new_same(DIALOG_PAD),
+            bounds: Bounds::new(0, 0, 200, 600),
+            visible: false,
+            ..Default::default()
+        },
+    );
 
     scene.dump();
     log::info!("scene built");
