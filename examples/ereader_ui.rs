@@ -28,7 +28,7 @@ const SCREEN_W: i32 = 540;
 const SCREEN_H: i32 = 960;
 
 const DIALOG_W: i32 = 420;
-const DIALOG_H: i32 = 240;
+const DIALOG_H: i32 = 340;
 const DIALOG_PAD: i32 = 16;
 
 const BOOK_TEXT: &str = "My dear fellow, said Sherlock Holmes as we sat on \
@@ -223,6 +223,17 @@ fn make_scene() -> Scene {
         make_toggle_group(&ViewId::new("backlight"), vec!["Off", "Low", "High"], 2),
         &dialog_id,
     );
+    scene.add_view_to_parent(make_label("dlg_orient_lbl", "Orientation"), &dialog_id);
+    scene.add_view_to_parent(
+        make_toggle_group(
+            &ViewId::new("orientation"),
+            vec!["Port", "Land", "R.Port", "R.Land"],
+            0,
+        ),
+        &dialog_id,
+    );
+    scene.add_view_to_parent(make_button(&ViewId::new("sync_time"), "Sync Time"), &dialog_id);
+    scene.add_view_to_parent(make_label("dlg_battery", "Battery: 85%  (Charging)"), &dialog_id);
     scene.add_view_to_parent(make_button(&ViewId::new("dialog_close"), "Close"), &dialog_id);
 
     scene.add_view_to_root(View {

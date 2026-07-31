@@ -1,5 +1,13 @@
 # Changes
 
+## 2026-07-30 (ereader_ui settings dialog expanded)
+
+- `examples/ereader_ui.rs`: added three items to the settings dialog
+  - Orientation toggle group: `[Port | Land | R.Port | R.Land]` (Portrait selected by default)
+  - "Sync Time" button
+  - Battery status label: "Battery: 85%  (Charging)" (fake data)
+  - `DIALOG_H` increased 240 → 340 px to accommodate 10 stacked items
+
 ## 2026-07-30 (ereader_ui settings dialog)
 
 - `examples/ereader_ui.rs`: pressing Settings now shows a centered modal dialog
