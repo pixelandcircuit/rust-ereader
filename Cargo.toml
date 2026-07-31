@@ -26,6 +26,8 @@ simulator = [
     "dep:embedded-graphics-core",
     "dep:embedded-graphics-simulator",
     "dep:iris-ui",
+    "dep:env_logger",
+    "dep:log",
 ]
 
 [dependencies]
@@ -50,6 +52,7 @@ embedded-graphics           = { version = "0.8", optional = true }
 embedded-graphics-core      = { version = "0.4", optional = true }
 embedded-graphics-simulator = { version = "0.8", optional = true }
 iris-ui                     = { version = "0.1.0", optional = true }
+env_logger                  = { version = "0.11", optional = true }
 
 [profile.dev]
 opt-level = "s"

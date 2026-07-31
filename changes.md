@@ -1,5 +1,22 @@
 # Changes
 
+## 2026-07-30 (ereader_ui logging)
+
+- `Cargo.toml`: added `env_logger = "0.11"` as optional dep; enabled via `simulator` feature alongside `dep:log`
+- `examples/ereader_ui.rs`: wired up logging for both targets
+  - Simulator: `env_logger` initialised with default level `info` (overridable via `RUST_LOG`); run with `RUST_LOG=info cargo sim --example ereader_ui`
+  - ESP: `esp-println` with `log-04` feature was already present; `init_logger_from_env()` already called in ESP `main`; output goes to the USB serial console; log level set at compile time via `ESP_LOG`
+  - `make_scene()` calls `scene.dump()` + `log::info!` (uses `log` crate directly so it compiles on both std and no_std targets)
+
+## 2026-07-30 (ereader_ui layout)
+
+- `examples/ereader_ui.rs`: replaced three-button placeholder with full e-reader chrome layout
+  - **Top bar** (gray, `layout_hbox`): Settings button, time label "10:42 AM", battery label "85%", book title "Sherlock Holmes"
+  - **Content area** (white, fills remaining height): word-wrapped book text from *The Adventures of Sherlock Holmes* — `next_line()` helper splits on word boundaries without heap allocation
+  - **Bottom bar** (gray, `layout_hbox`): chapter label and page label; horizontal rule drawn at top edge
+  - Top/bottom bars draw gray fill + border line via custom draw functions; content fills its entire bounds in white
+  - All data is fake/static; no ESP-path changes
+
 ## 2026-07-30 (ereader_ui)
 
 - `Cargo.toml`: added `iris-ui = "0.1.0"` as optional dep; added `"dep:iris-ui"` to both `esp` and `simulator` features

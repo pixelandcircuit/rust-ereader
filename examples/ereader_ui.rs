@@ -1,4 +1,4 @@
-//! ereader_ui — iris-ui panel with buttons
+//! ereader_ui — iris-ui e-reader layout with header, content, and footer
 //!
 //! Run in simulator:  cargo sim --example ereader_ui
 //! Run on device:     cargo esp-run --example ereader_ui
@@ -14,15 +14,35 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::{RgbColor, WebColors};
 use iris_ui::button::make_button;
 use iris_ui::device::EmbeddedDrawingContext;
-use iris_ui::geom::{Bounds, Point as GPoint};
-use iris_ui::layouts::layout_vbox;
-use iris_ui::panel::draw_std_panel;
+use iris_ui::geom::{Bounds, Insets, Point as GPoint};
+use iris_ui::gfx::TextStyle;
+use iris_ui::label::make_label;
+use iris_ui::layouts::{layout_hbox, layout_vbox};
 use iris_ui::scene::{click_at, draw_scene, layout_scene, Scene};
-use iris_ui::view::{Flex, View, ViewId};
-use iris_ui::Theme;
+use iris_ui::view::{Align, Flex, View, ViewId};
+use iris_ui::{DrawEvent, Theme};
 
 const SCREEN_W: i32 = 540;
 const SCREEN_H: i32 = 960;
+
+const BOOK_TEXT: &str = "My dear fellow, said Sherlock Holmes as we sat on \
+either side of the fire in his lodgings at Baker Street, life is infinitely \
+stranger than anything which the mind of man could invent. We would not dare \
+to conceive the things which are really mere commonplaces of existence. If we \
+could fly out of that window hand in hand, hover over this great city, gently \
+remove the roofs, and peep in at the queer things which are going on, the \
+strange coincidences, the plannings, the cross-purposes, the wonderful chains \
+of events, working through generations, and leading to the most outré results, \
+it would make all fiction with its conventionalities and foreseen conclusions \
+most stale and unprofitable. And yet I am not convinced of it, said I. The \
+cases which come to light in the papers are, as a rule, bald enough, and vulgar \
+enough. We have in our police reports realism pushed to its extreme limits, and \
+yet the result is, it must be confessed, neither fascinating nor artistic. A \
+certain selection and discretion must be used in producing a realistic effect, \
+remarked Holmes. This is wanting in the police report, where more stress is \
+laid, perhaps, upon the platitudes of the magistrate than upon the details, \
+which to an observer contain the vital essence of the whole matter. Depend \
+upon it, there is nothing so unnatural as the commonplace.";
 
 fn make_theme() -> Theme {
     Theme {
@@ -30,28 +50,141 @@ fn make_theme() -> Theme {
         fg: Rgb565::BLACK,
         selected_bg: Rgb565::BLUE,
         selected_fg: Rgb565::WHITE,
-        panel_bg: Rgb565::CSS_LIGHT_GRAY,
+        panel_bg: Rgb565::WHITE,
         font: FONT_9X15,
         bold_font: FONT_9X15_BOLD,
+    }
+}
+
+fn draw_topbar(e: &mut DrawEvent) {
+    e.ctx.fill_rect(&e.view.bounds, &e.theme.panel_bg);
+    let b = e.view.bounds;
+    let bottom_y = b.position.y + b.size.h - 1;
+    e.ctx.line(
+        &GPoint::new(b.position.x, bottom_y),
+        &GPoint::new(b.position.x + b.size.w, bottom_y),
+        &e.theme.fg,
+    );
+}
+
+fn draw_bottombar(e: &mut DrawEvent) {
+    e.ctx.fill_rect(&e.view.bounds, &e.theme.panel_bg);
+    let b = e.view.bounds;
+    e.ctx.line(
+        &GPoint::new(b.position.x, b.position.y),
+        &GPoint::new(b.position.x + b.size.w, b.position.y),
+        &e.theme.fg,
+    );
+}
+
+/// Returns the next word-wrapped line and the remaining text.
+fn next_line<'a>(text: &'a str, max_chars: usize) -> (&'a str, &'a str) {
+    if text.len() <= max_chars {
+        return (text.trim_end(), "");
+    }
+    let cut = &text[..max_chars];
+    let break_at = cut.rfind(' ').unwrap_or(max_chars);
+    (text[..break_at].trim_end(), text[break_at..].trim_start())
+}
+
+fn draw_content(e: &mut DrawEvent) {
+    e.ctx.fill_rect(&e.view.bounds, &e.theme.bg);
+
+    let char_w = (e.theme.font.character_size.width + e.theme.font.character_spacing) as i32;
+    let char_h = e.theme.font.character_size.height as i32;
+    let pad_x = 16i32;
+    let pad_y = 12i32;
+    let usable_w = e.view.bounds.size.w - pad_x * 2;
+    let max_chars = (usable_w / char_w) as usize;
+
+    let style = TextStyle::new(&e.theme.font, &e.theme.fg);
+    let x = e.view.bounds.position.x + pad_x;
+    let mut y = e.view.bounds.position.y + pad_y;
+    let max_y = e.view.bounds.position.y + e.view.bounds.size.h;
+
+    let mut remaining = BOOK_TEXT;
+    while !remaining.is_empty() && y + char_h <= max_y {
+        let (line, rest) = next_line(remaining, max_chars);
+        if !line.is_empty() {
+            e.ctx.fill_text(&Bounds::new(x, y, usable_w, char_h), line, &style);
+        }
+        remaining = rest;
+        y += char_h + 3;
     }
 }
 
 fn make_scene() -> Scene {
     let mut scene = Scene::new_with_bounds(Bounds::new(0, 0, SCREEN_W, SCREEN_H));
 
-    let panel = View {
-        name: ViewId::new("panel"),
-        draw: Some(draw_std_panel),
+    // ── Top bar ──────────────────────────────────────────────────────────────
+    let topbar_id = ViewId::new("topbar");
+    scene.add_view_to_parent(
+        make_button(&ViewId::new("settings"), "Settings"),
+        &topbar_id,
+    );
+    scene.add_view_to_parent(make_label("time", "10:42 AM"), &topbar_id);
+    scene.add_view_to_parent(make_label("battery", "85%"), &topbar_id);
+    scene.add_view_to_parent(make_label("booktitle", "Sherlock Holmes"), &topbar_id);
+
+    // ── Content ──────────────────────────────────────────────────────────────
+    let content = View {
+        name: ViewId::new("content"),
+        h_flex: Flex::Resize,
+        h_align: Align::Start,
+        v_flex: Flex::Resize,
+        v_align: Align::Center,
+        bounds: Bounds::new(0, 0, 200, 600),
+        draw: Some(draw_content),
+        ..Default::default()
+    };
+
+    // ── Bottom bar ───────────────────────────────────────────────────────────
+    let bottombar_id = ViewId::new("bottombar");
+    scene.add_view_to_parent(
+        make_label("chapter", "Chapter 3: A Case of Identity"),
+        &bottombar_id,
+    );
+    scene.add_view_to_parent(make_label("page", "Page 42 of 185"), &bottombar_id);
+
+    // ── Root panel (vbox) ────────────────────────────────────────────────────
+    let main_id = ViewId::new("main");
+    scene.add_view_to_parent(
+        View {
+            name: topbar_id,
+            h_flex: Flex::Resize,
+            v_flex: Flex::Intrinsic,
+            layout: Some(layout_hbox),
+            padding: Insets::new(4, 8, 4, 8),
+            draw: Some(draw_topbar),
+            ..Default::default()
+        },
+        &main_id,
+    );
+    scene.add_view_to_parent(content, &main_id);
+    scene.add_view_to_parent(
+        View {
+            name: bottombar_id,
+            h_flex: Flex::Resize,
+            v_flex: Flex::Intrinsic,
+            layout: Some(layout_hbox),
+            padding: Insets::new(4, 8, 4, 8),
+            draw: Some(draw_bottombar),
+            ..Default::default()
+        },
+        &main_id,
+    );
+
+    scene.add_view_to_root(View {
+        name: main_id,
         h_flex: Flex::Resize,
         v_flex: Flex::Resize,
         layout: Some(layout_vbox),
         bounds: Bounds::new(0, 0, SCREEN_W, SCREEN_H),
         ..Default::default()
-    };
-    scene.add_view_to_parent(make_button(&ViewId::new("prev"),     "< Previous"), &panel.name);
-    scene.add_view_to_parent(make_button(&ViewId::new("next"),     "Next >"),     &panel.name);
-    scene.add_view_to_parent(make_button(&ViewId::new("settings"), "Settings"),   &panel.name);
-    scene.add_view_to_root(panel);
+    });
+
+    scene.dump();
+    log::info!("scene built");
     scene
 }
 
@@ -62,6 +195,8 @@ fn main() {
     use embedded_graphics_simulator::{
         OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
     };
+
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let mut display: SimulatorDisplay<Rgb565> =
         SimulatorDisplay::new(Size::new(SCREEN_W as u32, SCREEN_H as u32));
@@ -125,17 +260,14 @@ impl<'a> embedded_graphics::draw_target::DrawTarget for Rgb565ToGray4<'a> {
         I: IntoIterator<Item = embedded_graphics::Pixel<Self::Color>>,
     {
         for pix in pixels {
-            let r = pix.1.r() as u32; // 5-bit (0-31)
-            let g = pix.1.g() as u32; // 6-bit (0-63)
-            let b = pix.1.b() as u32; // 5-bit (0-31)
-            // Expand to 8-bit
+            let r = pix.1.r() as u32;
+            let g = pix.1.g() as u32;
+            let b = pix.1.b() as u32;
             let r8 = (r << 3) | (r >> 2);
             let g8 = (g << 2) | (g >> 4);
             let b8 = (b << 3) | (b >> 2);
-            // BT.601 luminance → 4-bit gray (0=black, 15=white)
             let luma8 = (77 * r8 + 150 * g8 + 29 * b8) >> 8;
             let gray4 = (luma8 >> 4) as u8;
-            // 90° CCW rotation: portrait (lx, ly) → landscape (ly, HEIGHT-1-lx)
             let px = pix.0.y as u16;
             let py = Display::HEIGHT - 1 - pix.0.x as u16;
             let _ = self.display.set_pixel(px, py, gray4);
@@ -153,6 +285,7 @@ impl<'a> embedded_graphics::geometry::OriginDimensions for Rgb565ToGray4<'a> {
 
 #[cfg(feature = "esp")]
 use esp_hal::main;
+use fontdue::layout::HorizontalAlign;
 
 #[cfg(feature = "esp")]
 #[main]
