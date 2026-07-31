@@ -168,3 +168,10 @@ fonts/           — Embedded TTF/OTF font files
 ## Flash partition layout
 
 Defined in `partitions.csv`. Sequential-storage is used for persisting reading position, font size, orientation, and backlight level across deep-sleep cycles.
+
+## Tasks Backlog
+- [ ] setup unit tests that run on desktop, make run on commit/push in github workflow
+- [ ] fix drawing bugs.
+- [ ] hook up font and orientation changes.
+- [ ] hook up wifi and sync time.
+- [ ] separate dialog for fast page flipping. trigger with hot key.

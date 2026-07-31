@@ -121,9 +121,11 @@ fn draw_content(e: &mut DrawEvent) {
 
 fn draw_dialog(e: &mut DrawEvent) {
     let b = e.view.bounds;
-    e.ctx.fill_rect(&b, &e.theme.bg);
+    // Clear the dialog area to white before children draw on top.
+    // iris-ui calls this draw fn before drawing children, so this acts as a
+    // background fill that erases whatever content sits behind the dialog.
+    e.ctx.fill_rect(&b, &Rgb565::WHITE);
     e.ctx.stroke_rect(&b, &e.theme.fg);
-    // Double border for visual weight
     let inner = Bounds::new(b.position.x + 2, b.position.y + 2, b.size.w - 4, b.size.h - 4);
     e.ctx.stroke_rect(&inner, &e.theme.fg);
 }
@@ -143,9 +145,11 @@ fn layout_dialog(pass: &mut LayoutEvent) {
 
 fn handle_click(event: &mut GuiEvent) {
     if event.target == &ViewId::new("settings") {
+        info!("showing the dialog");
         event.scene.show_view(&ViewId::new("dialog"));
         event.scene.mark_dirty_all();
     } else if event.target == &ViewId::new("dialog_close") {
+        info!("hiding the dialog");
         event.scene.hide_view(&ViewId::new("dialog"));
         event.scene.mark_dirty_all();
     }
@@ -367,7 +371,17 @@ fn main() {
 
 // ── ESP path ──────────────────────────────────────────────────────────────────
 #[cfg(feature = "esp")]
+use esp_backtrace as _;
+
+#[cfg(feature = "esp")]
+esp_bootloader_esp_idf::esp_app_desc!();
+
+#[cfg(feature = "esp")]
 use ereader::driver::display::{Display, DrawMode};
+#[cfg(feature = "esp")]
+use ereader::driver::Gt911;
+#[cfg(feature = "esp")]
+use ereader::driver::gt911::GT911_ADDR_PRIMARY;
 
 /// Wraps the Gray4 e-paper display and presents an Rgb565 DrawTarget for iris-ui.
 /// Converts luminance to 4-bit gray and rotates coordinates 90° CCW so that
@@ -422,6 +436,7 @@ impl<'a> embedded_graphics::geometry::OriginDimensions for Rgb565ToGray4<'a> {
 
 #[cfg(feature = "esp")]
 use esp_hal::main;
+use log::info;
 
 #[cfg(feature = "esp")]
 #[main]
@@ -429,7 +444,7 @@ fn main() -> ! {
     use esp_hal::delay::Delay;
     use esp_println::println;
 
-    esp_println::logger::init_logger_from_env();
+    esp_println::logger::init_logger(log::LevelFilter::Info);
 
     let config = esp_hal::Config::default()
         .with_cpu_clock(esp_hal::clock::CpuClock::_240MHz);
@@ -459,25 +474,75 @@ fn main() -> ! {
     display.power_on();
     delay.delay_millis(10);
 
+    let touch_addr = display.detect_touch_addr().unwrap_or_else(|| {
+        log::warn!("GT911 not found; defaulting to primary address");
+        GT911_ADDR_PRIMARY
+    });
+    let mut gt911 = Gt911::new(touch_addr);
+    display.configure_touch(&mut gt911, 960, 540);
+    delay.delay_millis(200);
+    display.init_touch(&mut gt911);
+
     display.fill(0x0F).unwrap();
-    display.flush(DrawMode::BlackOnWhite).unwrap();
+    display.flush(DrawMode::WhiteOnBlack).unwrap();
     println!("ereader_ui: display ready");
 
     let mut bridge = Rgb565ToGray4::new(display);
     let mut scene = make_scene(SCREEN_W, SCREEN_H);
-    let theme = make_theme();
+    let mut theme = make_theme();
+    let handlers = vec![handle_click as Callback];
+    let mut was_touching = false;
 
     loop {
-        let was_dirty = !scene.dirty_rect.is_empty();
-        {
-            let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
-            ctx.clip = scene.dirty_rect.clone();
-            layout_scene(&mut scene, &theme);
-            draw_scene(&mut scene, &mut ctx, &theme);
-        }
+        let dirty_rect = scene.dirty_rect.clone();
+        let was_dirty = !dirty_rect.is_empty();
+        let needs_full_refresh = dirty_rect.size.w >= SCREEN_W && dirty_rect.size.h >= SCREEN_H;
+
         if was_dirty {
+            if needs_full_refresh {
+                // Ghost-clear pass: needed for dark→light pixel transitions (e.g. dialog dismiss).
+                // Matches the page-turn pattern in ereader_full: fill white → WhiteOnBlack → draw → BlackOnWhite.
+                bridge.display.fill(0x0F).unwrap();
+                bridge.display.flush(DrawMode::WhiteOnBlack).unwrap();
+            }
+            {
+                let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
+                ctx.clip = dirty_rect;
+                layout_scene(&mut scene, &theme);
+                draw_scene(&mut scene, &mut ctx, &theme);
+            }
             bridge.flush();
         }
+
+        if let Some((tx, ty)) = bridge.display.read_touch(&mut gt911) {
+            if !was_touching {
+                // Physical (960×540) → logical portrait (540×960):
+                //   draw maps logical (lx,ly) → physical (ly, 539−lx)
+                //   so inverse: lx = 539−ty, ly = tx
+                let lx = (Display::HEIGHT as i32 - 1) - ty as i32;
+                let ly = tx as i32;
+                if let Some((target, action)) =
+                    click_at(&mut scene, &handlers, GPoint::new(lx, ly))
+                {
+                    if let Action::Command(ref cmd) = action {
+                        if target == ViewId::new("font_size") {
+                            let (new_font, new_bold) = match cmd.as_str() {
+                                "Small" => (FONT_6X10, FONT_6X10),
+                                "Large" => (FONT_10X20, FONT_10X20),
+                                _ => (FONT_9X15, FONT_9X15_BOLD),
+                            };
+                            theme.font = new_font;
+                            theme.bold_font = new_bold;
+                            scene.mark_layout_dirty();
+                        }
+                    }
+                }
+            }
+            was_touching = true;
+        } else {
+            was_touching = false;
+        }
+
         delay.delay_millis(50);
     }
 }

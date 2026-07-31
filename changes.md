@@ -1,5 +1,21 @@
 # Changes
 
+## 2026-07-31 (ereader_ui font size on device)
+
+- `examples/ereader_ui.rs`: font size toggle now works on the ESP device
+  - `theme` made `mut` in ESP `main`; `click_at` return value is now inspected in the touch handler
+  - When `target == "font_size"`, `theme.font`/`theme.bold_font` are updated and `scene.mark_layout_dirty()` triggers a full-screen refresh (which automatically uses the ghost-clear path)
+  - Font mapping matches the simulator: Small → `FONT_6X10`, Medium → `FONT_9X15`/`FONT_9X15_BOLD`, Large → `FONT_10X20`
+
+## 2026-07-31 (ereader_ui dialog hide fix + logging)
+
+- `examples/ereader_ui.rs`: dialog now disappears correctly when closed on the e-paper device
+  - Root cause: e-paper cannot drive dark pixels (dialog border/text) back to white in a single `BlackOnWhite` flush; requires a ghost-clear pass first
+  - Full-screen dirty redraws (dialog show/hide, orientation change, font change) now do `fill(0x0F)` + `flush(WhiteOnBlack)` before drawing content, then `flush(BlackOnWhite)` — matching the `ereader_full` page-turn pattern
+  - Partial dirty redraws continue to use a single `BlackOnWhite` flush (no visible flash)
+  - ESP logger switched from `init_logger_from_env()` to `init_logger(LevelFilter::Info)` so `info!()` output is always visible on the USB serial console (previously silently filtered when `ESP_LOG` env var was not set at compile time)
+  - `draw_dialog`: fill now uses `Rgb565::WHITE` explicitly (was `e.theme.bg`) with a comment confirming it runs before children draw
+
 ## 2026-07-31 (ereader_ui sync time)
 
 - `examples/ereader_ui.rs`: Sync Time button in settings dialog now sets the time label to the real system clock
