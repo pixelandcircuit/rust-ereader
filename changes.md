@@ -1,5 +1,13 @@
 # Changes
 
+## 2026-07-31 (ereader_ui backlight toggle)
+
+- `examples/ereader_ui.rs`: Backlight toggle group now controls the actual display backlight on the ESP device
+  - LEDC initialised on GPIO11 (Channel0, Timer0, 8-bit duty, 1 kHz) — same pin and config as `ereader_full`
+  - Starts at 100% (High) matching the toggle group default selection
+  - Off → 0%, Low → 25%, High → 100%; change takes effect immediately via `bl_ch.set_duty()` with no scene redraw needed
+  - Added `esp_hal::ledc`, `esp_hal::gpio::DriveMode`, and `esp_hal::time::Rate` imports (ESP only)
+
 ## 2026-07-31 (ereader_ui font size on device)
 
 - `examples/ereader_ui.rs`: font size toggle now works on the ESP device

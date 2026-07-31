@@ -435,7 +435,15 @@ impl<'a> embedded_graphics::geometry::OriginDimensions for Rgb565ToGray4<'a> {
 }
 
 #[cfg(feature = "esp")]
-use esp_hal::main;
+use esp_hal::{
+    ledc::{
+        channel::{self, ChannelIFace},
+        timer::{self, TimerIFace},
+        LSGlobalClkSource, Ledc, LowSpeed,
+    },
+    main,
+    time::Rate,
+};
 use log::info;
 
 #[cfg(feature = "esp")]
@@ -487,6 +495,22 @@ fn main() -> ! {
     display.flush(DrawMode::WhiteOnBlack).unwrap();
     println!("ereader_ui: display ready");
 
+    let mut ledc = Ledc::new(peripherals.LEDC);
+    ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
+    let mut lstimer0 = ledc.timer::<LowSpeed>(timer::Number::Timer0);
+    lstimer0.configure(timer::config::Config {
+        duty:         timer::config::Duty::Duty8Bit,
+        clock_source: timer::LSClockSource::APBClk,
+        frequency:    Rate::from_khz(1),
+    }).unwrap();
+    let mut bl_ch = ledc.channel(channel::Number::Channel0, peripherals.GPIO11);
+    bl_ch.configure(channel::config::Config {
+        timer:      &lstimer0,
+        duty_pct:   100,
+        drive_mode: esp_hal::gpio::DriveMode::PushPull,
+    }).unwrap();
+    bl_ch.set_duty(100).unwrap();
+
     let mut bridge = Rgb565ToGray4::new(display);
     let mut scene = make_scene(SCREEN_W, SCREEN_H);
     let mut theme = make_theme();
@@ -534,6 +558,13 @@ fn main() -> ! {
                             theme.font = new_font;
                             theme.bold_font = new_bold;
                             scene.mark_layout_dirty();
+                        } else if target == ViewId::new("backlight") {
+                            let duty: u8 = match cmd.as_str() {
+                                "Off"  => 0,
+                                "Low"  => 25,
+                                _      => 100,
+                            };
+                            bl_ch.set_duty(duty).unwrap();
                         }
                     }
                 }
