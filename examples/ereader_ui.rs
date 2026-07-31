@@ -9,6 +9,8 @@
 #[cfg(feature = "esp")]
 #[macro_use]
 extern crate alloc;
+#[cfg(feature = "esp")]
+use alloc::string::String;
 
 use embedded_graphics::mono_font::ascii::{FONT_6X10, FONT_9X15, FONT_9X15_BOLD, FONT_10X20};
 use embedded_graphics::pixelcolor::Rgb565;
@@ -280,8 +282,6 @@ fn make_scene(w: i32, h: i32) -> Scene {
     scene
 }
 
-// ── Simulator path ────────────────────────────────────────────────────────────
-#[cfg(feature = "simulator")]
 fn format_time_utc(unix_secs: u64) -> String {
     let h24 = (unix_secs / 3600) % 24;
     let m = (unix_secs / 60) % 60;
@@ -599,20 +599,92 @@ impl<'a> embedded_graphics::geometry::OriginDimensions for Rgb565ToGray4<'a> {
 
 #[cfg(feature = "esp")]
 use esp_hal::{
+    interrupt::software::SoftwareInterruptControl,
     ledc::{
         channel::{self, ChannelIFace},
         timer::{self, TimerIFace},
         LSGlobalClkSource, Ledc, LowSpeed,
     },
-    main,
+    rtc_cntl::Rtc,
     time::Rate,
+    timer::timg::TimerGroup,
 };
+#[cfg(feature = "esp")]
+use embassy_executor::Spawner;
+#[cfg(feature = "esp")]
+use embassy_net::{Runner, StackResources, IpEndpoint, IpAddress, Ipv4Address,
+                  udp::{PacketMetadata, UdpSocket}};
+#[cfg(feature = "esp")]
+use embassy_time::{Duration, Timer as EmbassyTimer};
+#[cfg(feature = "esp")]
+use esp_radio::wifi::{Config, ControllerConfig, Interface, WifiController, sta::StationConfig};
+#[cfg(feature = "esp")]
+use static_cell::StaticCell;
 use log::info;
 
+// WiFi credentials — set WIFI_SSID and WIFI_PASS at build time.
 #[cfg(feature = "esp")]
-#[main]
-fn main() -> ! {
-    use esp_hal::delay::Delay;
+const SSID:     &str = match option_env!("WIFI_SSID") { Some(s) => s, None => "SSID" };
+#[cfg(feature = "esp")]
+const PASSWORD: &str = match option_env!("WIFI_PASS") { Some(s) => s, None => "PASSWORD" };
+
+#[cfg(feature = "esp")]
+const NTP_ADDR:        [u8; 4] = [216, 239, 35, 0]; // time.google.com
+#[cfg(feature = "esp")]
+const NTP_UNIX_OFFSET: u64     = 2_208_988_800;     // NTP epoch → Unix epoch
+
+#[cfg(feature = "esp")]
+macro_rules! mk_static {
+    ($t:ty, $val:expr) => {{
+        static STATIC_CELL: StaticCell<$t> = StaticCell::new();
+        STATIC_CELL.uninit().write(($val))
+    }};
+}
+
+#[cfg(feature = "esp")]
+#[embassy_executor::task]
+async fn wifi_connection(mut controller: WifiController<'static>) {
+    loop {
+        match controller.connect_async().await {
+            Ok(_)  => { controller.wait_for_disconnect_async().await.ok(); }
+            Err(e) => { log::warn!("wifi connect error: {:?}", e); }
+        }
+        EmbassyTimer::after(Duration::from_secs(5)).await;
+    }
+}
+
+#[cfg(feature = "esp")]
+#[embassy_executor::task]
+async fn net_task(mut runner: Runner<'static, Interface<'static>>) {
+    runner.run().await
+}
+
+/// Query time.google.com via NTP and return Unix seconds, or None on error.
+#[cfg(feature = "esp")]
+async fn query_ntp(stack: embassy_net::Stack<'static>) -> Option<u64> {
+    let mut rx_meta = [PacketMetadata::EMPTY; 4];
+    let mut rx_buf  = [0u8; 512];
+    let mut tx_meta = [PacketMetadata::EMPTY; 4];
+    let mut tx_buf  = [0u8; 256];
+    let mut socket  = UdpSocket::new(stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
+    socket.bind(12345).ok()?;
+
+    let endpoint = IpEndpoint::new(IpAddress::Ipv4(Ipv4Address::from_octets(NTP_ADDR)), 123);
+    let mut pkt = [0u8; 48];
+    pkt[0] = 0x1B; // LI=0, VN=3, Mode=3 (client)
+    socket.send_to(&pkt, endpoint).await.ok()?;
+
+    let (n, _) = socket.recv_from(&mut pkt).await.ok()?;
+    if n < 48 { return None; }
+
+    let ntp_secs = u32::from_be_bytes([pkt[40], pkt[41], pkt[42], pkt[43]]) as u64;
+    if ntp_secs <= NTP_UNIX_OFFSET { return None; }
+    Some(ntp_secs - NTP_UNIX_OFFSET)
+}
+
+#[cfg(feature = "esp")]
+#[esp_rtos::main]
+async fn main(spawner: Spawner) -> ! {
     use esp_println::println;
 
     esp_println::logger::init_logger(log::LevelFilter::Info);
@@ -629,8 +701,10 @@ fn main() -> ! {
             ..Default::default()
         }
     );
+    // SRAM heap required by the WiFi stack (must be separate from PSRAM).
+    esp_alloc::heap_allocator!(size: 72 * 1024);
 
-    let delay = Delay::new();
+    let rtc = Rtc::new(peripherals.LPWR);
 
     let mut display = Display::new(
         ereader::pin_config!(peripherals),
@@ -641,9 +715,9 @@ fn main() -> ! {
     )
     .expect("display init");
 
-    delay.delay_millis(100);
+    EmbassyTimer::after(Duration::from_millis(100)).await;
     display.power_on();
-    delay.delay_millis(10);
+    EmbassyTimer::after(Duration::from_millis(10)).await;
 
     let touch_addr = display.detect_touch_addr().unwrap_or_else(|| {
         log::warn!("GT911 not found; defaulting to primary address");
@@ -651,7 +725,7 @@ fn main() -> ! {
     });
     let mut gt911 = Gt911::new(touch_addr);
     display.configure_touch(&mut gt911, 960, 540);
-    delay.delay_millis(200);
+    EmbassyTimer::after(Duration::from_millis(200)).await;
     display.init_touch(&mut gt911);
 
     display.fill(0x0F).unwrap();
@@ -697,6 +771,47 @@ fn main() -> ! {
     let mut cur_bl_idx   = bl_idx;
     let handlers = vec![handle_click as Callback];
     let mut was_touching = false;
+
+    // ── WiFi + NTP setup ─────────────────────────────────────────────────────
+    let timg0  = TimerGroup::new(peripherals.TIMG0);
+    let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
+    // Start the WiFi timer scheduler; must come before esp_radio::wifi::new.
+    esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
+
+    let station_config = Config::Station(
+        StationConfig::default()
+            .with_ssid(SSID)
+            .with_password(PASSWORD.into()),
+    );
+    let (controller, interfaces) = esp_radio::wifi::new(
+        peripherals.WIFI,
+        ControllerConfig::default().with_initial_config(station_config),
+    ).expect("wifi init");
+
+    let seed = rtc.current_time_us();
+    let (stack, runner) = embassy_net::new(
+        interfaces.station,
+        embassy_net::Config::dhcpv4(Default::default()),
+        mk_static!(StackResources<3>, StackResources::<3>::new()),
+        seed,
+    );
+    spawner.spawn(net_task(runner).expect("net_task"));
+    spawner.spawn(wifi_connection(controller).expect("wifi_connection"));
+
+    info!("connecting to wifi...");
+    stack.wait_config_up().await;
+    info!("wifi connected, querying NTP");
+    if let Some(unix_secs) = query_ntp(stack).await {
+        rtc.set_current_time_us(unix_secs * 1_000_000);
+        let time_str = format_time_utc(unix_secs);
+        if let Some(view) = scene.get_view_mut(&ViewId::new("time")) {
+            view.title = time_str.clone();
+        }
+        scene.mark_layout_dirty();
+        info!("time synced: {}", time_str);
+    } else {
+        info!("NTP query failed");
+    }
 
     loop {
         let dirty_rect = scene.dirty_rect.clone();
@@ -758,6 +873,20 @@ fn main() -> ! {
                             save_settings(cur_font_idx, cur_bl_idx, orientation.to_index());
                         }
                     }
+                    if target == ViewId::new("sync_time") {
+                        info!("sync_time pressed, querying NTP");
+                        if let Some(unix_secs) = query_ntp(stack).await {
+                            rtc.set_current_time_us(unix_secs * 1_000_000);
+                            let time_str = format_time_utc(unix_secs);
+                            if let Some(view) = scene.get_view_mut(&ViewId::new("time")) {
+                                view.title = time_str.clone();
+                            }
+                            scene.mark_layout_dirty();
+                            info!("time synced: {}", time_str);
+                        } else {
+                            info!("NTP query failed");
+                        }
+                    }
                 }
             }
             was_touching = true;
@@ -765,6 +894,6 @@ fn main() -> ! {
             was_touching = false;
         }
 
-        delay.delay_millis(50);
+        EmbassyTimer::after(Duration::from_millis(50)).await;
     }
 }

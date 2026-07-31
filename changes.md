@@ -1,5 +1,20 @@
 # Changes
 
+## 2026-07-31 (ereader_ui NTP time sync on device)
+
+- `examples/ereader_ui.rs`: ESP main function converted to async and wired up WiFi + NTP time sync
+  - `#[main]` / `fn main() -> !` changed to `#[esp_rtos::main]` / `async fn main(spawner: Spawner) -> !`
+  - `esp_alloc::heap_allocator!(size: 72 * 1024)` added alongside the PSRAM allocator — WiFi stack requires SRAM heap
+  - `Rtc::new(peripherals.LPWR)` added; RTC uptime used as embassy-net random seed and to store the synced time
+  - `TimerGroup` + `SoftwareInterruptControl` initialised; `esp_rtos::start()` called before WiFi init
+  - WiFi station config (`WIFI_SSID`/`WIFI_PASS` from build-time env vars, fallback to placeholder) passed to `esp_radio::wifi::new()`
+  - Embassy-net stack created; `net_task` and `wifi_connection` tasks spawned via `spawner`
+  - At startup: blocks on `stack.wait_config_up().await`, then calls `query_ntp(stack).await` — on success sets the RTC, updates the `"time"` label and triggers a redraw
+  - Pressing the Sync Time button re-runs the NTP query and updates the label without reinitializing WiFi
+  - `delay.delay_millis(50)` in the main loop replaced with `EmbassyTimer::after(Duration::from_millis(50)).await`; display power-on delays likewise converted to embassy timers
+  - `format_time_utc` de-gated from `simulator`-only so it's available on both targets
+  - `Cargo.toml`: `static-cell` corrected to `static_cell` (crate name on crates.io uses underscore)
+
 ## 2026-07-31 (ereader_ui orientation on device)
 
 - `examples/ereader_ui.rs`: orientation toggle now rotates the display on the ESP device
