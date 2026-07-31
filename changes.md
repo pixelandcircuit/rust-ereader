@@ -1,5 +1,16 @@
 # Changes
 
+## 2026-07-30 (ereader_ui settings dialog)
+
+- `examples/ereader_ui.rs`: pressing Settings now shows a centered modal dialog
+  - Dialog is added as the last child of the root vbox so it renders on top of all other views; starts hidden (`visible: false`)
+  - `draw_dialog`: fills white background, double-stroke border for visual weight
+  - `layout_dialog`: centers the dialog on screen (60 × 340 px, 420 × 240), then delegates child layout to `layout_vbox`
+  - Dialog contains: "Settings" title label, "Font Size" label + `[Small|Medium|Large]` toggle group (Medium default), "Backlight" label + `[Off|Low|High]` toggle group (High default), Close button
+  - `handle_click` callback: shows dialog on Settings tap, hides it on Close tap; wired into the simulator's `handlers` vec (`Vec<Callback>`)
+  - `#[macro_use]` added to the ESP `extern crate alloc` so `vec![]` works in shared `make_scene` code on the no_std target
+  - Removed spurious `use fontdue::layout::HorizontalAlign` import
+
 ## 2026-07-30 (ereader_ui logging)
 
 - `Cargo.toml`: added `env_logger = "0.11"` as optional dep; enabled via `simulator` feature alongside `dep:log`

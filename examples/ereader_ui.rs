@@ -7,6 +7,7 @@
 #![cfg_attr(feature = "esp", no_main)]
 
 #[cfg(feature = "esp")]
+#[macro_use]
 extern crate alloc;
 
 use embedded_graphics::mono_font::ascii::{FONT_9X15, FONT_9X15_BOLD};
@@ -14,16 +15,21 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::{RgbColor, WebColors};
 use iris_ui::button::make_button;
 use iris_ui::device::EmbeddedDrawingContext;
-use iris_ui::geom::{Bounds, Insets, Point as GPoint};
+use iris_ui::geom::{Bounds, Insets, Point as GPoint, Size};
 use iris_ui::gfx::TextStyle;
 use iris_ui::label::make_label;
 use iris_ui::layouts::{layout_hbox, layout_vbox};
 use iris_ui::scene::{click_at, draw_scene, layout_scene, Scene};
+use iris_ui::toggle_group::make_toggle_group;
 use iris_ui::view::{Align, Flex, View, ViewId};
-use iris_ui::{DrawEvent, Theme};
+use iris_ui::{Callback, DrawEvent, GuiEvent, LayoutEvent, Theme};
 
 const SCREEN_W: i32 = 540;
 const SCREEN_H: i32 = 960;
+
+const DIALOG_W: i32 = 420;
+const DIALOG_H: i32 = 240;
+const DIALOG_PAD: i32 = 16;
 
 const BOOK_TEXT: &str = "My dear fellow, said Sherlock Holmes as we sat on \
 either side of the fire in his lodgings at Baker Street, life is infinitely \
@@ -113,6 +119,36 @@ fn draw_content(e: &mut DrawEvent) {
     }
 }
 
+fn draw_dialog(e: &mut DrawEvent) {
+    let b = e.view.bounds;
+    e.ctx.fill_rect(&b, &e.theme.bg);
+    e.ctx.stroke_rect(&b, &e.theme.fg);
+    // Double border for visual weight
+    let inner = Bounds::new(b.position.x + 2, b.position.y + 2, b.size.w - 4, b.size.h - 4);
+    e.ctx.stroke_rect(&inner, &e.theme.fg);
+}
+
+fn layout_dialog(pass: &mut LayoutEvent) {
+    if let Some(view) = pass.scene.get_view_mut(pass.target) {
+        view.bounds.position.x = (SCREEN_W - DIALOG_W) / 2;
+        view.bounds.position.y = (SCREEN_H - DIALOG_H) / 2;
+        view.bounds.size.w = DIALOG_W;
+        view.bounds.size.h = DIALOG_H;
+    }
+    pass.space = Size::new(DIALOG_W, DIALOG_H);
+    layout_vbox(pass);
+}
+
+fn handle_click(event: &mut GuiEvent) {
+    if event.target == &ViewId::new("settings") {
+        event.scene.show_view(&ViewId::new("dialog"));
+        event.scene.mark_dirty_all();
+    } else if event.target == &ViewId::new("dialog_close") {
+        event.scene.hide_view(&ViewId::new("dialog"));
+        event.scene.mark_dirty_all();
+    }
+}
+
 fn make_scene() -> Scene {
     let mut scene = Scene::new_with_bounds(Bounds::new(0, 0, SCREEN_W, SCREEN_H));
 
@@ -174,6 +210,34 @@ fn make_scene() -> Scene {
         &main_id,
     );
 
+    // ── Settings dialog (hidden, drawn last so it appears on top) ────────────
+    let dialog_id = ViewId::new("dialog");
+    scene.add_view_to_parent(make_label("dlg_title", "Settings"), &dialog_id);
+    scene.add_view_to_parent(make_label("dlg_font_lbl", "Font Size"), &dialog_id);
+    scene.add_view_to_parent(
+        make_toggle_group(&ViewId::new("font_size"), vec!["Small", "Medium", "Large"], 1),
+        &dialog_id,
+    );
+    scene.add_view_to_parent(make_label("dlg_bl_lbl", "Backlight"), &dialog_id);
+    scene.add_view_to_parent(
+        make_toggle_group(&ViewId::new("backlight"), vec!["Off", "Low", "High"], 2),
+        &dialog_id,
+    );
+    scene.add_view_to_parent(make_button(&ViewId::new("dialog_close"), "Close"), &dialog_id);
+    scene.add_view_to_parent(
+        View {
+            name: dialog_id,
+            h_flex: Flex::Resize,
+            v_flex: Flex::Resize,
+            layout: Some(layout_dialog),
+            draw: Some(draw_dialog),
+            padding: Insets::new_same(DIALOG_PAD),
+            visible: false,
+            ..Default::default()
+        },
+        &main_id,
+    );
+
     scene.add_view_to_root(View {
         name: main_id,
         h_flex: Flex::Resize,
@@ -205,7 +269,7 @@ fn main() {
 
     let mut scene = make_scene();
     let theme = make_theme();
-    let handlers = Vec::new();
+    let handlers: Vec<Callback> = vec![handle_click];
 
     'running: loop {
         {
@@ -285,7 +349,6 @@ impl<'a> embedded_graphics::geometry::OriginDimensions for Rgb565ToGray4<'a> {
 
 #[cfg(feature = "esp")]
 use esp_hal::main;
-use fontdue::layout::HorizontalAlign;
 
 #[cfg(feature = "esp")]
 #[main]
