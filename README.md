@@ -44,6 +44,10 @@ cargo esp-build --example ereader_full
 cargo esp-run --example ereader_full
 ```
 
+```shell
+cargo esp-run --example ereader_ui
+```
+
 ## Changing the book
 
 The active book is embedded at compile time in `examples/ereader_full.rs`:
@@ -170,8 +174,8 @@ fonts/           — Embedded TTF/OTF font files
 Defined in `partitions.csv`. Sequential-storage is used for persisting reading position, font size, orientation, and backlight level across deep-sleep cycles.
 
 ## Tasks Backlog
-- [ ] setup unit tests that run on desktop, make run on commit/push in github workflow
+- [x] setup unit tests that run on desktop, make run on commit/push in github workflow
 - [ ] fix drawing bugs.
-- [ ] hook up font and orientation changes.
+- [x] hook up font and orientation changes.
 - [ ] hook up wifi and sync time.
 - [ ] separate dialog for fast page flipping. trigger with hot key.
