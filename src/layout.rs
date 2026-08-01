@@ -177,3 +177,158 @@ pub fn layout_chapter(text: &str, cfg: &LayoutConfig) -> Layout {
 
     Layout { pages }
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Fixed-width metrics: every character is `px` wide, space included.
+    fn fixed_cfg(char_px: u32, line_h: u32, w: u32, h: u32) -> LayoutConfig {
+        LayoutConfig {
+            screen_width:  w,
+            screen_height: h,
+            margin_x: 0,
+            margin_y: 0,
+            font: FontMetrics {
+                line_height_px: line_h,
+                space_width_px: char_px,
+                measure: Box::new(move |s: &str| s.chars().count() as u32 * char_px),
+            },
+        }
+    }
+
+    fn pages(text: &str, cfg: &LayoutConfig) -> Vec<(usize, usize)> {
+        layout_chapter(text, cfg)
+            .pages
+            .iter()
+            .map(|p| (p.start, p.end))
+            .collect()
+    }
+
+    // ── Basic word wrapping ───────────────────────────────────────────────────
+
+    #[test]
+    fn single_short_line_one_page() {
+        // "hello" = 5 chars × 10 px = 50 px; fits in 100 px wide, 50 px tall
+        let cfg = fixed_cfg(10, 20, 100, 50);
+        let p = pages("hello", &cfg);
+        assert_eq!(p.len(), 1);
+        assert_eq!(p[0], (0, 5));
+    }
+
+    #[test]
+    fn word_wrap_splits_at_space() {
+        // 10 px/char, 100 px wide → 10 chars per line.
+        // "hello world" — "hello" fits, then space, "world" would make 11 chars → wraps.
+        // Both words fit on their own lines; single page tall enough for 2 lines.
+        let cfg = fixed_cfg(10, 20, 100, 60);
+        let layout = layout_chapter("hello world", &cfg);
+        assert_eq!(layout.pages.len(), 1, "both lines fit one page");
+        // The full text is covered.
+        assert_eq!(layout.pages[0].end, "hello world".len());
+    }
+
+    #[test]
+    fn long_word_placed_alone_on_line() {
+        // "superlongword" = 13 chars × 10 px = 130 px > 100 px wide.
+        // Must not loop forever; placed alone on its line.
+        let cfg = fixed_cfg(10, 20, 100, 50);
+        let layout = layout_chapter("superlongword", &cfg);
+        assert_eq!(layout.pages.len(), 1);
+        assert_eq!(layout.pages[0].end, "superlongword".len());
+    }
+
+    // ── Hard newlines ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn hard_newline_forces_line_break() {
+        // "a\nb" — two lines of 1 char each. Both fit in one page.
+        let cfg = fixed_cfg(10, 20, 100, 60);
+        let layout = layout_chapter("a\nb", &cfg);
+        assert_eq!(layout.pages.len(), 1);
+        assert_eq!(layout.pages[0].end, "a\nb".len());
+    }
+
+    #[test]
+    fn double_newline_paragraph_gap_causes_page_break() {
+        // line_h=20, para_gap=10. Screen height = 30 → room for exactly one line.
+        // After the first line, a double-newline adds para_gap (10) then another line_h (20):
+        // total 50 > 30, so the second paragraph starts a new page.
+        let cfg = fixed_cfg(10, 20, 100, 30);
+        let text = "first\n\nsecond";
+        let layout = layout_chapter(text, &cfg);
+        assert!(layout.pages.len() >= 2, "double newline should push second para to new page");
+        // First page starts at 0.
+        assert_eq!(layout.pages[0].start, 0);
+        // Second page contains "second".
+        let last = layout.pages.last().unwrap();
+        assert_eq!(&text[last.start..last.end], "second");
+    }
+
+    // ── Pagination ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn text_splits_across_pages() {
+        // 10 px/char, 100 px wide (10 chars/line), line_h=20, screen_h=60 → 3 lines/page.
+        // Feed 9 words of 8 chars each → 9 lines → should span 3 pages.
+        let cfg = fixed_cfg(10, 20, 100, 60);
+        // Each "wordXXXX" is 8 chars; they each fit on their own line (80 px < 100).
+        let text = "aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff gggggggg hhhhhhhh iiiiiiii";
+        let layout = layout_chapter(text, &cfg);
+        assert!(layout.pages.len() >= 3, "9 lines at 3 lines/page = 3 pages");
+    }
+
+    #[test]
+    fn pages_cover_full_text_no_gaps() {
+        let cfg = fixed_cfg(10, 20, 100, 60);
+        let text = "one two three four five six seven eight nine ten eleven twelve";
+        let layout = layout_chapter(text, &cfg);
+        // Pages must be contiguous and cover the full text.
+        let mut expected_start = 0usize;
+        for page in &layout.pages {
+            assert_eq!(page.start, expected_start, "pages must be contiguous");
+            expected_start = page.end;
+        }
+        assert_eq!(expected_start, text.len(), "pages must cover full text");
+    }
+
+    #[test]
+    fn last_page_end_equals_text_len() {
+        let cfg = fixed_cfg(10, 20, 100, 40);
+        let text = "the quick brown fox jumps over the lazy dog";
+        let layout = layout_chapter(text, &cfg);
+        assert!(!layout.pages.is_empty());
+        assert_eq!(layout.pages.last().unwrap().end, text.len());
+    }
+
+    // ── Edge cases ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn empty_text_gives_one_empty_page() {
+        // The engine always emits at least one page so the reader always has
+        // a page to display; an empty-text page has start == end == 0.
+        let cfg = fixed_cfg(10, 20, 100, 100);
+        let layout = layout_chapter("", &cfg);
+        assert_eq!(layout.pages.len(), 1);
+        assert_eq!(layout.pages[0].start, 0);
+        assert_eq!(layout.pages[0].end, 0);
+    }
+
+    #[test]
+    fn leading_spaces_are_dropped() {
+        // "   hello" — leading spaces on first line should not affect page count.
+        let cfg = fixed_cfg(10, 20, 100, 50);
+        let layout = layout_chapter("   hello", &cfg);
+        assert_eq!(layout.pages.len(), 1);
+    }
+
+    #[test]
+    fn zero_height_gives_single_page() {
+        // Degenerate config: one page for everything.
+        let cfg = fixed_cfg(10, 0, 100, 100);
+        let layout = layout_chapter("hello world", &cfg);
+        assert_eq!(layout.pages.len(), 1);
+    }
+}

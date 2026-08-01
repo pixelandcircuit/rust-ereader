@@ -1,5 +1,19 @@
 # Changes
 
+## 2026-08-01 (Add unit tests for layout engine)
+
+Added 11 `#[test]` functions to `src/layout.rs` covering:
+- Basic word wrap splitting at spaces
+- Long words that exceed line width placed alone without looping
+- Hard newlines forcing line breaks
+- Double newlines pushing paragraphs to new pages
+- Multi-page layout with contiguous, gap-free page ranges
+- Last page `end` equalling `text.len()`
+- Edge cases: empty text, leading spaces, zero `line_height`
+
+Tests use a fixed-width character metric (no TTF dependency) and run with:
+`cargo test --lib --no-default-features --features simulator --target aarch64-apple-darwin`
+
 ## 2026-08-01 (Improve WiFi connection logging)
 
 - Print SSID before attempting to connect: `NTP: connecting to 'MyNetwork' ...`
