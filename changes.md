@@ -1,5 +1,26 @@
 # Changes
 
+## 2026-08-01 (Wire BookSession into ereader_ui)
+
+- `examples/ereader_ui.rs`: replaced static `BOOK_TEXT` with a real EPUB loaded
+  via `include_bytes!("sherlock_holmes.epub")` and `EpubArchive`
+- Added three character-width measure functions (`measure_small/medium/large`) and
+  `layout_cfg(font, w, h)` helper that computes `LayoutConfig` dimensions to match
+  `draw_content`'s rendering geometry (subtracts topbar/bottombar heights and padding)
+- `draw_content` now renders `e.view.title` instead of static text; title is set by
+  `update_content()` to the current page's text slice from `BookSession`
+- Added `update_content(scene, session)` helper that pushes current-page text into
+  the `content` view and updates the `chapter` / `page` footer labels
+- Bottom bar: replaced hardcoded chapter/page labels with `< Prev` + `Next >` nav
+  buttons plus live chapter/page count labels
+- **Simulator**: `BookSession` created from the EPUB on startup; `prev_page` /
+  `next_page` click handlers advance pages and cross chapter boundaries; font-size
+  and orientation changes trigger `relayout()` and re-render
+- **ESP**: same navigation plus NVS persistence — added `KEY_CHAPTER=13` /
+  `KEY_ANCHOR=14`, `load_position()` / `save_position()` functions; on startup the
+  position is restored via `BookSession::restore()`; position is saved to flash after
+  every page turn
+
 ## 2026-08-01 (Add BookSession abstraction)
 
 - `src/reader.rs`: added `BookSession` struct that combines the EPUB spine with

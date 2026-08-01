@@ -25,7 +25,10 @@ use iris_ui::scene::{click_at, draw_scene, layout_scene, Scene};
 use iris_ui::toggle_group::make_toggle_group;
 use iris_ui::view::{Align, Flex, View, ViewId};
 use iris_ui::{Action, Callback, DrawEvent, GuiEvent, LayoutEvent, Theme};
+use ereader::epub::EpubArchive;
 use ereader::hardware::{BacklightLevel, FontSize, HardwareAccess, Orientation};
+use ereader::layout::{FontMetrics, LayoutConfig};
+use ereader::reader::BookSession;
 #[cfg(feature = "simulator")]
 use ereader::hardware::SimHardware;
 #[cfg(feature = "esp")]
@@ -34,24 +37,41 @@ use ereader::hardware::EspHardware;
 const DIALOG_W: i32 = 420;
 const DIALOG_PAD: i32 = 16;
 
-const BOOK_TEXT: &str = "My dear fellow, said Sherlock Holmes as we sat on \
-either side of the fire in his lodgings at Baker Street, life is infinitely \
-stranger than anything which the mind of man could invent. We would not dare \
-to conceive the things which are really mere commonplaces of existence. If we \
-could fly out of that window hand in hand, hover over this great city, gently \
-remove the roofs, and peep in at the queer things which are going on, the \
-strange coincidences, the plannings, the cross-purposes, the wonderful chains \
-of events, working through generations, and leading to the most outré results, \
-it would make all fiction with its conventionalities and foreseen conclusions \
-most stale and unprofitable. And yet I am not convinced of it, said I. The \
-cases which come to light in the papers are, as a rule, bald enough, and vulgar \
-enough. We have in our police reports realism pushed to its extreme limits, and \
-yet the result is, it must be confessed, neither fascinating nor artistic. A \
-certain selection and discretion must be used in producing a realistic effect, \
-remarked Holmes. This is wanting in the police report, where more stress is \
-laid, perhaps, upon the platitudes of the magistrate than upon the details, \
-which to an observer contain the vital essence of the whole matter. Depend \
-upon it, there is nothing so unnatural as the commonplace.";
+const EPUB_DATA: &[u8] = include_bytes!("sherlock_holmes.epub");
+
+// Character-width measure functions for the three bitmap fonts.
+// FONT_6X10: 6px wide + 1px spacing = 7px/char
+// FONT_9X15: 9px wide + 1px spacing = 10px/char
+// FONT_10X20: 10px wide + 1px spacing = 11px/char
+fn measure_small(s: &str)  -> u32 { s.chars().count() as u32 * 7  }
+fn measure_medium(s: &str) -> u32 { s.chars().count() as u32 * 10 }
+fn measure_large(s: &str)  -> u32 { s.chars().count() as u32 * 11 }
+
+/// Build a LayoutConfig that matches draw_content's rendering geometry
+/// for the given font and logical screen size.
+fn layout_cfg(font: FontSize, w: i32, h: i32) -> LayoutConfig {
+    let (char_w, char_h, measure_fn): (u32, u32, fn(&str) -> u32) = match font {
+        FontSize::Small  => (7,  10, measure_small),
+        FontSize::Medium => (10, 15, measure_medium),
+        FontSize::Large  => (11, 20, measure_large),
+    };
+    // Top and bottom bars each have 4px top-pad + char_h + 4px bottom-pad.
+    let bar_h = char_h + 8;
+    // pad_x=16 on each side; pad_y=12 on each side inside content view.
+    let content_w = (w as u32).saturating_sub(32);
+    let content_h = (h as u32).saturating_sub(2 * bar_h + 24);
+    LayoutConfig {
+        screen_width:  content_w,
+        screen_height: content_h,
+        margin_x: 0,
+        margin_y: 0,
+        font: FontMetrics {
+            line_height_px: char_h + 3,
+            space_width_px: char_w,
+            measure: measure_fn,
+        },
+    }
+}
 
 const DIALOG_ID:ViewId = ViewId::new("dialog");
 
@@ -114,7 +134,7 @@ fn draw_content(e: &mut DrawEvent) {
     let mut y = e.view.bounds.position.y + pad_y;
     let max_y = e.view.bounds.position.y + e.view.bounds.size.h;
 
-    let mut remaining = BOOK_TEXT;
+    let mut remaining = e.view.title.as_str();
     while !remaining.is_empty() && y + char_h <= max_y {
         let (line, rest) = next_line(remaining, max_chars);
         if !line.is_empty() {
@@ -201,11 +221,10 @@ fn make_scene(w: i32, h: i32) -> Scene {
 
     // ── Bottom bar ───────────────────────────────────────────────────────────
     let bottombar_id = ViewId::new("bottombar");
-    scene.add_view_to_parent(
-        make_label("chapter", "Chapter 3: A Case of Identity"),
-        &bottombar_id,
-    );
-    scene.add_view_to_parent(make_label("page", "Page 42 of 185"), &bottombar_id);
+    scene.add_view_to_parent(make_button(&ViewId::new("prev_page"), "< Prev"), &bottombar_id);
+    scene.add_view_to_parent(make_label("chapter", "Loading..."), &bottombar_id);
+    scene.add_view_to_parent(make_label("page", ""), &bottombar_id);
+    scene.add_view_to_parent(make_button(&ViewId::new("next_page"), "Next >"), &bottombar_id);
 
     // ── Root panel (vbox) ────────────────────────────────────────────────────
     let main_id = ViewId::new("main");
@@ -300,6 +319,30 @@ fn format_time_utc(unix_secs: u64) -> String {
     format!("{}:{:02} {}", h12, m, ampm)
 }
 
+fn update_content(scene: &mut Scene, session: &BookSession) {
+    let text = format!("{}", session.reader.current_text());
+    if let Some(v) = scene.get_view_mut(&ViewId::new("content")) {
+        v.title = text;
+    }
+    let chapter_str = format!(
+        "Ch.{} of {}",
+        session.chapter_idx + 1,
+        session.chapter_count()
+    );
+    if let Some(v) = scene.get_view_mut(&ViewId::new("chapter")) {
+        v.title = chapter_str;
+    }
+    let page_str = format!(
+        "p.{}/{}",
+        session.reader.current_page + 1,
+        session.reader.page_count()
+    );
+    if let Some(v) = scene.get_view_mut(&ViewId::new("page")) {
+        v.title = page_str;
+    }
+    scene.mark_dirty_all();
+}
+
 #[cfg(feature = "simulator")]
 fn main() {
     use embedded_graphics::geometry::Size;
@@ -320,6 +363,11 @@ fn main() {
     let mut scene = make_scene(win_w, win_h);
     let mut theme = make_theme();
     let handlers: Vec<Callback> = vec![handle_click];
+
+    let epub = EpubArchive::new(EPUB_DATA).expect("sherlock_holmes.epub parse failed");
+    let mut cfg = layout_cfg(hw.font_size(), win_w, win_h);
+    let mut session = BookSession::new(&epub, &cfg).expect("BookSession init failed");
+    update_content(&mut scene, &session);
 
     'running: loop {
         {
@@ -351,6 +399,9 @@ fn main() {
                                         Size::new(win_w as u32, win_h as u32),
                                     );
                                     window = Window::new("ereader_ui", &settings);
+                                    cfg = layout_cfg(hw.font_size(), win_w, win_h);
+                                    session.reader.relayout(&cfg);
+                                    update_content(&mut scene, &session);
                                 }
                             } else if target == ViewId::new("font_size") {
                                 hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
@@ -359,7 +410,10 @@ fn main() {
                                     FontSize::Medium => (FONT_9X15,  FONT_9X15_BOLD),
                                     FontSize::Large  => (FONT_10X20, FONT_10X20),
                                 };
+                                cfg = layout_cfg(hw.font_size(), win_w, win_h);
+                                session.reader.relayout(&cfg);
                                 scene.mark_layout_dirty();
+                                update_content(&mut scene, &session);
                             } else if target == ViewId::new("backlight") {
                                 hw.set_backlight_level(BacklightLevel::from_cmd(cmd.as_str()));
                             }
@@ -370,6 +424,20 @@ fn main() {
                                 view.title = format_time_utc(t);
                             }
                             scene.mark_layout_dirty();
+                        } else if target == ViewId::new("prev_page") {
+                            if session.reader.current_page == 0 {
+                                session.prev_chapter(&epub, &cfg).ok();
+                            } else {
+                                session.reader.turn_page(false);
+                            }
+                            update_content(&mut scene, &session);
+                        } else if target == ViewId::new("next_page") {
+                            if session.reader.current_page + 1 >= session.reader.page_count() {
+                                session.next_chapter(&epub, &cfg).ok();
+                            } else {
+                                session.reader.turn_page(true);
+                            }
+                            update_content(&mut scene, &session);
                         }
                     }
                 }
@@ -445,15 +513,19 @@ fn block_on<F: core::future::Future>(mut f: F) -> F::Output {
     }
 }
 
-// Keys 10–12 to avoid collisions with ereader_full (which uses 0–4).
+// Keys 10–14 to avoid collisions with ereader_full (which uses 0–4).
 #[cfg(feature = "esp")]
 const NVS_RANGE: core::ops::Range<u32> = 0x9000..0xF000;
 #[cfg(feature = "esp")]
-const KEY_FONT: u8 = 10;
+const KEY_FONT:    u8 = 10;
 #[cfg(feature = "esp")]
-const KEY_BL: u8 = 11;
+const KEY_BL:      u8 = 11;
 #[cfg(feature = "esp")]
-const KEY_ORI: u8 = 12;
+const KEY_ORI:     u8 = 12;
+#[cfg(feature = "esp")]
+const KEY_CHAPTER: u8 = 13;
+#[cfg(feature = "esp")]
+const KEY_ANCHOR:  u8 = 14;
 
 /// Returns (font_idx, bl_idx, ori_idx). Defaults: Medium (1), High (2), Portrait (0).
 #[cfg(feature = "esp")]
@@ -491,6 +563,42 @@ fn save_settings(font_idx: usize, bl_idx: usize, ori_idx: usize) {
     save(KEY_FONT, font_idx as u32);
     save(KEY_BL,   bl_idx   as u32);
     save(KEY_ORI,  ori_idx  as u32);
+}
+
+/// Returns (chapter_idx, anchor_byte). Defaults: chapter 0, byte 0.
+#[cfg(feature = "esp")]
+fn load_position() -> (usize, usize) {
+    let mut flash = FlashAdapter(FlashStorage::new());
+    let mut cache = NoCache::new();
+    let mut buf = [0u8; 64];
+    let mut load = |key: u8| -> u32 {
+        match block_on(map::fetch_item::<u8, u32, _>(
+            &mut flash, NVS_RANGE, &mut cache, &mut buf, &key,
+        )) {
+            Ok(Some(v)) => v,
+            _ => 0,
+        }
+    };
+    let chapter = load(KEY_CHAPTER) as usize;
+    let anchor  = load(KEY_ANCHOR)  as usize;
+    log::info!("position loaded: chapter={} anchor={}", chapter, anchor);
+    (chapter, anchor)
+}
+
+#[cfg(feature = "esp")]
+fn save_position(chapter_idx: usize, anchor_byte: usize) {
+    let mut flash = FlashAdapter(FlashStorage::new());
+    let mut cache = NoCache::new();
+    let mut buf = [0u8; 64];
+    let mut save = |key: u8, val: u32| {
+        if let Err(e) = block_on(map::store_item::<u8, u32, _>(
+            &mut flash, NVS_RANGE, &mut cache, &mut buf, &key, &val,
+        )) {
+            log::warn!("flash save key {} failed: {:?}", key, e);
+        }
+    };
+    save(KEY_CHAPTER, chapter_idx as u32);
+    save(KEY_ANCHOR,  anchor_byte as u32);
 }
 
 /// Wraps the Gray4 e-paper display and presents an Rgb565 DrawTarget for iris-ui.
@@ -723,6 +831,17 @@ async fn main(spawner: Spawner) -> ! {
     let handlers = vec![handle_click as Callback];
     let mut was_touching = false;
 
+    let epub = EpubArchive::new(EPUB_DATA).expect("epub parse");
+    let mut cfg = layout_cfg(hw.font_size(), lw, lh);
+    let (saved_chapter, saved_anchor) = load_position();
+    let mut session = if saved_chapter > 0 || saved_anchor > 0 {
+        BookSession::restore(&epub, &cfg, saved_chapter, saved_anchor)
+            .unwrap_or_else(|_| BookSession::new(&epub, &cfg).expect("epub load"))
+    } else {
+        BookSession::new(&epub, &cfg).expect("epub load")
+    };
+    update_content(&mut scene, &session);
+
     // ── WiFi + NTP setup ─────────────────────────────────────────────────────
     let station_config = Config::Station(
         StationConfig::default()
@@ -795,7 +914,11 @@ async fn main(spawner: Spawner) -> ! {
                                 FontSize::Medium => (FONT_9X15,  FONT_9X15_BOLD),
                                 FontSize::Large  => (FONT_10X20, FONT_10X20),
                             };
+                            let (cur_w, cur_h) = hw.orientation().logical_size();
+                            cfg = layout_cfg(hw.font_size(), cur_w, cur_h);
+                            session.reader.relayout(&cfg);
                             scene.mark_layout_dirty();
+                            update_content(&mut scene, &session);
                             save_settings(hw.font_size().to_index(), hw.backlight_level().to_index(), hw.orientation().to_index());
                         } else if target == ViewId::new("backlight") {
                             hw.set_backlight_level(BacklightLevel::from_cmd(cmd.as_str()));
@@ -806,7 +929,10 @@ async fn main(spawner: Spawner) -> ! {
                             bridge.orientation = hw.orientation();
                             let (new_w, new_h) = hw.orientation().logical_size();
                             scene.bounds = Bounds::new(0, 0, new_w, new_h);
+                            cfg = layout_cfg(hw.font_size(), new_w, new_h);
+                            session.reader.relayout(&cfg);
                             scene.mark_layout_dirty();
+                            update_content(&mut scene, &session);
                             save_settings(hw.font_size().to_index(), hw.backlight_level().to_index(), hw.orientation().to_index());
                         }
                     }
@@ -822,6 +948,22 @@ async fn main(spawner: Spawner) -> ! {
                         // } else {
                         //     info!("NTP query failed");
                         // }
+                    } else if target == ViewId::new("prev_page") {
+                        if session.reader.current_page == 0 {
+                            session.prev_chapter(&epub, &cfg).ok();
+                        } else {
+                            session.reader.turn_page(false);
+                        }
+                        update_content(&mut scene, &session);
+                        save_position(session.chapter_idx, session.reader.anchor_byte);
+                    } else if target == ViewId::new("next_page") {
+                        if session.reader.current_page + 1 >= session.reader.page_count() {
+                            session.next_chapter(&epub, &cfg).ok();
+                        } else {
+                            session.reader.turn_page(true);
+                        }
+                        update_content(&mut scene, &session);
+                        save_position(session.chapter_idx, session.reader.anchor_byte);
                     }
                 }
             }
