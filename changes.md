@@ -1,5 +1,25 @@
 # Changes
 
+## 2026-08-01 (Switch ereader_ui content rendering to Noticia Text TTF)
+
+- `examples/ereader_ui.rs`: replaced bitmap-font content rendering with Noticia Text
+  TrueType via `ereader::font::TextRenderer`
+- `draw_content` now only fills the white background; TrueType text is drawn outside
+  iris-ui after `draw_scene` — avoids the lack of pixel-level drawing in `DrawingContext`
+- Added `render_ttf_text(text, font_px, bounds, put_pixel)` — shared word-wrap +
+  rasterise loop that accepts a per-pixel closure, so the same logic drives both the
+  simulator (`DrawTarget::draw_iter` with gray→Rgb565 conversion) and the ESP
+  (`Display::set_pixel` with orientation mapping)
+- Added `next_ttf_line` for TTF-metric word wrapping (advances use `char_advance`,
+  handles hard `\n` breaks) and `bounds_overlap` to detect when the content view was
+  repainted (to avoid unnecessary TTF passes on non-content dirty events)
+- Added `font_px_for(FontSize) -> f32`: Small=16 px, Medium=22 px, Large=28 px
+- Updated `layout_cfg` with approximate Noticia Text average advance widths and line
+  heights for accurate pagination: Small (9 px / 22 px lh), Medium (13 px / 30 px lh),
+  Large (16 px / 38 px lh)
+- Removed `next_line`, `TextStyle` import, and content `view.title` setting from
+  `update_content` (text is now read directly from `session.reader.current_text()`)
+
 ## 2026-08-01 (Wire BookSession into ereader_ui)
 
 - `examples/ereader_ui.rs`: replaced static `BOOK_TEXT` with a real EPUB loaded

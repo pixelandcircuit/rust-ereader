@@ -18,7 +18,6 @@ use embedded_graphics::prelude::RgbColor;
 use iris_ui::button::make_button;
 use iris_ui::device::EmbeddedDrawingContext;
 use iris_ui::geom::{Bounds, Insets, Point as GPoint, Size};
-use iris_ui::gfx::TextStyle;
 use iris_ui::label::make_label;
 use iris_ui::layouts::{layout_hbox, layout_std_panel, layout_vbox};
 use iris_ui::scene::{click_at, draw_scene, layout_scene, Scene};
@@ -26,6 +25,7 @@ use iris_ui::toggle_group::make_toggle_group;
 use iris_ui::view::{Align, Flex, View, ViewId};
 use iris_ui::{Action, Callback, DrawEvent, GuiEvent, LayoutEvent, Theme};
 use ereader::epub::EpubArchive;
+use ereader::font::TextRenderer;
 use ereader::hardware::{BacklightLevel, FontSize, HardwareAccess, Orientation};
 use ereader::layout::{FontMetrics, LayoutConfig};
 use ereader::reader::BookSession;
@@ -39,37 +39,123 @@ const DIALOG_PAD: i32 = 16;
 
 const EPUB_DATA: &[u8] = include_bytes!("sherlock_holmes.epub");
 
-// Character-width measure functions for the three bitmap fonts.
-// FONT_6X10: 6px wide + 1px spacing = 7px/char
-// FONT_9X15: 9px wide + 1px spacing = 10px/char
-// FONT_10X20: 10px wide + 1px spacing = 11px/char
-fn measure_small(s: &str)  -> u32 { s.chars().count() as u32 * 7  }
-fn measure_medium(s: &str) -> u32 { s.chars().count() as u32 * 10 }
-fn measure_large(s: &str)  -> u32 { s.chars().count() as u32 * 11 }
+// Approximate Noticia Text advance widths for pagination.
+// Real TTF widths vary per character; these averages are close enough for
+// page-size estimation. The visual rendering uses actual TTF metrics.
+fn measure_small(s: &str)  -> u32 { s.chars().count() as u32 * 9  }  // 16 px
+fn measure_medium(s: &str) -> u32 { s.chars().count() as u32 * 13 }  // 22 px
+fn measure_large(s: &str)  -> u32 { s.chars().count() as u32 * 16 }  // 28 px
 
-/// Build a LayoutConfig that matches draw_content's rendering geometry
-/// for the given font and logical screen size.
+/// TTF font size in pixels for each FontSize option.
+fn font_px_for(size: FontSize) -> f32 {
+    match size {
+        FontSize::Small  => 16.0,
+        FontSize::Medium => 22.0,
+        FontSize::Large  => 28.0,
+    }
+}
+
+/// Build a LayoutConfig sized for Noticia Text at the given font size.
+/// The bar heights match the chrome bitmap font (FONT_6X10/9X15/10X20).
 fn layout_cfg(font: FontSize, w: i32, h: i32) -> LayoutConfig {
-    let (char_w, char_h, measure_fn): (u32, u32, fn(&str) -> u32) = match font {
-        FontSize::Small  => (7,  10, measure_small),
-        FontSize::Medium => (10, 15, measure_medium),
-        FontSize::Large  => (11, 20, measure_large),
+    // Approximate average advance (px/char) and line height (px) for Noticia Text.
+    let (char_w, line_h, measure_fn): (u32, u32, fn(&str) -> u32) = match font {
+        FontSize::Small  => (9,  22, measure_small),
+        FontSize::Medium => (13, 30, measure_medium),
+        FontSize::Large  => (16, 38, measure_large),
     };
-    // Top and bottom bars each have 4px top-pad + char_h + 4px bottom-pad.
-    let bar_h = char_h + 8;
-    // pad_x=16 on each side; pad_y=12 on each side inside content view.
-    let content_w = (w as u32).saturating_sub(32);
-    let content_h = (h as u32).saturating_sub(2 * bar_h + 24);
+    // Chrome bars use the bitmap font whose height tracks FontSize.
+    let chrome_char_h: u32 = match font {
+        FontSize::Small  => 10,
+        FontSize::Medium => 15,
+        FontSize::Large  => 20,
+    };
+    let bar_h = chrome_char_h + 8; // 4px top-pad + char_h + 4px bottom-pad
+    let content_w = (w as u32).saturating_sub(32); // pad_x = 16 each side
+    let content_h = (h as u32).saturating_sub(2 * bar_h + 24); // pad_y = 12 each side
     LayoutConfig {
         screen_width:  content_w,
         screen_height: content_h,
         margin_x: 0,
         margin_y: 0,
         font: FontMetrics {
-            line_height_px: char_h + 3,
+            line_height_px: line_h,
             space_width_px: char_w,
             measure: measure_fn,
         },
+    }
+}
+
+/// Word-wrap one line of text to fit `max_px` pixels wide at the given TTF size.
+/// Handles hard newlines; advances past trailing spaces on the remainder.
+fn next_ttf_line<'a>(
+    renderer: &TextRenderer,
+    text: &'a str,
+    max_px: i32,
+    font_px: f32,
+) -> (&'a str, &'a str) {
+    // Hard newline forces a break.
+    if let Some(nl) = text.find('\n') {
+        let before = text[..nl].trim_end();
+        let after  = text[nl + 1..].trim_start_matches('\r').trim_start_matches('\n');
+        return (before, after);
+    }
+    let mut cursor = 0.0f32;
+    let mut last_space: Option<usize> = None;
+    for (i, c) in text.char_indices() {
+        let adv = renderer.char_advance(c, font_px);
+        if cursor + adv > max_px as f32 + 0.5 {
+            return if let Some(sp) = last_space {
+                (text[..sp].trim_end(), text[sp..].trim_start())
+            } else {
+                (&text[..i], &text[i..]) // force break mid-word
+            };
+        }
+        if c == ' ' { last_space = Some(i); }
+        cursor += adv;
+    }
+    (text.trim_end(), "")
+}
+
+/// True if rectangles a and b overlap (share at least one pixel).
+fn bounds_overlap(a: Bounds, b: Bounds) -> bool {
+    a.position.x < b.position.x + b.size.w
+        && a.position.x + a.size.w > b.position.x
+        && a.position.y < b.position.y + b.size.h
+        && a.position.y + a.size.h > b.position.y
+}
+
+/// Render page text with Noticia Text TTF, emitting one (x, y, gray4) pixel
+/// at a time to `put_pixel`. Handles word-wrap, padding, and bounds clipping.
+fn render_ttf_text(
+    text: &str,
+    font_px: f32,
+    bounds: Bounds,
+    mut put_pixel: impl FnMut(i32, i32, u8),
+) {
+    if text.is_empty() { return; }
+    let renderer = TextRenderer::new();
+    let line_h = renderer.line_height(font_px) + 4; // +4 px leading
+    let pad_x = 16i32;
+    let pad_y = 12i32;
+    let cx = bounds.position.x;
+    let cy = bounds.position.y;
+    let cw = bounds.size.w;
+    let ch = bounds.size.h;
+    let max_px = cw - pad_x * 2;
+    let mut baseline = cy + pad_y + renderer.line_height(font_px);
+    let mut remaining = text;
+    while !remaining.is_empty() && baseline < cy + ch - pad_y {
+        let (line, rest) = next_ttf_line(&renderer, remaining, max_px, font_px);
+        if !line.is_empty() {
+            renderer.draw_str(line, cx + pad_x, baseline, font_px, 15, &mut |px, py, g4| {
+                if px >= cx && px < cx + cw && py >= cy && py < cy + ch {
+                    put_pixel(px, py, g4);
+                }
+            });
+        }
+        remaining = rest;
+        baseline += line_h;
     }
 }
 
@@ -109,40 +195,9 @@ fn draw_bottombar(e: &mut DrawEvent) {
     );
 }
 
-/// Returns the next word-wrapped line and the remaining text.
-fn next_line<'a>(text: &'a str, max_chars: usize) -> (&'a str, &'a str) {
-    if text.len() <= max_chars {
-        return (text.trim_end(), "");
-    }
-    let cut = &text[..max_chars];
-    let break_at = cut.rfind(' ').unwrap_or(max_chars);
-    (text[..break_at].trim_end(), text[break_at..].trim_start())
-}
-
 fn draw_content(e: &mut DrawEvent) {
+    // Fill background; TrueType text is drawn outside iris-ui after draw_scene.
     e.ctx.fill_rect(&e.view.bounds, &e.theme.bg);
-
-    let char_w = (e.theme.font.character_size.width + e.theme.font.character_spacing) as i32;
-    let char_h = e.theme.font.character_size.height as i32;
-    let pad_x = 16i32;
-    let pad_y = 12i32;
-    let usable_w = e.view.bounds.size.w - pad_x * 2;
-    let max_chars = (usable_w / char_w) as usize;
-
-    let style = TextStyle::new(&e.theme.font, &e.theme.fg);
-    let x = e.view.bounds.position.x + pad_x;
-    let mut y = e.view.bounds.position.y + pad_y;
-    let max_y = e.view.bounds.position.y + e.view.bounds.size.h;
-
-    let mut remaining = e.view.title.as_str();
-    while !remaining.is_empty() && y + char_h <= max_y {
-        let (line, rest) = next_line(remaining, max_chars);
-        if !line.is_empty() {
-            e.ctx.fill_text(&Bounds::new(x, y, usable_w, char_h), line, &style);
-        }
-        remaining = rest;
-        y += char_h + 3;
-    }
 }
 
 fn draw_dialog(e: &mut DrawEvent) {
@@ -320,10 +375,6 @@ fn format_time_utc(unix_secs: u64) -> String {
 }
 
 fn update_content(scene: &mut Scene, session: &BookSession) {
-    let text = format!("{}", session.reader.current_text());
-    if let Some(v) = scene.get_view_mut(&ViewId::new("content")) {
-        v.title = text;
-    }
     let chapter_str = format!(
         "Ch.{} of {}",
         session.chapter_idx + 1,
@@ -370,12 +421,32 @@ fn main() {
     update_content(&mut scene, &session);
 
     'running: loop {
+        let dirty = scene.dirty_rect.clone();
         {
             let mut ctx = EmbeddedDrawingContext::new(&mut display);
-            ctx.clip = scene.dirty_rect.clone();
+            ctx.clip = dirty.clone();
             layout_scene(&mut scene, &theme);
             draw_scene(&mut scene, &mut ctx, &theme);
         }
+
+        // Draw TrueType content if the content area was repainted.
+        if let Some(cv_bounds) = scene.get_view(&ViewId::new("content")).map(|v| v.bounds) {
+            if !dirty.is_empty() && bounds_overlap(dirty, cv_bounds) {
+                use embedded_graphics::prelude::DrawTarget;
+                let font_px = font_px_for(hw.font_size());
+                let text = session.reader.current_text();
+                render_ttf_text(text, font_px, cv_bounds, |px, py, g4| {
+                    let gray8 = (g4 << 4) | g4;
+                    let _ = display.draw_iter(core::iter::once(
+                        embedded_graphics::Pixel(
+                            embedded_graphics::geometry::Point::new(px, py),
+                            Rgb565::new((gray8 >> 3) as u8, (gray8 >> 2) as u8, (gray8 >> 3) as u8),
+                        )
+                    ));
+                });
+            }
+        }
+
         window.update(&display);
 
         let events: Vec<_> = window.events().collect();
@@ -893,9 +964,21 @@ async fn main(spawner: Spawner) -> ! {
             }
             {
                 let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
-                ctx.clip = dirty_rect;
+                ctx.clip = dirty_rect.clone();
                 layout_scene(&mut scene, &theme);
                 draw_scene(&mut scene, &mut ctx, &theme);
+            }
+            // Draw TrueType content if the content area was in the dirty region.
+            if let Some(cv_bounds) = scene.get_view(&ViewId::new("content")).map(|v| v.bounds) {
+                if bounds_overlap(dirty_rect, cv_bounds) {
+                    let font_px = font_px_for(hw.font_size());
+                    let text = session.reader.current_text();
+                    let orientation = hw.orientation();
+                    render_ttf_text(text, font_px, cv_bounds, |lx, ly, g4| {
+                        let (px, py) = orientation.logical_to_phys(lx as u16, ly as u16);
+                        let _ = bridge.display.set_pixel(px, py, g4);
+                    });
+                }
             }
             bridge.flush();
         }
