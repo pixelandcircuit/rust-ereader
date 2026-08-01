@@ -3,9 +3,14 @@ extern crate alloc;
 
 #[cfg(feature = "esp")]
 use alloc::string::String;
+#[cfg(feature = "esp")]
+use alloc::vec::Vec;
 #[cfg(not(feature = "esp"))]
 use std::string::String;
+#[cfg(not(feature = "esp"))]
+use std::vec::Vec;
 
+use crate::epub::{EpubArchive, EpubError};
 use crate::layout::{layout_chapter, Layout, LayoutConfig};
 
 /// Stateful e-reader: holds one chapter's text, its paginated layout, and the
@@ -79,4 +84,92 @@ impl ReaderState {
             self.anchor_byte = p.start;
         }
     }
+}
+
+// ── BookSession ───────────────────────────────────────────────────────────────
+
+/// Combines the book's spine (chapter list) with the current chapter and page
+/// position. Wraps [`ReaderState`] and adds inter-chapter navigation.
+///
+/// Use `session.reader` to access page-level operations (`turn_page`,
+/// `current_text`, `relayout`, etc.). Save `session.chapter_idx` and
+/// `session.reader.anchor_byte` to persist the reading position.
+pub struct BookSession {
+    pub chapter_idx: usize,
+    pub reader: ReaderState,
+    spine: Vec<String>,
+}
+
+impl BookSession {
+    /// Open the EPUB and load the first chapter.
+    pub fn new(epub: &EpubArchive, cfg: &LayoutConfig) -> Result<Self, EpubError> {
+        let spine = epub.spine()?;
+        if spine.is_empty() { return Err(EpubError::MissingSpine); }
+        let text = epub.chapter_text(&spine[0])?;
+        Ok(Self { chapter_idx: 0, reader: ReaderState::new(text, cfg), spine })
+    }
+
+    /// Restore a previously saved position. Loads `chapter_idx` and seeks to
+    /// the page containing `anchor_byte` without re-running layout twice.
+    pub fn restore(
+        epub:        &EpubArchive,
+        cfg:         &LayoutConfig,
+        chapter_idx: usize,
+        anchor_byte: usize,
+    ) -> Result<Self, EpubError> {
+        let spine = epub.spine()?;
+        if spine.is_empty() { return Err(EpubError::MissingSpine); }
+        let idx  = chapter_idx.min(spine.len().saturating_sub(1));
+        let text = epub.chapter_text(&spine[idx])?;
+        let mut reader = ReaderState::new(text, cfg);
+        reader.anchor_byte = anchor_byte;
+        reader.current_page = reader.layout.pages
+            .iter()
+            .position(|p| p.start <= anchor_byte && anchor_byte < p.end)
+            .unwrap_or(0);
+        Ok(Self { chapter_idx: idx, reader, spine })
+    }
+
+    /// Load the chapter at `idx` (clamped to the spine length).
+    /// Resets the reader to the first page of that chapter.
+    pub fn go_to_chapter(
+        &mut self,
+        idx:  usize,
+        epub: &EpubArchive,
+        cfg:  &LayoutConfig,
+    ) -> Result<(), EpubError> {
+        let idx  = idx.min(self.spine.len().saturating_sub(1));
+        let text = epub.chapter_text(&self.spine[idx])?;
+        self.chapter_idx = idx;
+        self.reader = ReaderState::new(text, cfg);
+        Ok(())
+    }
+
+    /// Advance to the next chapter. Returns `false` if already at the last.
+    pub fn next_chapter(
+        &mut self,
+        epub: &EpubArchive,
+        cfg:  &LayoutConfig,
+    ) -> Result<bool, EpubError> {
+        if self.chapter_idx + 1 >= self.spine.len() { return Ok(false); }
+        self.go_to_chapter(self.chapter_idx + 1, epub, cfg)?;
+        Ok(true)
+    }
+
+    /// Return to the previous chapter. Returns `false` if already at the first.
+    pub fn prev_chapter(
+        &mut self,
+        epub: &EpubArchive,
+        cfg:  &LayoutConfig,
+    ) -> Result<bool, EpubError> {
+        if self.chapter_idx == 0 { return Ok(false); }
+        self.go_to_chapter(self.chapter_idx - 1, epub, cfg)?;
+        Ok(true)
+    }
+
+    /// Total number of chapters in the spine.
+    pub fn chapter_count(&self) -> usize { self.spine.len() }
+
+    /// The spine paths in order.
+    pub fn spine(&self) -> &[String] { &self.spine }
 }

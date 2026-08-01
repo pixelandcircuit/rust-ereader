@@ -1,5 +1,18 @@
 # Changes
 
+## 2026-08-01 (Add BookSession abstraction)
+
+- `src/reader.rs`: added `BookSession` struct that combines the EPUB spine with
+  the current chapter index and an inner `ReaderState`. Provides:
+  - `new(epub, cfg)` — opens the EPUB and loads chapter 0
+  - `restore(epub, cfg, chapter_idx, anchor_byte)` — restores a saved position
+    in one layout pass (no double pagination)
+  - `go_to_chapter(idx, epub, cfg)` — load an arbitrary chapter by spine index
+  - `next_chapter` / `prev_chapter` — return `false` at the spine boundaries
+  - `chapter_count()` / `spine()` — read the spine without re-parsing
+  - Public `chapter_idx` and `reader: ReaderState` fields for direct access;
+    save `chapter_idx` + `reader.anchor_byte` to persist the reading position
+
 ## 2026-08-01 (Fix ESP startup crash and ChannelIFace lifetime)
 
 - `examples/ereader_ui.rs`: moved `TimerGroup` + `SoftwareInterruptControl` init and `esp_rtos::start()` to immediately after `esp_hal::init()`, before the first `EmbassyTimer::after()` call — the embassy time driver must be running before any timer await or the device panics with `time_driver.as_mut() failed: NoneError`
