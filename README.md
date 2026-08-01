@@ -125,12 +125,30 @@ The `sim` alias expands to `run --no-default-features --features simulator --tar
 
 ## Running ereader_ui in the simulator (no device needed)
 
-`ereader_ui` is a UI prototype built with [iris-ui](https://crates.io/crates/iris-ui). It opens a 540×960 portrait window showing a panel with buttons. Click a button to select it.
+`ereader_ui` is a UI prototype built with [iris-ui](https://crates.io/crates/iris-ui). It opens a 540×960 portrait window and renders a full e-reader UI backed by Sherlock Holmes (`sherlock_holmes.epub`). Content is rendered with Noticia Text TrueType. Click the on-screen buttons or use keyboard shortcuts to navigate.
 
 **Run:**
 ```sh
 cargo sim --example ereader_ui
 ```
+
+**Keyboard controls:**
+
+| Key | Action |
+|-----|--------|
+| Right arrow / Space | Next page (or next chapter) |
+| Left arrow / Backspace | Previous page (or previous chapter) |
+| Close window | Quit |
+
+**On-device features (ESP32-S3):**
+
+| Feature | Detail |
+|---------|--------|
+| BOOT button (GPIO0) | Previous page / previous chapter |
+| GPIO38 button | Next page / next chapter |
+| Deep sleep | Enters after 60 s of inactivity; state saved to RTC fast memory |
+| Wake from sleep | Press BOOT button; position and settings restored from RTC (no flash read) |
+| NVS persistence | Font size, backlight, orientation, and position also saved to flash NVS (survives power-off) |
 
 ## Running epub_test locally (no device needed)
 
@@ -175,7 +193,8 @@ Defined in `partitions.csv`. Sequential-storage is used for persisting reading p
 
 ## Tasks Backlog
 - [x] setup unit tests that run on desktop, make run on commit/push in github workflow
-- [ ] fix drawing bugs.
 - [x] hook up font and orientation changes.
+- [x] use truetype fonts
 - [ ] hook up wifi and sync time.
+- [ ] fix overdraw on the main text area.
 - [ ] separate dialog for fast page flipping. trigger with hot key.

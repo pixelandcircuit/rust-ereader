@@ -398,7 +398,7 @@ fn update_content(scene: &mut Scene, session: &BookSession) {
 fn main() {
     use embedded_graphics::geometry::Size;
     use embedded_graphics_simulator::{
-        OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
+        sdl2::Keycode, OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
     };
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -453,6 +453,25 @@ fn main() {
         for event in events {
             match event {
                 SimulatorEvent::Quit => break 'running,
+                // Keyboard shortcuts: arrow keys / Space simulate physical buttons.
+                SimulatorEvent::KeyDown { keycode: Keycode::Left, repeat: false, .. }
+                | SimulatorEvent::KeyDown { keycode: Keycode::Backspace, repeat: false, .. } => {
+                    if session.reader.current_page == 0 {
+                        session.prev_chapter(&epub, &cfg).ok();
+                    } else {
+                        session.reader.turn_page(false);
+                    }
+                    update_content(&mut scene, &session);
+                }
+                SimulatorEvent::KeyDown { keycode: Keycode::Right, repeat: false, .. }
+                | SimulatorEvent::KeyDown { keycode: Keycode::Space, repeat: false, .. } => {
+                    if session.reader.current_page + 1 >= session.reader.page_count() {
+                        session.next_chapter(&epub, &cfg).ok();
+                    } else {
+                        session.reader.turn_page(true);
+                    }
+                    update_content(&mut scene, &session);
+                }
                 SimulatorEvent::MouseButtonUp { point, .. } => {
                     if let Some((target, action)) =
                         click_at(&mut scene, &handlers, GPoint::new(point.x, point.y))
@@ -583,6 +602,10 @@ fn block_on<F: core::future::Future>(mut f: F) -> F::Output {
         }
     }
 }
+
+// Deep sleep after 60 seconds of inactivity.
+#[cfg(feature = "esp")]
+const SLEEP_AFTER_SECS: u64 = 60;
 
 // Keys 10–14 to avoid collisions with ereader_full (which uses 0–4).
 #[cfg(feature = "esp")]
@@ -728,23 +751,27 @@ impl<'a> embedded_graphics::geometry::OriginDimensions for Rgb565ToGray4<'a> {
 
 #[cfg(feature = "esp")]
 use esp_hal::{
+    gpio::{Input, InputConfig, Pull},
     interrupt::software::SoftwareInterruptControl,
     ledc::{
         channel::{self, ChannelIFace},
         timer::{self, TimerIFace},
         LSGlobalClkSource, Ledc, LowSpeed,
     },
-    rtc_cntl::Rtc,
+    rtc_cntl::{reset_reason, Rtc, SocResetReason},
+    system::Cpu,
     time::Rate,
     timer::timg::TimerGroup,
 };
+#[cfg(feature = "esp")]
+use ereader::hardware::rtc_store_read;
 #[cfg(feature = "esp")]
 use embassy_executor::Spawner;
 #[cfg(feature = "esp")]
 use embassy_net::{Runner, StackResources, IpEndpoint, IpAddress, Ipv4Address,
                   udp::{PacketMetadata, UdpSocket}};
 #[cfg(feature = "esp")]
-use embassy_time::{Duration, Timer as EmbassyTimer};
+use embassy_time::{Duration, Instant, Timer as EmbassyTimer};
 #[cfg(feature = "esp")]
 use esp_radio::wifi::{Config, ControllerConfig, Interface, WifiController, sta::StationConfig};
 #[cfg(feature = "esp")]
@@ -880,12 +907,37 @@ async fn main(spawner: Spawner) -> ! {
         duty_pct:   100,
         drive_mode: esp_hal::gpio::DriveMode::PushPull,
     }).unwrap();
-    let (font_idx, bl_idx, ori_idx) = load_settings();
+    // Detect whether we woke from deep sleep or did a cold boot.
+    let is_sleep_wakeup = reset_reason(Cpu::ProCpu) == Some(SocResetReason::CoreDeepSleep);
+
+    // On wakeup restore from RTC fast memory (fast, no flash wear); on first
+    // boot read persisted settings from NVS flash.
+    let (font_idx, bl_idx, ori_idx, saved_chapter, saved_anchor) = if is_sleep_wakeup {
+        let anchor  = rtc_store_read(0) as usize;
+        let packed  = rtc_store_read(5);
+        let font    = (packed & 0xF) as usize;
+        let bl      = ((packed >> 4) & 0xF) as usize;
+        let ori     = ((packed >> 8) & 0xF) as usize;
+        let chapter = rtc_store_read(6) as usize;
+        log::info!("woke from deep sleep: ch={} anchor={} font={} bl={} ori={}", chapter, anchor, font, bl, ori);
+        (font, bl, ori, chapter, anchor)
+    } else {
+        let (font, bl, ori) = load_settings();
+        let (chapter, anchor) = load_position();
+        (font, bl, ori, chapter, anchor)
+    };
+
+    // Physical buttons: BOOT (GPIO0, active-low) = prev page; GPIO38 = next page.
+    let btn_prev = Input::new(peripherals.GPIO0,  InputConfig::default().with_pull(Pull::Up));
+    let btn_next = Input::new(peripherals.GPIO38, InputConfig::default().with_pull(Pull::Up));
+
     // Capture seed before rtc is moved into hw.
     let seed = rtc.current_time_us();
     let mut hw = EspHardware::new(
         bl_ch,
         rtc,
+        btn_prev,
+        btn_next,
         FontSize::from_index(font_idx),
         BacklightLevel::from_index(bl_idx),
         Orientation::from_index(ori_idx),
@@ -904,7 +956,6 @@ async fn main(spawner: Spawner) -> ! {
 
     let epub = EpubArchive::new(EPUB_DATA).expect("epub parse");
     let mut cfg = layout_cfg(hw.font_size(), lw, lh);
-    let (saved_chapter, saved_anchor) = load_position();
     let mut session = if saved_chapter > 0 || saved_anchor > 0 {
         BookSession::restore(&epub, &cfg, saved_chapter, saved_anchor)
             .unwrap_or_else(|_| BookSession::new(&epub, &cfg).expect("epub load"))
@@ -912,6 +963,8 @@ async fn main(spawner: Spawner) -> ! {
         BookSession::new(&epub, &cfg).expect("epub load")
     };
     update_content(&mut scene, &session);
+
+    let mut last_interaction = Instant::now();
 
     // ── WiFi + NTP setup ─────────────────────────────────────────────────────
     let station_config = Config::Station(
@@ -950,6 +1003,34 @@ async fn main(spawner: Spawner) -> ! {
     // }
 
     loop {
+        // Physical button handling: BOOT (GPIO0) = prev, GPIO38 = next.
+        // Debounce by waiting for release before acting.
+        if hw.button_prev_pressed() {
+            while hw.button_prev_pressed() {
+                EmbassyTimer::after(Duration::from_millis(10)).await;
+            }
+            if session.reader.current_page == 0 {
+                session.prev_chapter(&epub, &cfg).ok();
+            } else {
+                session.reader.turn_page(false);
+            }
+            update_content(&mut scene, &session);
+            save_position(session.chapter_idx, session.reader.anchor_byte);
+            last_interaction = Instant::now();
+        } else if hw.button_next_pressed() {
+            while hw.button_next_pressed() {
+                EmbassyTimer::after(Duration::from_millis(10)).await;
+            }
+            if session.reader.current_page + 1 >= session.reader.page_count() {
+                session.next_chapter(&epub, &cfg).ok();
+            } else {
+                session.reader.turn_page(true);
+            }
+            update_content(&mut scene, &session);
+            save_position(session.chapter_idx, session.reader.anchor_byte);
+            last_interaction = Instant::now();
+        }
+
         let dirty_rect = scene.dirty_rect.clone();
         let was_dirty = !dirty_rect.is_empty();
         let (scene_w, scene_h) = hw.orientation().logical_size();
@@ -1039,6 +1120,7 @@ async fn main(spawner: Spawner) -> ! {
                         }
                         update_content(&mut scene, &session);
                         save_position(session.chapter_idx, session.reader.anchor_byte);
+                        last_interaction = Instant::now();
                     } else if target == ViewId::new("next_page") {
                         if session.reader.current_page + 1 >= session.reader.page_count() {
                             session.next_chapter(&epub, &cfg).ok();
@@ -1047,12 +1129,40 @@ async fn main(spawner: Spawner) -> ! {
                         }
                         update_content(&mut scene, &session);
                         save_position(session.chapter_idx, session.reader.anchor_byte);
+                        last_interaction = Instant::now();
+                    } else {
+                        last_interaction = Instant::now();
                     }
                 }
             }
             was_touching = true;
         } else {
             was_touching = false;
+        }
+
+        // Enter deep sleep after inactivity timeout.
+        if last_interaction.elapsed().as_secs() >= SLEEP_AFTER_SECS {
+            log::info!("inactivity timeout — entering deep sleep");
+            if let Some(v) = scene.get_view_mut(&ViewId::new("page")) {
+                v.title = "Sleeping\u{2026} Press BOOT to wake".into();
+            }
+            scene.mark_dirty_all();
+            // Render the sleep message before powering off.
+            let sleep_dirty = scene.dirty_rect.clone();
+            {
+                let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
+                ctx.clip = sleep_dirty;
+                layout_scene(&mut scene, &theme);
+                draw_scene(&mut scene, &mut ctx, &theme);
+            }
+            bridge.flush();
+            bridge.display.power_off();
+            // On ESP: saves RTC state and enters deep sleep (never returns).
+            // On simulator enter_deep_sleep is a no-op; reset the timer so we
+            // don't loop immediately back into the sleep check.
+            hw.enter_deep_sleep(session.chapter_idx, session.reader.anchor_byte);
+            last_interaction = Instant::now();
+            update_content(&mut scene, &session);
         }
 
         EmbassyTimer::after(Duration::from_millis(50)).await;

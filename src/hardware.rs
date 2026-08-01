@@ -161,6 +161,15 @@ pub trait HardwareAccess {
     fn set_font_size(&mut self, size: FontSize);
     fn set_backlight_level(&mut self, level: BacklightLevel);
     fn set_orientation(&mut self, orientation: Orientation);
+
+    /// Physical BOOT button (GPIO0) state — always false on simulator.
+    fn button_prev_pressed(&self) -> bool;
+    /// Physical NEXT button (GPIO38) state — always false on simulator.
+    fn button_next_pressed(&self) -> bool;
+    /// Save reading position and settings to RTC fast memory, turn off
+    /// backlight, and enter deep sleep (wakes on BOOT button / GPIO0 LOW).
+    /// On ESP this never returns. On simulator it is a no-op.
+    fn enter_deep_sleep(&mut self, chapter_idx: usize, anchor_byte: usize);
 }
 
 // ── Simulator implementation ──────────────────────────────────────────────────
@@ -197,18 +206,49 @@ impl HardwareAccess for SimHardware {
     fn set_font_size(&mut self, size: FontSize) { self.font_size = size; }
     fn set_backlight_level(&mut self, level: BacklightLevel) { self.backlight = level; }
     fn set_orientation(&mut self, orientation: Orientation) { self.orientation = orientation; }
+
+    fn button_prev_pressed(&self) -> bool { false }
+    fn button_next_pressed(&self) -> bool { false }
+    fn enter_deep_sleep(&mut self, _chapter_idx: usize, _anchor_byte: usize) {}
 }
 
 // ── ESP implementation ────────────────────────────────────────────────────────
 
 #[cfg(feature = "esp")]
 use esp_hal::{
+    gpio::Input,
     ledc::{channel::ChannelIFace, LowSpeed},
-    rtc_cntl::Rtc,
+    rtc_cntl::{sleep::{Ext0WakeupSource, WakeupLevel}, Rtc},
 };
 
 #[cfg(feature = "esp")]
 const BL_DUTY: [u8; 3] = [0, 25, 100];
+
+/// Read a 32-bit value from an RTC store register. Registers survive deep sleep.
+/// Valid indices: 0, 5, 6.
+#[cfg(feature = "esp")]
+pub fn rtc_store_read(idx: u8) -> u32 {
+    let r = esp_hal::peripherals::LPWR::regs();
+    match idx {
+        0 => r.store0().read().data().bits(),
+        5 => r.store5().read().data().bits(),
+        6 => r.store6().read().data().bits(),
+        _ => 0,
+    }
+}
+
+/// Write a 32-bit value to an RTC store register. Survives deep sleep.
+/// Valid indices: 0, 5, 6.
+#[cfg(feature = "esp")]
+pub fn rtc_store_write(idx: u8, val: u32) {
+    let r = esp_hal::peripherals::LPWR::regs();
+    match idx {
+        0 => { r.store0().write(|w| unsafe { w.data().bits(val) }); }
+        5 => { r.store5().write(|w| unsafe { w.data().bits(val) }); }
+        6 => { r.store6().write(|w| unsafe { w.data().bits(val) }); }
+        _ => {}
+    }
+}
 
 /// ESP32-S3 hardware implementation. Generic over the LEDC channel type so the
 /// caller doesn't need to name the concrete channel type from esp-hal.
@@ -219,6 +259,8 @@ pub struct EspHardware<'d, C: ChannelIFace<'d, LowSpeed>> {
     orientation: Orientation,
     bl_ch: C,
     rtc: Rtc<'d>,
+    btn_prev: Input<'d>,
+    btn_next: Input<'d>,
 }
 
 #[cfg(feature = "esp")]
@@ -226,12 +268,14 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> EspHardware<'d, C> {
     pub fn new(
         bl_ch: C,
         rtc: Rtc<'d>,
+        btn_prev: Input<'d>,
+        btn_next: Input<'d>,
         font_size: FontSize,
         backlight: BacklightLevel,
         orientation: Orientation,
     ) -> Self {
         bl_ch.set_duty(BL_DUTY[backlight as usize]).unwrap();
-        Self { font_size, backlight, orientation, bl_ch, rtc }
+        Self { font_size, backlight, orientation, bl_ch, rtc, btn_prev, btn_next }
     }
 }
 
@@ -256,5 +300,32 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
 
     fn set_orientation(&mut self, orientation: Orientation) {
         self.orientation = orientation;
+    }
+
+    fn button_prev_pressed(&self) -> bool {
+        self.btn_prev.is_low()
+    }
+
+    fn button_next_pressed(&self) -> bool {
+        self.btn_next.is_low()
+    }
+
+    /// Save state to RTC fast memory, turn off backlight, and enter deep sleep.
+    /// Wakes when the BOOT button (GPIO0) is pressed LOW. Never returns on ESP.
+    fn enter_deep_sleep(&mut self, chapter_idx: usize, anchor_byte: usize) {
+        // Pack settings: font (4 bits) | backlight (4 bits, offset 4) | orientation (4 bits, offset 8)
+        rtc_store_write(0, anchor_byte as u32);
+        rtc_store_write(5,
+            self.font_size.to_index() as u32
+            | ((self.backlight.to_index() as u32) << 4)
+            | ((self.orientation.to_index() as u32) << 8),
+        );
+        rtc_store_write(6, chapter_idx as u32);
+        // Turn off backlight PWM
+        self.bl_ch.set_duty(0).unwrap();
+        // Wake on BOOT button (GPIO0 active-low); steal a new handle since we're about to sleep
+        let wakeup_pin = unsafe { esp_hal::gpio::AnyPin::steal(0) };
+        let boot_src = Ext0WakeupSource::new(wakeup_pin, WakeupLevel::Low);
+        self.rtc.sleep_deep(&[&boot_src]);
     }
 }

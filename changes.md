@@ -1,5 +1,27 @@
 # Changes
 
+## 2026-08-01 (Add deep sleep and physical button support to ereader_ui)
+
+- `src/hardware.rs`: added `button_prev_pressed`, `button_next_pressed`, and
+  `enter_deep_sleep(chapter_idx, anchor_byte)` to the `HardwareAccess` trait
+- `src/hardware.rs`: added `pub fn rtc_store_read/write(idx, val)` free functions
+  (ESP-only) for RTC fast-memory access that survives deep sleep
+- `src/hardware.rs` `EspHardware`: added `btn_prev: Input<'d>` and `btn_next: Input<'d>`
+  fields; updated `new()` to accept them; implemented `button_prev/next_pressed` via
+  `is_low()`; `enter_deep_sleep` packs font/backlight/orientation into RTC store5,
+  anchor_byte into store0, chapter_idx into store6, zeros the LEDC duty, then calls
+  `rtc.sleep_deep()` with GPIO0 as the `Ext0WakeupSource` (never returns on ESP)
+- `src/hardware.rs` `SimHardware`: no-op `enter_deep_sleep`, always-false button stubs
+- `examples/ereader_ui.rs` (ESP): detect deep-sleep wakeup via `reset_reason(Cpu::ProCpu)`;
+  on wakeup restore position from RTC fast memory instead of NVS flash; create GPIO0 and
+  GPIO38 `Input` handles and pass to `EspHardware::new()`; track `last_interaction:
+  embassy_time::Instant`; poll buttons every loop iteration with release-debounce; reset
+  `last_interaction` on any touch or button press; after `SLEEP_AFTER_SECS` (60 s)
+  inactivity show "Sleeping…" footer, flush display, call `power_off()`, then
+  `hw.enter_deep_sleep()`
+- `examples/ereader_ui.rs` (simulator): added Left/Backspace → prev page and
+  Right/Space → next page keyboard shortcuts via `SimulatorEvent::KeyDown`
+
 ## 2026-08-01 (Switch ereader_ui content rendering to Noticia Text TTF)
 
 - `examples/ereader_ui.rs`: replaced bitmap-font content rendering with Noticia Text
