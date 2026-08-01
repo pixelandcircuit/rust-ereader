@@ -92,15 +92,14 @@ fn next_ttf_line<'a>(
     max_px: i32,
     font_px: f32,
 ) -> (&'a str, &'a str) {
-    // Hard newline forces a break.
-    if let Some(nl) = text.find('\n') {
-        let before = text[..nl].trim_end();
-        let after  = text[nl + 1..].trim_start_matches('\r').trim_start_matches('\n');
-        return (before, after);
-    }
     let mut cursor = 0.0f32;
     let mut last_space: Option<usize> = None;
     for (i, c) in text.char_indices() {
+        // Hard newline: break here regardless of width.
+        if c == '\n' {
+            let after = text[i + 1..].trim_start_matches('\r');
+            return (text[..i].trim_end(), after);
+        }
         let adv = renderer.char_advance(c, font_px);
         if cursor + adv > max_px as f32 + 0.5 {
             return if let Some(sp) = last_space {

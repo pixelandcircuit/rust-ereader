@@ -1,5 +1,13 @@
 # Changes
 
+## 2026-08-01 (Fix word wrapping in ereader_ui renderer)
+
+`next_ttf_line` used `text.find('\n')` to check for hard newlines before entering
+the width-limited scan loop. This meant the entire text before the first newline —
+potentially a whole paragraph — was returned as one line and clipped at the right
+edge. Fixed by scanning character by character so newline breaks and width overflow
+are checked in the same pass.
+
 ## 2026-08-01 (Fix pagination: use real TTF metrics in ereader_ui layout)
 
 Two mismatches caused pages to appear only half-filled:
