@@ -53,6 +53,9 @@ laid, perhaps, upon the platitudes of the magistrate than upon the details, \
 which to an observer contain the vital essence of the whole matter. Depend \
 upon it, there is nothing so unnatural as the commonplace.";
 
+const DIALOG_ID:ViewId = ViewId::new("dialog");
+
+
 fn make_theme() -> Theme {
     Theme {
         bg: Rgb565::WHITE,
@@ -144,9 +147,8 @@ fn layout_dialog(pass: &mut LayoutEvent) {
     pass.space = Size::new(DIALOG_W, 4000);
     layout_vbox(pass);
     // Measure the actual height used by children (positions are in dialog-local space).
-    let dialog_id = pass.target.clone();
     let mut content_bottom = DIALOG_PAD;
-    for kid in pass.scene.get_children_ids(&dialog_id) {
+    for kid in pass.scene.get_children_ids(&DIALOG_ID) {
         if let Some(child) = pass.scene.get_view(&kid) {
             content_bottom = content_bottom.max(child.bounds.position.y + child.bounds.size.h);
         }
@@ -234,30 +236,29 @@ fn make_scene(w: i32, h: i32) -> Scene {
     );
 
     // ── Settings dialog (hidden, drawn last so it appears on top) ────────────
-    let dialog_id = ViewId::new("dialog");
-    scene.add_view_to_parent(make_label("dlg_title", "Settings"), &dialog_id);
-    scene.add_view_to_parent(make_label("dlg_font_lbl", "Font Size"), &dialog_id);
+    scene.add_view_to_parent(make_label("dlg_title", "Settings"), &DIALOG_ID);
+    scene.add_view_to_parent(make_label("dlg_font_lbl", "Font Size"), &DIALOG_ID);
     scene.add_view_to_parent(
         make_toggle_group(&ViewId::new("font_size"), vec!["Small", "Medium", "Large"], 1),
-        &dialog_id,
+        &DIALOG_ID,
     );
-    scene.add_view_to_parent(make_label("dlg_bl_lbl", "Backlight"), &dialog_id);
+    scene.add_view_to_parent(make_label("dlg_bl_lbl", "Backlight"), &DIALOG_ID);
     scene.add_view_to_parent(
         make_toggle_group(&ViewId::new("backlight"), vec!["Off", "Low", "High"], 2),
-        &dialog_id,
+        &DIALOG_ID,
     );
-    scene.add_view_to_parent(make_label("dlg_orient_lbl", "Orientation"), &dialog_id);
+    scene.add_view_to_parent(make_label("dlg_orient_lbl", "Orientation"), &DIALOG_ID);
     scene.add_view_to_parent(
         make_toggle_group(
             &ViewId::new("orientation"),
             vec!["Port", "Land", "R.Port", "R.Land"],
             0,
         ),
-        &dialog_id,
+        &DIALOG_ID,
     );
-    scene.add_view_to_parent(make_button(&ViewId::new("sync_time"), "Sync Time"), &dialog_id);
-    scene.add_view_to_parent(make_label("dlg_battery", "Battery: 85%  (Charging)"), &dialog_id);
-    scene.add_view_to_parent(make_button(&ViewId::new("dialog_close"), "Close"), &dialog_id);
+    scene.add_view_to_parent(make_button(&ViewId::new("sync_time"), "Sync Time"), &DIALOG_ID);
+    scene.add_view_to_parent(make_label("dlg_battery", "Battery: 85%  (Charging)"), &DIALOG_ID);
+    scene.add_view_to_parent(make_button(&ViewId::new("dialog_close"), "Close"), &DIALOG_ID);
 
     scene.add_view_to_root(View {
         name: main_id,
@@ -269,7 +270,7 @@ fn make_scene(w: i32, h: i32) -> Scene {
     });
 
     scene.add_view_to_root(View {
-        name: dialog_id,
+        name: DIALOG_ID,
         h_flex: Flex::Resize,
         v_flex: Flex::Resize,
         layout: Some(layout_dialog),
@@ -653,6 +654,11 @@ async fn main(spawner: Spawner) -> ! {
     // SRAM heap required by the WiFi stack (must be separate from PSRAM).
     esp_alloc::heap_allocator!(size: 72 * 1024);
 
+    // Must run before any EmbassyTimer use and before esp_radio::wifi::new.
+    let timg0  = TimerGroup::new(peripherals.TIMG0);
+    let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
+    esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
+
     let rtc = Rtc::new(peripherals.LPWR);
 
     let mut display = Display::new(
@@ -718,11 +724,6 @@ async fn main(spawner: Spawner) -> ! {
     let mut was_touching = false;
 
     // ── WiFi + NTP setup ─────────────────────────────────────────────────────
-    let _timg0  = TimerGroup::new(peripherals.TIMG0);
-    let _sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
-    // Start the WiFi timer scheduler; must come before esp_radio::wifi::new.
-    // esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
-
     let station_config = Config::Station(
         StationConfig::default()
             .with_ssid(SSID)

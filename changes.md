@@ -1,5 +1,10 @@
 # Changes
 
+## 2026-08-01 (Fix ESP startup crash and ChannelIFace lifetime)
+
+- `examples/ereader_ui.rs`: moved `TimerGroup` + `SoftwareInterruptControl` init and `esp_rtos::start()` to immediately after `esp_hal::init()`, before the first `EmbassyTimer::after()` call — the embassy time driver must be running before any timer await or the device panics with `time_driver.as_mut() failed: NoneError`
+- `src/hardware.rs`: fixed `ChannelIFace` lifetime/type parameters — esp-hal 1.1 defines it as `ChannelIFace<'a, S: TimerSpeed>`, so `EspHardware` now bounds `C: ChannelIFace<'d, LowSpeed>` with `LowSpeed` imported from `esp_hal::ledc`
+
 ## 2026-08-01 (HardwareAccess trait abstraction)
 
 - `src/hardware.rs` (new): hardware abstraction layer with:

@@ -203,7 +203,7 @@ impl HardwareAccess for SimHardware {
 
 #[cfg(feature = "esp")]
 use esp_hal::{
-    ledc::channel::ChannelIFace,
+    ledc::{channel::ChannelIFace, LowSpeed},
     rtc_cntl::Rtc,
 };
 
@@ -213,7 +213,7 @@ const BL_DUTY: [u8; 3] = [0, 25, 100];
 /// ESP32-S3 hardware implementation. Generic over the LEDC channel type so the
 /// caller doesn't need to name the concrete channel type from esp-hal.
 #[cfg(feature = "esp")]
-pub struct EspHardware<'d, C: ChannelIFace> {
+pub struct EspHardware<'d, C: ChannelIFace<'d, LowSpeed>> {
     font_size: FontSize,
     backlight: BacklightLevel,
     orientation: Orientation,
@@ -222,9 +222,9 @@ pub struct EspHardware<'d, C: ChannelIFace> {
 }
 
 #[cfg(feature = "esp")]
-impl<'d, C: ChannelIFace> EspHardware<'d, C> {
+impl<'d, C: ChannelIFace<'d, LowSpeed>> EspHardware<'d, C> {
     pub fn new(
-        mut bl_ch: C,
+        bl_ch: C,
         rtc: Rtc<'d>,
         font_size: FontSize,
         backlight: BacklightLevel,
@@ -236,7 +236,7 @@ impl<'d, C: ChannelIFace> EspHardware<'d, C> {
 }
 
 #[cfg(feature = "esp")]
-impl<'d, C: ChannelIFace> HardwareAccess for EspHardware<'d, C> {
+impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
     fn font_size(&self) -> FontSize { self.font_size }
     fn backlight_level(&self) -> BacklightLevel { self.backlight }
     fn orientation(&self) -> Orientation { self.orientation }
