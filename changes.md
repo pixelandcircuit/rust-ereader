@@ -1,5 +1,21 @@
 # Changes
 
+## 2026-08-01 (HardwareAccess trait abstraction)
+
+- `src/hardware.rs` (new): hardware abstraction layer with:
+  - `FontSize`, `BacklightLevel`, `Orientation` enums (feature-agnostic, shared by both platforms)
+  - `Orientation` carries coordinate-mapping methods (`phys_to_logical`, `logical_to_phys`, `logical_size`) and `PANEL_W`/`PANEL_H` constants
+  - `HardwareAccess` trait with getters and setters for all four values (font size, backlight, orientation, current time)
+  - `SimHardware` (feature=simulator): in-memory state, `current_time_secs()` via `SystemTime::now()`
+  - `EspHardware<'d, C: ChannelIFace>` (feature=esp): owns LEDC channel + RTC; `set_backlight_level` drives LEDC duty cycle, `current_time_secs` reads RTC; initial backlight applied on construction
+- `src/lib.rs`: added `pub mod hardware;`
+- `examples/ereader_ui.rs`:
+  - Removed inline `EspOrientation` enum; replaced throughout with `ereader::hardware::Orientation`
+  - Replaced `cur_font_idx`, `cur_bl_idx`, `orientation` variables with a single `hw: EspHardware<_>` on the ESP path and `hw: SimHardware` on the simulator path
+  - Event loop now routes font/backlight/orientation toggles through `hw.set_*(...)` and calls `save_settings` from the `hw.*_level().to_index()` accessors
+  - Simulator `sync_time` button calls `hw.current_time_secs()` instead of directly querying `SystemTime`
+  - Removed now-unused `SCREEN_W`/`SCREEN_H` constants
+
 ## 2026-07-31 (ereader_ui NTP time sync on device)
 
 - `examples/ereader_ui.rs`: ESP main function converted to async and wired up WiFi + NTP time sync

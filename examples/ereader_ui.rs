@@ -25,9 +25,11 @@ use iris_ui::scene::{click_at, draw_scene, layout_scene, Scene};
 use iris_ui::toggle_group::make_toggle_group;
 use iris_ui::view::{Align, Flex, View, ViewId};
 use iris_ui::{Action, Callback, DrawEvent, GuiEvent, LayoutEvent, Theme};
-
-const SCREEN_W: i32 = 540;
-const SCREEN_H: i32 = 960;
+use ereader::hardware::{BacklightLevel, FontSize, HardwareAccess, Orientation};
+#[cfg(feature = "simulator")]
+use ereader::hardware::SimHardware;
+#[cfg(feature = "esp")]
+use ereader::hardware::EspHardware;
 
 const DIALOG_W: i32 = 420;
 const DIALOG_PAD: i32 = 16;
@@ -306,8 +308,8 @@ fn main() {
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let mut win_w = SCREEN_W;
-    let mut win_h = SCREEN_H;
+    let mut hw = SimHardware::new();
+    let (mut win_w, mut win_h) = hw.orientation().logical_size();
 
     let mut display: SimulatorDisplay<Rgb565> =
         SimulatorDisplay::new(Size::new(win_w as u32, win_h as u32));
@@ -317,7 +319,6 @@ fn main() {
     let mut scene = make_scene(win_w, win_h);
     let mut theme = make_theme();
     let handlers: Vec<Callback> = vec![handle_click];
-    let mut localtime: u64 = 0;
 
     'running: loop {
         {
@@ -338,10 +339,8 @@ fn main() {
                     {
                         if let Action::Command(ref cmd) = action {
                             if target == ViewId::new("orientation") {
-                                let (new_w, new_h) = match cmd.as_str() {
-                                    "Land" | "R.Land" => (SCREEN_H, SCREEN_W),
-                                    _ => (SCREEN_W, SCREEN_H),
-                                };
+                                hw.set_orientation(Orientation::from_cmd(cmd.as_str()));
+                                let (new_w, new_h) = hw.orientation().logical_size();
                                 if new_w != win_w || new_h != win_h {
                                     win_w = new_w;
                                     win_h = new_h;
@@ -353,24 +352,21 @@ fn main() {
                                     window = Window::new("ereader_ui", &settings);
                                 }
                             } else if target == ViewId::new("font_size") {
-                                let (new_font, new_bold) = match cmd.as_str() {
-                                    "Small" => (FONT_6X10, FONT_6X10),
-                                    "Large" => (FONT_10X20, FONT_10X20),
-                                    _ => (FONT_9X15, FONT_9X15_BOLD),
+                                hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
+                                (theme.font, theme.bold_font) = match hw.font_size() {
+                                    FontSize::Small  => (FONT_6X10,  FONT_6X10),
+                                    FontSize::Medium => (FONT_9X15,  FONT_9X15_BOLD),
+                                    FontSize::Large  => (FONT_10X20, FONT_10X20),
                                 };
-                                theme.font = new_font;
-                                theme.bold_font = new_bold;
                                 scene.mark_layout_dirty();
+                            } else if target == ViewId::new("backlight") {
+                                hw.set_backlight_level(BacklightLevel::from_cmd(cmd.as_str()));
                             }
                         }
                         if target == ViewId::new("sync_time") {
-                            use std::time::{SystemTime, UNIX_EPOCH};
-                            localtime = SystemTime::now()
-                                .duration_since(UNIX_EPOCH)
-                                .unwrap()
-                                .as_secs();
+                            let t = hw.current_time_secs();
                             if let Some(view) = scene.get_view_mut(&ViewId::new("time")) {
-                                view.title = format_time_utc(localtime);
+                                view.title = format_time_utc(t);
                             }
                             scene.mark_layout_dirty();
                         }
@@ -496,65 +492,18 @@ fn save_settings(font_idx: usize, bl_idx: usize, ori_idx: usize) {
     save(KEY_ORI,  ori_idx  as u32);
 }
 
-// ── Orientation ───────────────────────────────────────────────────────────────
-// Index matches the toggle group order: ["Port", "Land", "R.Port", "R.Land"]
-#[cfg(feature = "esp")]
-#[derive(Clone, Copy, PartialEq)]
-enum EspOrientation { Port, Land, RPort, RLand }
-
-#[cfg(feature = "esp")]
-impl EspOrientation {
-    fn from_index(i: usize) -> Self {
-        match i { 1 => Self::Land, 2 => Self::RPort, 3 => Self::RLand, _ => Self::Port }
-    }
-    fn to_index(self) -> usize {
-        match self { Self::Port => 0, Self::Land => 1, Self::RPort => 2, Self::RLand => 3 }
-    }
-    fn from_cmd(cmd: &str) -> Self {
-        match cmd { "Land" => Self::Land, "R.Port" => Self::RPort, "R.Land" => Self::RLand, _ => Self::Port }
-    }
-    fn is_portrait(self) -> bool { matches!(self, Self::Port | Self::RPort) }
-    /// Logical screen size for this orientation.
-    fn logical_size(self) -> (i32, i32) {
-        if self.is_portrait() { (SCREEN_W, SCREEN_H) } else { (SCREEN_H, SCREEN_W) }
-    }
-    /// Convert physical touch (tx, ty) to logical (lx, ly).
-    fn phys_to_logical(self, tx: u16, ty: u16) -> (i32, i32) {
-        const W: i32 = 960; // Display::WIDTH
-        const H: i32 = 540; // Display::HEIGHT
-        let (tx, ty) = (tx as i32, ty as i32);
-        match self {
-            Self::Port  => (H - 1 - ty, tx      ),
-            Self::Land  => (tx,         ty       ),
-            Self::RPort => (ty,         W - 1 - tx),
-            Self::RLand => (W - 1 - tx, H - 1 - ty),
-        }
-    }
-    /// Convert logical pixel (lx, ly) to physical (px, py).
-    fn logical_to_phys(self, lx: u16, ly: u16) -> (u16, u16) {
-        const W: u16 = 960;
-        const H: u16 = 540;
-        match self {
-            Self::Port  => (ly,         H - 1 - lx),
-            Self::Land  => (lx,         ly         ),
-            Self::RPort => (W - 1 - ly, lx         ),
-            Self::RLand => (W - 1 - lx, H - 1 - ly ),
-        }
-    }
-}
-
 /// Wraps the Gray4 e-paper display and presents an Rgb565 DrawTarget for iris-ui.
 /// Converts Rgb565 luminance to 4-bit gray and applies orientation rotation so
 /// the logical coordinate space matches what the user sees.
 #[cfg(feature = "esp")]
 struct Rgb565ToGray4<'a> {
     display:     Display<'a>,
-    orientation: EspOrientation,
+    orientation: Orientation,
 }
 
 #[cfg(feature = "esp")]
 impl<'a> Rgb565ToGray4<'a> {
-    fn new(display: Display<'a>, orientation: EspOrientation) -> Self {
+    fn new(display: Display<'a>, orientation: Orientation) -> Self {
         Self { display, orientation }
     }
     fn flush(&mut self) {
@@ -660,27 +609,27 @@ async fn net_task(mut runner: Runner<'static, Interface<'static>>) {
 }
 
 /// Query time.google.com via NTP and return Unix seconds, or None on error.
-#[cfg(feature = "esp")]
-async fn query_ntp(stack: embassy_net::Stack<'static>) -> Option<u64> {
-    let mut rx_meta = [PacketMetadata::EMPTY; 4];
-    let mut rx_buf  = [0u8; 512];
-    let mut tx_meta = [PacketMetadata::EMPTY; 4];
-    let mut tx_buf  = [0u8; 256];
-    let mut socket  = UdpSocket::new(stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
-    socket.bind(12345).ok()?;
-
-    let endpoint = IpEndpoint::new(IpAddress::Ipv4(Ipv4Address::from_octets(NTP_ADDR)), 123);
-    let mut pkt = [0u8; 48];
-    pkt[0] = 0x1B; // LI=0, VN=3, Mode=3 (client)
-    socket.send_to(&pkt, endpoint).await.ok()?;
-
-    let (n, _) = socket.recv_from(&mut pkt).await.ok()?;
-    if n < 48 { return None; }
-
-    let ntp_secs = u32::from_be_bytes([pkt[40], pkt[41], pkt[42], pkt[43]]) as u64;
-    if ntp_secs <= NTP_UNIX_OFFSET { return None; }
-    Some(ntp_secs - NTP_UNIX_OFFSET)
-}
+// #[cfg(feature = "esp")]
+// async fn query_ntp(stack: embassy_net::Stack<'static>) -> Option<u64> {
+//     let mut rx_meta = [PacketMetadata::EMPTY; 4];
+//     let mut rx_buf  = [0u8; 512];
+//     let mut tx_meta = [PacketMetadata::EMPTY; 4];
+//     let mut tx_buf  = [0u8; 256];
+//     let mut socket  = UdpSocket::new(stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
+//     socket.bind(12345).ok()?;
+//
+//     let endpoint = IpEndpoint::new(IpAddress::Ipv4(Ipv4Address::from_octets(NTP_ADDR)), 123);
+//     let mut pkt = [0u8; 48];
+//     pkt[0] = 0x1B; // LI=0, VN=3, Mode=3 (client)
+//     socket.send_to(&pkt, endpoint).await.ok()?;
+//
+//     let (n, _) = socket.recv_from(&mut pkt).await.ok()?;
+//     if n < 48 { return None; }
+//
+//     let ntp_secs = u32::from_be_bytes([pkt[40], pkt[41], pkt[42], pkt[43]]) as u64;
+//     if ntp_secs <= NTP_UNIX_OFFSET { return None; }
+//     Some(ntp_secs - NTP_UNIX_OFFSET)
+// }
 
 #[cfg(feature = "esp")]
 #[esp_rtos::main]
@@ -747,76 +696,72 @@ async fn main(spawner: Spawner) -> ! {
         drive_mode: esp_hal::gpio::DriveMode::PushPull,
     }).unwrap();
     let (font_idx, bl_idx, ori_idx) = load_settings();
-
-    const BL_DUTY: [u8; 3] = [0, 25, 100];
-    bl_ch.set_duty(BL_DUTY[bl_idx.min(2)]).unwrap();
-
-    let mut orientation = EspOrientation::from_index(ori_idx);
-    let (lw, lh) = orientation.logical_size();
-    let mut bridge = Rgb565ToGray4::new(display, orientation);
+    // Capture seed before rtc is moved into hw.
+    let seed = rtc.current_time_us();
+    let mut hw = EspHardware::new(
+        bl_ch,
+        rtc,
+        FontSize::from_index(font_idx),
+        BacklightLevel::from_index(bl_idx),
+        Orientation::from_index(ori_idx),
+    );
+    let (lw, lh) = hw.orientation().logical_size();
+    let mut bridge = Rgb565ToGray4::new(display, hw.orientation());
     let mut scene = make_scene(lw, lh);
     let mut theme = make_theme();
-    // Apply saved font size.
-    theme.font = match font_idx {
-        0 => FONT_6X10,
-        2 => FONT_10X20,
-        _ => FONT_9X15,
+    (theme.font, theme.bold_font) = match hw.font_size() {
+        FontSize::Small  => (FONT_6X10,  FONT_6X10),
+        FontSize::Medium => (FONT_9X15,  FONT_9X15_BOLD),
+        FontSize::Large  => (FONT_10X20, FONT_10X20),
     };
-    theme.bold_font = match font_idx {
-        0 => FONT_6X10,
-        2 => FONT_10X20,
-        _ => FONT_9X15_BOLD,
-    };
-    let mut cur_font_idx = font_idx;
-    let mut cur_bl_idx   = bl_idx;
     let handlers = vec![handle_click as Callback];
     let mut was_touching = false;
 
     // ── WiFi + NTP setup ─────────────────────────────────────────────────────
-    let timg0  = TimerGroup::new(peripherals.TIMG0);
-    let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
+    let _timg0  = TimerGroup::new(peripherals.TIMG0);
+    let _sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     // Start the WiFi timer scheduler; must come before esp_radio::wifi::new.
-    esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
+    // esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
 
     let station_config = Config::Station(
         StationConfig::default()
             .with_ssid(SSID)
             .with_password(PASSWORD.into()),
     );
-    let (controller, interfaces) = esp_radio::wifi::new(
+    let (_controller, _interfaces) = esp_radio::wifi::new(
         peripherals.WIFI,
         ControllerConfig::default().with_initial_config(station_config),
     ).expect("wifi init");
 
-    let seed = rtc.current_time_us();
-    let (stack, runner) = embassy_net::new(
-        interfaces.station,
-        embassy_net::Config::dhcpv4(Default::default()),
-        mk_static!(StackResources<3>, StackResources::<3>::new()),
-        seed,
-    );
-    spawner.spawn(net_task(runner).expect("net_task"));
-    spawner.spawn(wifi_connection(controller).expect("wifi_connection"));
+    let _ = seed; // used by the commented-out embassy_net setup below
+    // let (stack, runner) = embassy_net::new(
+    //     _interfaces.station,
+    //     embassy_net::Config::dhcpv4(Default::default()),
+    //     mk_static!(StackResources<3>, StackResources::<3>::new()),
+    //     seed,
+    // );
+    // spawner.spawn(net_task(runner).expect("net_task"));
+    // spawner.spawn(wifi_connection(_controller).expect("wifi_connection"));
 
-    info!("connecting to wifi...");
-    stack.wait_config_up().await;
-    info!("wifi connected, querying NTP");
-    if let Some(unix_secs) = query_ntp(stack).await {
-        rtc.set_current_time_us(unix_secs * 1_000_000);
-        let time_str = format_time_utc(unix_secs);
-        if let Some(view) = scene.get_view_mut(&ViewId::new("time")) {
-            view.title = time_str.clone();
-        }
-        scene.mark_layout_dirty();
-        info!("time synced: {}", time_str);
-    } else {
-        info!("NTP query failed");
-    }
+    // info!("connecting to wifi...");
+    // stack.wait_config_up().await;
+    // info!("wifi connected, querying NTP");
+    // if let Some(unix_secs) = query_ntp(stack).await {
+    //     hw.rtc.set_current_time_us(unix_secs * 1_000_000);
+    //     let time_str = format_time_utc(unix_secs);
+    //     if let Some(view) = scene.get_view_mut(&ViewId::new("time")) {
+    //         view.title = time_str.clone();
+    //     }
+    //     scene.mark_layout_dirty();
+    //     info!("time synced: {}", time_str);
+    // } else {
+    //     info!("NTP query failed");
+    // }
 
     loop {
         let dirty_rect = scene.dirty_rect.clone();
         let was_dirty = !dirty_rect.is_empty();
-        let (scene_w, scene_h) = orientation.logical_size();
+        let (scene_w, scene_h) = hw.orientation().logical_size();
         let needs_full_refresh = dirty_rect.size.w >= scene_w && dirty_rect.size.h >= scene_h;
 
         if was_dirty {
@@ -837,55 +782,45 @@ async fn main(spawner: Spawner) -> ! {
 
         if let Some((tx, ty)) = bridge.display.read_touch(&mut gt911) {
             if !was_touching {
-                let (lx, ly) = orientation.phys_to_logical(tx, ty);
+                let (lx, ly) = hw.orientation().phys_to_logical(tx, ty);
                 if let Some((target, action)) =
                     click_at(&mut scene, &handlers, GPoint::new(lx, ly))
                 {
                     if let Action::Command(ref cmd) = action {
                         if target == ViewId::new("font_size") {
-                            cur_font_idx = match cmd.as_str() {
-                                "Small" => 0,
-                                "Large" => 2,
-                                _       => 1,
-                            };
-                            (theme.font, theme.bold_font) = match cur_font_idx {
-                                0 => (FONT_6X10,  FONT_6X10),
-                                2 => (FONT_10X20, FONT_10X20),
-                                _ => (FONT_9X15,  FONT_9X15_BOLD),
+                            hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
+                            (theme.font, theme.bold_font) = match hw.font_size() {
+                                FontSize::Small  => (FONT_6X10,  FONT_6X10),
+                                FontSize::Medium => (FONT_9X15,  FONT_9X15_BOLD),
+                                FontSize::Large  => (FONT_10X20, FONT_10X20),
                             };
                             scene.mark_layout_dirty();
-                            save_settings(cur_font_idx, cur_bl_idx, orientation.to_index());
+                            save_settings(hw.font_size().to_index(), hw.backlight_level().to_index(), hw.orientation().to_index());
                         } else if target == ViewId::new("backlight") {
-                            cur_bl_idx = match cmd.as_str() {
-                                "Off" => 0,
-                                "Low" => 1,
-                                _     => 2,
-                            };
-                            bl_ch.set_duty(BL_DUTY[cur_bl_idx]).unwrap();
+                            hw.set_backlight_level(BacklightLevel::from_cmd(cmd.as_str()));
                             scene.mark_dirty_all();
-                            save_settings(cur_font_idx, cur_bl_idx, orientation.to_index());
+                            save_settings(hw.font_size().to_index(), hw.backlight_level().to_index(), hw.orientation().to_index());
                         } else if target == ViewId::new("orientation") {
-                            orientation = EspOrientation::from_cmd(cmd.as_str());
-                            bridge.orientation = orientation;
-                            let (new_w, new_h) = orientation.logical_size();
+                            hw.set_orientation(Orientation::from_cmd(cmd.as_str()));
+                            bridge.orientation = hw.orientation();
+                            let (new_w, new_h) = hw.orientation().logical_size();
                             scene.bounds = Bounds::new(0, 0, new_w, new_h);
                             scene.mark_layout_dirty();
-                            save_settings(cur_font_idx, cur_bl_idx, orientation.to_index());
+                            save_settings(hw.font_size().to_index(), hw.backlight_level().to_index(), hw.orientation().to_index());
                         }
                     }
                     if target == ViewId::new("sync_time") {
                         info!("sync_time pressed, querying NTP");
-                        if let Some(unix_secs) = query_ntp(stack).await {
-                            rtc.set_current_time_us(unix_secs * 1_000_000);
-                            let time_str = format_time_utc(unix_secs);
-                            if let Some(view) = scene.get_view_mut(&ViewId::new("time")) {
-                                view.title = time_str.clone();
-                            }
-                            scene.mark_layout_dirty();
-                            info!("time synced: {}", time_str);
-                        } else {
-                            info!("NTP query failed");
-                        }
+                        // if let Some(unix_secs) = query_ntp(stack).await {
+                        //     let time_str = format_time_utc(unix_secs);
+                        //     if let Some(view) = scene.get_view_mut(&ViewId::new("time")) {
+                        //         view.title = time_str.clone();
+                        //     }
+                        //     scene.mark_layout_dirty();
+                        //     info!("time synced: {}", time_str);
+                        // } else {
+                        //     info!("NTP query failed");
+                        // }
                     }
                 }
             }

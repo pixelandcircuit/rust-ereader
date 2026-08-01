@@ -5,6 +5,7 @@ extern crate alloc;
 #[cfg(feature = "esp")]
 pub mod driver;
 pub mod font;
+pub mod hardware;
 pub mod layout;
 pub mod epub;
 pub mod reader;
