@@ -1,5 +1,27 @@
 # Changes
 
+## 2026-08-01 (Fix pagination: use real TTF metrics in ereader_ui layout)
+
+Two mismatches caused pages to appear only half-filled:
+1. **Advance width**: `measure_medium` used a hardcoded 13 px/char average, but real
+   Noticia Text advance at 22 px is ~9–10 px. The layout engine packed far fewer bytes
+   per page than the renderer could display.
+2. **Line height**: layout used a hardcoded 30 px/line for Medium, but the renderer uses
+   `renderer.line_height(22.0) + 4 ≈ 26 px`. The renderer could fit ~34 lines in the
+   space the layout allocated for 29, so pages rendered only ~65% full.
+
+- `src/layout.rs`: changed `FontMetrics.measure` from `fn(&str) -> u32` (bare function
+  pointer) to `Box<dyn Fn(&str) -> u32>` so a `TextRenderer` can be captured; added
+  `use alloc::boxed::Box` for the ESP no_std path
+- `examples/ereader_ui.rs`: rewrote `layout_cfg` to create a `TextRenderer`, derive
+  `line_height_px` from `renderer.line_height(font_px) + 4` (exactly matching the
+  renderer's own `line_h`), derive `space_width_px` from `renderer.char_advance(' ', font_px)`,
+  and use `Box::new(move |s| renderer.measure_width(s, font_px))` for the measure
+  closure; removed the approximate `measure_small/medium/large` functions; corrected
+  `bar_h` to include the iris-ui topbar/bottombar padding (+16 instead of +8)
+- `examples/epub_test.rs`: wrapped existing `measure` values in `Box::new(...)` to
+  match the updated API
+
 ## 2026-08-01 (Add deep sleep and physical button support to ereader_ui)
 
 - `src/hardware.rs`: added `button_prev_pressed`, `button_next_pressed`, and

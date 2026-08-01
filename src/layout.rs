@@ -2,7 +2,7 @@
 extern crate alloc;
 
 #[cfg(feature = "esp")]
-use alloc::vec::Vec;
+use alloc::{boxed::Box, vec::Vec};
 #[cfg(not(feature = "esp"))]
 use std::vec::Vec;
 
@@ -22,16 +22,12 @@ pub struct Layout {
 }
 
 /// Metrics needed to measure text for layout.
-///
-/// `measure` must be a plain function pointer (not a closure capturing state).
-/// For integration with `TextRenderer`, store the renderer in a module-level
-/// static and write a thin wrapper: `fn my_measure(s: &str) -> u32 { RENDERER.measure(...) }`.
 pub struct FontMetrics {
     pub line_height_px: u32,
     /// Width of a single space character, in pixels. If 0, the cached ' ' width is used.
     pub space_width_px: u32,
     /// Returns the pixel advance width of the given UTF-8 string at the current font size.
-    pub measure: fn(&str) -> u32,
+    pub measure: Box<dyn Fn(&str) -> u32>,
 }
 
 /// Configuration for the layout engine.

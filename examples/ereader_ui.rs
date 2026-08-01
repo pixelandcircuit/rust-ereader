@@ -10,7 +10,7 @@
 #[macro_use]
 extern crate alloc;
 #[cfg(feature = "esp")]
-use alloc::string::String;
+use alloc::{boxed::Box, string::String};
 
 use embedded_graphics::mono_font::ascii::{FONT_6X10, FONT_9X15, FONT_9X15_BOLD, FONT_10X20};
 use embedded_graphics::pixelcolor::Rgb565;
@@ -39,13 +39,6 @@ const DIALOG_PAD: i32 = 16;
 
 const EPUB_DATA: &[u8] = include_bytes!("sherlock_holmes.epub");
 
-// Approximate Noticia Text advance widths for pagination.
-// Real TTF widths vary per character; these averages are close enough for
-// page-size estimation. The visual rendering uses actual TTF metrics.
-fn measure_small(s: &str)  -> u32 { s.chars().count() as u32 * 9  }  // 16 px
-fn measure_medium(s: &str) -> u32 { s.chars().count() as u32 * 13 }  // 22 px
-fn measure_large(s: &str)  -> u32 { s.chars().count() as u32 * 16 }  // 28 px
-
 /// TTF font size in pixels for each FontSize option.
 fn font_px_for(size: FontSize) -> f32 {
     match size {
@@ -55,24 +48,29 @@ fn font_px_for(size: FontSize) -> f32 {
     }
 }
 
-/// Build a LayoutConfig sized for Noticia Text at the given font size.
-/// The bar heights match the chrome bitmap font (FONT_6X10/9X15/10X20).
+/// Build a LayoutConfig for Noticia Text at the given font size using real TTF
+/// metrics so that layout and rendering agree on where line breaks fall and how
+/// many lines fit per page.
 fn layout_cfg(font: FontSize, w: i32, h: i32) -> LayoutConfig {
-    // Approximate average advance (px/char) and line height (px) for Noticia Text.
-    let (char_w, line_h, measure_fn): (u32, u32, fn(&str) -> u32) = match font {
-        FontSize::Small  => (9,  22, measure_small),
-        FontSize::Medium => (13, 30, measure_medium),
-        FontSize::Large  => (16, 38, measure_large),
-    };
+    let font_px = font_px_for(font);
+    let renderer = TextRenderer::new();
+
+    // Real line height to match render_ttf_text (+4 px leading matches the renderer).
+    let line_h = (renderer.line_height(font_px) as u32).saturating_add(4);
+    // Real space width; 0 would let the layout engine measure it via the gcache.
+    let space_w = renderer.char_advance(' ', font_px) as u32;
+
     // Chrome bars use the bitmap font whose height tracks FontSize.
     let chrome_char_h: u32 = match font {
         FontSize::Small  => 10,
         FontSize::Medium => 15,
         FontSize::Large  => 20,
     };
-    let bar_h = chrome_char_h + 8; // 4px top-pad + char_h + 4px bottom-pad
+    // bar_h = top-pad(4) + font-height + bottom-pad(4) + topbar padding(4+4)
+    let bar_h = chrome_char_h + 16;
     let content_w = (w as u32).saturating_sub(32); // pad_x = 16 each side
     let content_h = (h as u32).saturating_sub(2 * bar_h + 24); // pad_y = 12 each side
+
     LayoutConfig {
         screen_width:  content_w,
         screen_height: content_h,
@@ -80,8 +78,8 @@ fn layout_cfg(font: FontSize, w: i32, h: i32) -> LayoutConfig {
         margin_y: 0,
         font: FontMetrics {
             line_height_px: line_h,
-            space_width_px: char_w,
-            measure: measure_fn,
+            space_width_px: space_w,
+            measure: Box::new(move |s: &str| renderer.measure_width(s, font_px).max(0) as u32),
         },
     }
 }

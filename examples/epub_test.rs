@@ -62,7 +62,7 @@ fn run_tests() {
         font: FontMetrics {
             line_height_px: 28,
             space_width_px: 10,
-            measure: fixed_measure,
+            measure: Box::new(fixed_measure),
         },
     };
 
@@ -92,7 +92,7 @@ fn run_tests() {
         font: FontMetrics {
             line_height_px: 36,
             space_width_px: 13,
-            measure: |s| s.chars().count() as u32 * 13,
+            measure: Box::new(|s: &str| s.chars().count() as u32 * 13),
         },
     };
     reader.go_to_page(0);
