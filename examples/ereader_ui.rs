@@ -768,9 +768,9 @@ use embassy_executor::Spawner;
 use embassy_net::{Runner, StackResources, IpEndpoint, IpAddress, Ipv4Address,
                   udp::{PacketMetadata, UdpSocket}};
 #[cfg(feature = "esp")]
-use embassy_time::{Duration, Instant, Timer as EmbassyTimer};
+use embassy_time::{Duration, Instant, Timer as EmbassyTimer, with_timeout};
 #[cfg(feature = "esp")]
-use esp_radio::wifi::{Config, ControllerConfig, Interface, WifiController, sta::StationConfig};
+use esp_radio::wifi::{Config, ControllerConfig, Interface, sta::StationConfig};
 #[cfg(feature = "esp")]
 use static_cell::StaticCell;
 use log::info;
@@ -796,44 +796,32 @@ macro_rules! mk_static {
 
 #[cfg(feature = "esp")]
 #[embassy_executor::task]
-async fn wifi_connection(mut controller: WifiController<'static>) {
-    loop {
-        match controller.connect_async().await {
-            Ok(_)  => { controller.wait_for_disconnect_async().await.ok(); }
-            Err(e) => { log::warn!("wifi connect error: {:?}", e); }
-        }
-        EmbassyTimer::after(Duration::from_secs(5)).await;
-    }
-}
-
-#[cfg(feature = "esp")]
-#[embassy_executor::task]
 async fn net_task(mut runner: Runner<'static, Interface<'static>>) {
     runner.run().await
 }
 
 /// Query time.google.com via NTP and return Unix seconds, or None on error.
-// #[cfg(feature = "esp")]
-// async fn query_ntp(stack: embassy_net::Stack<'static>) -> Option<u64> {
-//     let mut rx_meta = [PacketMetadata::EMPTY; 4];
-//     let mut rx_buf  = [0u8; 512];
-//     let mut tx_meta = [PacketMetadata::EMPTY; 4];
-//     let mut tx_buf  = [0u8; 256];
-//     let mut socket  = UdpSocket::new(stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
-//     socket.bind(12345).ok()?;
-//
-//     let endpoint = IpEndpoint::new(IpAddress::Ipv4(Ipv4Address::from_octets(NTP_ADDR)), 123);
-//     let mut pkt = [0u8; 48];
-//     pkt[0] = 0x1B; // LI=0, VN=3, Mode=3 (client)
-//     socket.send_to(&pkt, endpoint).await.ok()?;
-//
-//     let (n, _) = socket.recv_from(&mut pkt).await.ok()?;
-//     if n < 48 { return None; }
-//
-//     let ntp_secs = u32::from_be_bytes([pkt[40], pkt[41], pkt[42], pkt[43]]) as u64;
-//     if ntp_secs <= NTP_UNIX_OFFSET { return None; }
-//     Some(ntp_secs - NTP_UNIX_OFFSET)
-// }
+#[cfg(feature = "esp")]
+async fn query_ntp(stack: embassy_net::Stack<'static>) -> Option<u64> {
+    let mut rx_meta = [PacketMetadata::EMPTY; 4];
+    let mut rx_buf  = [0u8; 512];
+    let mut tx_meta = [PacketMetadata::EMPTY; 4];
+    let mut tx_buf  = [0u8; 256];
+    let mut socket  = UdpSocket::new(stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
+    socket.bind(12345).ok()?;
+
+    let endpoint = IpEndpoint::new(IpAddress::Ipv4(Ipv4Address::from_octets(NTP_ADDR)), 123);
+    let mut pkt = [0u8; 48];
+    pkt[0] = 0x1B; // LI=0, VN=3, Mode=3 (client)
+    socket.send_to(&pkt, endpoint).await.ok()?;
+
+    let (n, _) = socket.recv_from(&mut pkt).await.ok()?;
+    if n < 48 { return None; }
+
+    let ntp_secs = u32::from_be_bytes([pkt[40], pkt[41], pkt[42], pkt[43]]) as u64;
+    if ntp_secs <= NTP_UNIX_OFFSET { return None; }
+    Some(ntp_secs - NTP_UNIX_OFFSET)
+}
 
 #[cfg(feature = "esp")]
 #[esp_rtos::main]
@@ -963,41 +951,60 @@ async fn main(spawner: Spawner) -> ! {
 
     let mut last_interaction = Instant::now();
 
-    // ── WiFi + NTP setup ─────────────────────────────────────────────────────
+    // ── WiFi + NTP time sync ──────────────────────────────────────────────────
+    // Only sync on cold boot. On deep-sleep wakeup the RTC already holds the
+    // correct time so there is no need to reconnect WiFi.
     let station_config = Config::Station(
         StationConfig::default()
             .with_ssid(SSID)
             .with_password(PASSWORD.into()),
     );
-    let (_controller, _interfaces) = esp_radio::wifi::new(
+    let (mut controller, interfaces) = esp_radio::wifi::new(
         peripherals.WIFI,
         ControllerConfig::default().with_initial_config(station_config),
     ).expect("wifi init");
 
-    let _ = seed; // used by the commented-out embassy_net setup below
-    // let (stack, runner) = embassy_net::new(
-    //     _interfaces.station,
-    //     embassy_net::Config::dhcpv4(Default::default()),
-    //     mk_static!(StackResources<3>, StackResources::<3>::new()),
-    //     seed,
-    // );
-    // spawner.spawn(net_task(runner).expect("net_task"));
-    // spawner.spawn(wifi_connection(_controller).expect("wifi_connection"));
+    if !is_sleep_wakeup {
+        let (stack, runner) = embassy_net::new(
+            interfaces.station,
+            embassy_net::Config::dhcpv4(Default::default()),
+            mk_static!(StackResources<3>, StackResources::<3>::new()),
+            seed,
+        );
+        spawner.spawn(net_task(runner).expect("net_task"));
 
-    // info!("connecting to wifi...");
-    // stack.wait_config_up().await;
-    // info!("wifi connected, querying NTP");
-    // if let Some(unix_secs) = query_ntp(stack).await {
-    //     hw.rtc.set_current_time_us(unix_secs * 1_000_000);
-    //     let time_str = format_time_utc(unix_secs);
-    //     if let Some(view) = scene.get_view_mut(&ViewId::new("time")) {
-    //         view.title = time_str.clone();
-    //     }
-    //     scene.mark_layout_dirty();
-    //     info!("time synced: {}", time_str);
-    // } else {
-    //     info!("NTP query failed");
-    // }
+        log::info!("NTP: connecting to '{}' ...", SSID);
+        let ntp_result = with_timeout(Duration::from_secs(20), async {
+            if let Err(e) = controller.connect_async().await {
+                log::warn!("NTP: wifi connect failed: {:?}", e);
+                return None;
+            }
+            log::info!("NTP: wifi connected, waiting for DHCP...");
+            stack.wait_config_up().await;
+            log::info!("NTP: DHCP obtained, querying time.google.com...");
+            query_ntp(stack).await
+        }).await;
+
+        match ntp_result {
+            Ok(Some(unix_secs)) => {
+                hw.set_current_time_secs(unix_secs);
+                let time_str = format_time_utc(unix_secs);
+                if let Some(view) = scene.get_view_mut(&ViewId::new("time")) {
+                    view.title = time_str.clone();
+                }
+                scene.mark_layout_dirty();
+                log::info!("NTP synced: {}", time_str);
+            }
+            Ok(None) => log::warn!("NTP: query failed (no response or bad packet)"),
+            Err(_)   => log::warn!("NTP: timed out after 20 s (SSID: '{}')", SSID),
+        }
+
+        controller.disconnect_async().await.ok();
+        log::info!("NTP: wifi disconnected");
+    } else {
+        log::info!("NTP: skipped (woke from sleep, RTC time retained)");
+    }
+    let _ = seed;
 
     loop {
         // Physical button handling: BOOT (GPIO0) = prev, GPIO38 = next.

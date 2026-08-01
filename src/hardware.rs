@@ -161,6 +161,8 @@ pub trait HardwareAccess {
     fn set_font_size(&mut self, size: FontSize);
     fn set_backlight_level(&mut self, level: BacklightLevel);
     fn set_orientation(&mut self, orientation: Orientation);
+    /// Set the hardware RTC to the given Unix timestamp. No-op on simulator.
+    fn set_current_time_secs(&mut self, secs: u64);
 
     /// Physical BOOT button (GPIO0) state — always false on simulator.
     fn button_prev_pressed(&self) -> bool;
@@ -206,6 +208,7 @@ impl HardwareAccess for SimHardware {
     fn set_font_size(&mut self, size: FontSize) { self.font_size = size; }
     fn set_backlight_level(&mut self, level: BacklightLevel) { self.backlight = level; }
     fn set_orientation(&mut self, orientation: Orientation) { self.orientation = orientation; }
+    fn set_current_time_secs(&mut self, _secs: u64) {} // simulator reads from system clock
 
     fn button_prev_pressed(&self) -> bool { false }
     fn button_next_pressed(&self) -> bool { false }
@@ -308,6 +311,10 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
 
     fn button_next_pressed(&self) -> bool {
         self.btn_next.is_low()
+    }
+
+    fn set_current_time_secs(&mut self, secs: u64) {
+        self.rtc.set_current_time_us(secs * 1_000_000);
     }
 
     /// Save state to RTC fast memory, turn off backlight, and enter deep sleep.

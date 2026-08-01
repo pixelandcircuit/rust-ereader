@@ -195,6 +195,11 @@ Defined in `partitions.csv`. Sequential-storage is used for persisting reading p
 - [x] setup unit tests that run on desktop, make run on commit/push in github workflow
 - [x] hook up font and orientation changes.
 - [x] use truetype fonts
-- [ ] hook up wifi and sync time.
-- [ ] fix overdraw on the main text area.
-- [ ] separate dialog for fast page flipping. trigger with hot key.
+- [x] fix overdraw on the main text area.
+- [x] hook up wifi and sync time.
+- [ ] unit tests for pagination and line breaking
+- [ ] separate dialog for fast page flipping. trigger with j and k keys on the simulator.
+- [ ] refresh loop. should only redraw the main screen when something changes.
+  - put the content truetype text inside of iris. is that not possible because of font
+  - type issues?
+  - print the clip rect when redrawing the gui and the true type text

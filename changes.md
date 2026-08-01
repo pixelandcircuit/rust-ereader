@@ -1,5 +1,27 @@
 # Changes
 
+## 2026-08-01 (Improve WiFi connection logging)
+
+- Print SSID before attempting to connect: `NTP: connecting to 'MyNetwork' ...`
+- Log the actual `WifiError` variant on failure instead of discarding it
+- Include SSID in the timeout warning so misconfigured credentials are obvious in logs
+
+## 2026-08-01 (WiFi + NTP time sync on cold boot)
+
+On cold boot the device now connects to WiFi, queries `time.google.com` via NTP,
+sets the RTC to the returned Unix timestamp, then disconnects. On deep-sleep wakeup
+the step is skipped entirely because the RTC already holds the correct time.
+
+- `src/hardware.rs`: added `set_current_time_secs(secs: u64)` to the `HardwareAccess`
+  trait; `EspHardware` calls `rtc.set_current_time_us(secs * 1_000_000)`; `SimHardware`
+  is a no-op (simulator reads system clock)
+- `examples/ereader_ui.rs` (ESP): added `query_ntp` async function (48-byte NTP client
+  over UDP, extracts transmit timestamp at bytes [40..44], subtracts `NTP_UNIX_OFFSET`);
+  WiFi bring-up and NTP are wrapped in a 20-second `with_timeout`; on success the RTC is
+  set via `hw.set_current_time_secs()` and the time label updated; WiFi is disconnected
+  immediately after; removed persistent `wifi_connection` task (one-shot connect/disconnect
+  is sufficient)
+
 ## 2026-08-01 (Fix word wrapping in ereader_ui renderer)
 
 `next_ttf_line` used `text.find('\n')` to check for hard newlines before entering
