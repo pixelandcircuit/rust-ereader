@@ -1445,10 +1445,9 @@ dependencies = [
 [[package]]
 name = "iris-ui"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38bea71f3dd2e8dc2db1ee967adb6ef75bc648bd28ad347725bf6066429b6968"
 dependencies = [
  "embedded-graphics",
+ "fontdue",
  "hashbrown 0.16.1",
  "log",
 ]

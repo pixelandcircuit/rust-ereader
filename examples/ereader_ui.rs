@@ -15,7 +15,7 @@ use alloc::{boxed::Box, string::String};
 use embedded_graphics::mono_font::ascii::{FONT_6X10, FONT_9X15, FONT_9X15_BOLD, FONT_10X20};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::RgbColor;
-use iris_ui::button::make_button;
+use iris_ui::button::{make_button, make_full_button};
 use iris_ui::device::EmbeddedDrawingContext;
 use iris_ui::geom::{Bounds, Insets, Point as GPoint, Size};
 use iris_ui::label::make_label;
@@ -23,7 +23,7 @@ use iris_ui::layouts::{layout_hbox, layout_std_panel, layout_vbox};
 use iris_ui::scene::{click_at, draw_scene, layout_scene, Scene};
 use iris_ui::toggle_group::make_toggle_group;
 use iris_ui::view::{Align, Flex, View, ViewId};
-use iris_ui::{Action, Callback, DrawEvent, GuiEvent, LayoutEvent, Theme};
+use iris_ui::{Callback, DrawEvent, FontKind, GuiEvent, LayoutEvent, Theme, ViewStyle};
 use ereader::epub::EpubArchive;
 use ereader::font::TextRenderer;
 use ereader::hardware::{BacklightLevel, FontSize, HardwareAccess, Orientation};
@@ -158,82 +158,6 @@ fn render_ttf_text(
 
 const DIALOG_ID:ViewId = ViewId::new("dialog");
 
-
-fn make_theme() -> Theme {
-    Theme {
-        bg: Rgb565::WHITE,
-        fg: Rgb565::BLACK,
-        selected_bg: Rgb565::BLUE,
-        selected_fg: Rgb565::WHITE,
-        panel_bg: Rgb565::WHITE,
-        font: FONT_9X15,
-        bold_font: FONT_9X15_BOLD,
-    }
-}
-
-fn draw_topbar(e: &mut DrawEvent) {
-    e.ctx.fill_rect(&e.view.bounds, &e.theme.panel_bg);
-    let b = e.view.bounds;
-    let bottom_y = b.position.y + b.size.h - 1;
-    e.ctx.line(
-        &GPoint::new(b.position.x, bottom_y),
-        &GPoint::new(b.position.x + b.size.w, bottom_y),
-        &e.theme.fg,
-    );
-}
-
-fn draw_bottombar(e: &mut DrawEvent) {
-    e.ctx.fill_rect(&e.view.bounds, &e.theme.panel_bg);
-    let b = e.view.bounds;
-    e.ctx.line(
-        &GPoint::new(b.position.x, b.position.y),
-        &GPoint::new(b.position.x + b.size.w, b.position.y),
-        &e.theme.fg,
-    );
-}
-
-fn draw_content(e: &mut DrawEvent) {
-    // Fill background; TrueType text is drawn outside iris-ui after draw_scene.
-    e.ctx.fill_rect(&e.view.bounds, &e.theme.bg);
-}
-
-fn draw_dialog(e: &mut DrawEvent) {
-    let b = e.view.bounds;
-    // Clear the dialog area to white before children draw on top.
-    // iris-ui calls this draw fn before drawing children, so this acts as a
-    // background fill that erases whatever content sits behind the dialog.
-    e.ctx.fill_rect(&b, &Rgb565::WHITE);
-    e.ctx.stroke_rect(&b, &e.theme.fg);
-    let inner = Bounds::new(b.position.x + 2, b.position.y + 2, b.size.w - 4, b.size.h - 4);
-    e.ctx.stroke_rect(&inner, &e.theme.fg);
-}
-
-fn layout_dialog(pass: &mut LayoutEvent) {
-    let sw = pass.space.w;
-    let sh = pass.space.h;
-    // Give children unconstrained vertical space so layout_vbox can measure them.
-    if let Some(view) = pass.scene.get_view_mut(pass.target) {
-        view.bounds.size.w = DIALOG_W;
-        view.bounds.size.h = 4000;
-    }
-    pass.space = Size::new(DIALOG_W, 4000);
-    layout_vbox(pass);
-    // Measure the actual height used by children (positions are in dialog-local space).
-    let mut content_bottom = DIALOG_PAD;
-    for kid in pass.scene.get_children_ids(&DIALOG_ID) {
-        if let Some(child) = pass.scene.get_view(&kid) {
-            content_bottom = content_bottom.max(child.bounds.position.y + child.bounds.size.h);
-        }
-    }
-    let dialog_h = content_bottom + DIALOG_PAD;
-    // Center the dialog using the measured height.
-    if let Some(view) = pass.scene.get_view_mut(pass.target) {
-        view.bounds.position.x = (sw - DIALOG_W) / 2;
-        view.bounds.position.y = (sh - dialog_h) / 2;
-        view.bounds.size.h = dialog_h;
-    }
-}
-
 fn handle_click(event: &mut GuiEvent) {
     if event.target == &ViewId::new("settings") {
         info!("showing the dialog");
@@ -248,110 +172,116 @@ fn handle_click(event: &mut GuiEvent) {
 
 fn make_scene(w: i32, h: i32) -> Scene {
     let mut scene = Scene::new_with_bounds(Bounds::new(0, 0, w, h));
+    let main_id = ViewId::new("main");
+    let main_panel = make_panel(&main_id)
+        .with_layout(Some(layout_vbox))
+        .with_h_flex(Flex::Grow)
+        .with_v_flex(Flex::Grow)
+        .with_state(Some(Box::new(PanelState {
+            border_visible: true,
+            gap: 5,
+            padding: Insets::new_same(5),
+        })));
+    ;
 
     // ── Top bar ──────────────────────────────────────────────────────────────
-    let topbar_id = ViewId::new("topbar");
-    scene.add_view_to_parent(
-        make_button(&ViewId::new("settings"), "Settings"),
-        &topbar_id,
-    );
-    scene.add_view_to_parent(make_label("time", "--:-- --"), &topbar_id);
-    scene.add_view_to_parent(make_label("battery", "85%"), &topbar_id);
-    scene.add_view_to_parent(make_label("booktitle", "Sherlock Holmes"), &topbar_id);
+    {
+        let topbar_id = ViewId::new("topbar");
+        let settings_button = make_full_button(&ViewId::new("settings"), "Settings", "settings", false);
+        scene.add_view_to_parent(settings_button, &topbar_id);
+        scene.add_view_to_parent(make_label("time", "--:-- --"), &topbar_id);
+        scene.add_view_to_parent(make_label("battery", "85%"), &topbar_id);
+        scene.add_view_to_parent(make_label("booktitle", "Sherlock Holmes"), &topbar_id);
+        let topbar = make_panel(&topbar_id)
+            .with_layout(Some(layout_hbox))
+            .with_h_flex(Flex::Grow)
+            .with_state(Some(Box::new(PanelState {
+                border_visible: true,
+                gap: 5,
+                padding: Insets::new_same(5),
+            })));
+        scene.add_view_to_parent(topbar, &main_id);
+    }
 
-    // ── Content ──────────────────────────────────────────────────────────────
-    let content = View {
-        name: ViewId::new("content"),
-        h_flex: Flex::Resize,
-        h_align: Align::Start,
-        v_flex: Flex::Resize,
-        v_align: Align::Center,
-        layout: Some(layout_std_panel),
-        draw: Some(draw_content),
-        ..Default::default()
-    };
+
+    // content
+    let content_id = ViewId::new("content");
+    let content = make_panel(&content_id)
+        .with_v_flex(Flex::Grow)
+        .with_h_flex(Flex::Grow)
+        .with_h_align(Align::Start)
+        .with_bounds(Bounds::new(0, 0, 300,h-200))
+        .with_state(Some(Box::new(PanelState {
+            border_visible: true,
+            gap: 5,
+            padding: Insets::new_same(5),
+        })));
+    scene.add_view_to_parent(content, &main_id);
+
 
     // ── Bottom bar ───────────────────────────────────────────────────────────
-    let bottombar_id = ViewId::new("bottombar");
-    scene.add_view_to_parent(make_button(&ViewId::new("prev_page"), "< Prev"), &bottombar_id);
-    scene.add_view_to_parent(make_label("chapter", "Loading..."), &bottombar_id);
-    scene.add_view_to_parent(make_label("page", ""), &bottombar_id);
-    scene.add_view_to_parent(make_button(&ViewId::new("next_page"), "Next >"), &bottombar_id);
+    {
+        let bottombar_id = ViewId::new("bottombar");
+        scene.add_view_to_parent(make_button(&ViewId::new("prev_page"), "< Prev"), &bottombar_id);
+        scene.add_view_to_parent(make_label("chapter", "Loading..."), &bottombar_id);
+        scene.add_view_to_parent(make_label("page", ""), &bottombar_id);
+        scene.add_view_to_parent(make_button(&ViewId::new("next_page"), "Next >"), &bottombar_id);
+        let bottombar = make_panel(&bottombar_id)
+            .with_layout(Some(layout_hbox))
+            .with_h_flex(Flex::Grow)
+            .with_visible(true)
+            .with_state(Some(Box::new(PanelState {
+                border_visible: true,
+                gap: 5,
+                padding: Insets::new_same(5),
+            })));
+        scene.add_view_to_parent(bottombar, &main_id);
+    }
 
-    // ── Root panel (vbox) ────────────────────────────────────────────────────
-    let main_id = ViewId::new("main");
-    scene.add_view_to_parent(
-        View {
-            name: topbar_id,
-            h_flex: Flex::Resize,
-            v_flex: Flex::Intrinsic,
-            layout: Some(layout_hbox),
-            padding: Insets::new(4, 8, 4, 8),
-            draw: Some(draw_topbar),
-            ..Default::default()
-        },
-        &main_id,
-    );
-    scene.add_view_to_parent(content, &main_id);
-    scene.add_view_to_parent(
-        View {
-            name: bottombar_id,
-            h_flex: Flex::Resize,
-            v_flex: Flex::Intrinsic,
-            layout: Some(layout_hbox),
-            padding: Insets::new(4, 8, 4, 8),
-            draw: Some(draw_bottombar),
-            ..Default::default()
-        },
-        &main_id,
-    );
+    scene.add_view_to_root(main_panel);
 
-    // ── Settings dialog (hidden, drawn last so it appears on top) ────────────
-    scene.add_view_to_parent(make_label("dlg_title", "Settings"), &DIALOG_ID);
-    scene.add_view_to_parent(make_label("dlg_font_lbl", "Font Size"), &DIALOG_ID);
-    scene.add_view_to_parent(
-        make_toggle_group(&ViewId::new("font_size"), vec!["Small", "Medium", "Large"], 1),
-        &DIALOG_ID,
-    );
-    scene.add_view_to_parent(make_label("dlg_bl_lbl", "Backlight"), &DIALOG_ID);
-    scene.add_view_to_parent(
-        make_toggle_group(&ViewId::new("backlight"), vec!["Off", "Low", "High"], 2),
-        &DIALOG_ID,
-    );
-    scene.add_view_to_parent(make_label("dlg_orient_lbl", "Orientation"), &DIALOG_ID);
-    scene.add_view_to_parent(
-        make_toggle_group(
-            &ViewId::new("orientation"),
-            vec!["Port", "Land", "R.Port", "R.Land"],
-            0,
-        ),
-        &DIALOG_ID,
-    );
-    scene.add_view_to_parent(make_button(&ViewId::new("sync_time"), "Sync Time"), &DIALOG_ID);
-    scene.add_view_to_parent(make_label("dlg_battery", "Battery: 85%  (Charging)"), &DIALOG_ID);
-    scene.add_view_to_parent(make_button(&ViewId::new("dialog_close"), "Close"), &DIALOG_ID);
+    // --- settings dialog --------------------
+    {
+        let dialog_panel = make_panel(&DIALOG_ID)
+            .with_bounds(Bounds::new(50, 50, w - 100, 400))
+            .with_layout(Some(layout_vbox))
+            .with_h_flex(Flex::Fixed)
+            .with_v_flex(Flex::Fixed)
+            .with_h_align(Align::Center)
+            .with_visible(false)
+            .with_state(Some(Box::new(PanelState {
+                border_visible: true,
+                gap: 5,
+                padding: Insets::new_same(5),
+            })));
+        ;
+        // ── Settings dialog (hidden, drawn last so it appears on top) ────────────
+        scene.add_view_to_parent(make_label("dlg_title", "Settings"), &DIALOG_ID);
+        scene.add_view_to_parent(make_label("dlg_font_lbl", "Font Size"), &DIALOG_ID);
+        scene.add_view_to_parent(
+            make_toggle_group(&ViewId::new("font_size"), vec!["Small", "Medium", "Large"], 1),
+            &DIALOG_ID,
+        );
+        scene.add_view_to_parent(make_label("dlg_bl_lbl", "Backlight"), &DIALOG_ID);
+        scene.add_view_to_parent(
+            make_toggle_group(&ViewId::new("backlight"), vec!["Off", "Low", "High"], 2),
+            &DIALOG_ID,
+        );
+        scene.add_view_to_parent(make_label("dlg_orient_lbl", "Orientation"), &DIALOG_ID);
+        scene.add_view_to_parent(
+            make_toggle_group(
+                &ViewId::new("orientation"),
+                vec!["Port", "Land", "R.Port", "R.Land"],
+                0,
+            ),
+            &DIALOG_ID,
+        );
+        scene.add_view_to_parent(make_button(&ViewId::new("sync_time"), "Sync Time"), &DIALOG_ID);
+        scene.add_view_to_parent(make_label("dlg_battery", "Battery: 85%  (Charging)"), &DIALOG_ID);
+        scene.add_view_to_parent(make_button(&ViewId::new("dialog_close"), "Close"), &DIALOG_ID);
+        scene.add_view_to_root(dialog_panel);
+    }
 
-    scene.add_view_to_root(View {
-        name: main_id,
-        h_flex: Flex::Resize,
-        v_flex: Flex::Resize,
-        layout: Some(layout_vbox),
-        bounds: Bounds::new(0, 0, w, h),
-        ..Default::default()
-    });
-
-    scene.add_view_to_root(View {
-        name: DIALOG_ID,
-        h_flex: Flex::Resize,
-        v_flex: Flex::Resize,
-        layout: Some(layout_dialog),
-        draw: Some(draw_dialog),
-        padding: Insets::new_same(DIALOG_PAD),
-        visible: false,
-        ..Default::default()
-    });
-
-    scene.dump();
     log::info!("scene built");
     scene
 }
@@ -392,6 +322,66 @@ fn update_content(scene: &mut Scene, session: &BookSession) {
 }
 
 #[cfg(feature = "simulator")]
+static TTF_FONT: std::sync::OnceLock<Option<fontdue::Font>> = std::sync::OnceLock::new();
+
+#[cfg(feature = "simulator")]
+fn get_ttf_font() -> Option<&'static fontdue::Font> {
+    TTF_FONT
+        .get_or_init(|| {
+            let paths: &[&str] = &[
+                "../fonts/NoticiaText-Regular.ttf",
+                "/System/Library/Fonts/Geneva.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
+
+            ];
+            for path in paths {
+                if let Ok(bytes) = std::fs::read(path) {
+                    if let Ok(font) =
+                        fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default())
+                    {
+                        info!("loaded TTF font from {path}");
+                        return Some(font);
+                    }
+                }
+            }
+            info!("no system TTF font found; TTF button will have no effect");
+            None
+        })
+        .as_ref()
+}
+
+
+fn make_theme() -> Theme {
+    let font_ref = get_ttf_font();
+    if let Some(font) = font_ref {
+        Theme {
+            standard: ViewStyle {
+                fill: Rgb565::WHITE,
+                text: Rgb565::BLACK,
+            },
+            accented: ViewStyle {
+                fill: Rgb565::WHITE,
+                text: Rgb565::BLACK,
+            },
+            selected: ViewStyle {
+                fill: Rgb565::WHITE,
+                text: Rgb565::BLACK,
+            },
+            panel: ViewStyle {
+                fill: Rgb565::WHITE,
+                text: Rgb565::BLACK,
+            },
+            font: FontKind::TrueType { size: 13.0, font: font },
+            bold_font: FontKind::TrueType { size: 13.0, font: font},
+        }
+    } else {
+        panic!("no TTF font found; TTF font will have no effect");
+    }
+}
+
+
+#[cfg(feature = "simulator")]
 fn main() {
     use embedded_graphics::geometry::Size;
     use embedded_graphics_simulator::{
@@ -428,7 +418,8 @@ fn main() {
 
         // Draw TrueType content if the content area was repainted.
         if let Some(cv_bounds) = scene.get_view(&ViewId::new("content")).map(|v| v.bounds) {
-            if !dirty.is_empty() && bounds_overlap(dirty, cv_bounds) {
+            // if !dirty.is_empty() && bounds_overlap(dirty, cv_bounds) {
+                info!("drawing true type");
                 use embedded_graphics::prelude::DrawTarget;
                 let font_px = font_px_for(hw.font_size());
                 let text = session.reader.current_text();
@@ -441,7 +432,7 @@ fn main() {
                         )
                     ));
                 });
-            }
+            // }
         }
 
         window.update(&display);
@@ -470,17 +461,17 @@ fn main() {
                     update_content(&mut scene, &session);
                 }
                 SimulatorEvent::MouseButtonUp { point, .. } => {
-                    if let Some((target, action)) =
+                    if let Some(input) =
                         click_at(&mut scene, &handlers, GPoint::new(point.x, point.y))
                     {
-                        if let Action::Command(ref cmd) = action {
-                            if target == ViewId::new("orientation") {
+                        if let Some(OutputAction::Command(ref cmd)) = input.action {
+                            if input.source == ViewId::new("orientation") {
                                 hw.set_orientation(Orientation::from_cmd(cmd.as_str()));
                                 let (new_w, new_h) = hw.orientation().logical_size();
                                 if new_w != win_w || new_h != win_h {
                                     win_w = new_w;
                                     win_h = new_h;
-                                    scene.bounds = Bounds::new(0, 0, win_w, win_h);
+                                    // scene.bounds = Bounds::new(0, 0, win_w, win_h);
                                     scene.mark_layout_dirty();
                                     display = SimulatorDisplay::new(
                                         Size::new(win_w as u32, win_h as u32),
@@ -490,35 +481,35 @@ fn main() {
                                     session.reader.relayout(&cfg);
                                     update_content(&mut scene, &session);
                                 }
-                            } else if target == ViewId::new("font_size") {
+                            } else if input.source == ViewId::new("font_size") {
                                 hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
-                                (theme.font, theme.bold_font) = match hw.font_size() {
-                                    FontSize::Small  => (FONT_6X10,  FONT_6X10),
-                                    FontSize::Medium => (FONT_9X15,  FONT_9X15_BOLD),
-                                    FontSize::Large  => (FONT_10X20, FONT_10X20),
-                                };
+                                // (theme.font, theme.bold_font) = match hw.font_size() {
+                                //     FontSize::Small  => (FONT_6X10,  FONT_6X10),
+                                //     FontSize::Medium => (FONT_9X15,  FONT_9X15_BOLD),
+                                //     FontSize::Large  => (FONT_10X20, FONT_10X20),
+                                // };
                                 cfg = layout_cfg(hw.font_size(), win_w, win_h);
                                 session.reader.relayout(&cfg);
                                 scene.mark_layout_dirty();
                                 update_content(&mut scene, &session);
-                            } else if target == ViewId::new("backlight") {
+                            } else if input.source == ViewId::new("backlight") {
                                 hw.set_backlight_level(BacklightLevel::from_cmd(cmd.as_str()));
                             }
                         }
-                        if target == ViewId::new("sync_time") {
+                        if input.source == ViewId::new("sync_time") {
                             let t = hw.current_time_secs();
                             if let Some(view) = scene.get_view_mut(&ViewId::new("time")) {
                                 view.title = format_time_utc(t);
                             }
                             scene.mark_layout_dirty();
-                        } else if target == ViewId::new("prev_page") {
+                        } else if input.source == ViewId::new("prev_page") {
                             if session.reader.current_page == 0 {
                                 session.prev_chapter(&epub, &cfg).ok();
                             } else {
                                 session.reader.turn_page(false);
                             }
                             update_content(&mut scene, &session);
-                        } else if target == ViewId::new("next_page") {
+                        } else if input.source == ViewId::new("next_page") {
                             if session.reader.current_page + 1 >= session.reader.page_count() {
                                 session.next_chapter(&epub, &cfg).ok();
                             } else {
@@ -771,6 +762,8 @@ use embassy_net::{Runner, StackResources, IpEndpoint, IpAddress, Ipv4Address,
 use embassy_time::{Duration, Instant, Timer as EmbassyTimer, with_timeout};
 #[cfg(feature = "esp")]
 use esp_radio::wifi::{Config, ControllerConfig, Interface, sta::StationConfig};
+use iris_ui::input::OutputAction;
+use iris_ui::panel::{make_panel, PanelState};
 #[cfg(feature = "esp")]
 use static_cell::StaticCell;
 use log::info;
