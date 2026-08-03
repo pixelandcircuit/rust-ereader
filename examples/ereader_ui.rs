@@ -21,7 +21,7 @@ use iris_ui::geom::{Bounds, Insets, Point as GPoint, Size};
 use iris_ui::label::make_label;
 use iris_ui::layouts::{layout_hbox, layout_std_panel, layout_vbox};
 use iris_ui::scene::{click_at, draw_scene, layout_scene, Scene};
-use iris_ui::toggle_group::make_toggle_group;
+use iris_ui::toggle_group::{make_toggle_group, SelectOneOfState};
 use iris_ui::view::{Align, Flex, View, ViewId};
 use iris_ui::{Callback, DrawEvent, FontKind, GuiEvent, LayoutEvent, Theme, ViewStyle};
 use ereader::epub::EpubArchive;
@@ -189,6 +189,22 @@ fn handle_click(event: &mut GuiEvent) {
         info!("hiding the dialog");
         event.scene.hide_view(&ViewId::new("dialog"));
         event.scene.mark_dirty_all();
+    }
+}
+
+/// Sync the settings dialog toggle groups to reflect the actual loaded settings.
+/// make_scene() hardcodes default selections; call this after loading persisted values.
+fn sync_settings_ui(scene: &mut Scene, font_idx: usize, bl_idx: usize, ori_idx: usize) {
+    for (id, idx) in [
+        (FONT_SIZE_ID.clone(),           font_idx),
+        (ViewId::new("backlight"),       bl_idx),
+        (ViewId::new("orientation"),     ori_idx),
+    ] {
+        if let Some(v) = scene.get_view_mut(&id) {
+            if let Some(s) = v.get_state::<SelectOneOfState>() {
+                s.selected = idx;
+            }
+        }
     }
 }
 
@@ -933,6 +949,7 @@ async fn main(spawner: Spawner) -> ! {
     let mut bridge = Rgb565ToGray4::new(display, hw.orientation());
     let (font, bold_font) = load_fonts();
     let mut scene = make_scene(font, lw, lh);
+    sync_settings_ui(&mut scene, font_idx, bl_idx, ori_idx);
     let mut theme = make_theme(font, bold_font);
     let handlers = vec![handle_click as Callback];
     let mut was_touching = false;

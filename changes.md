@@ -1,5 +1,19 @@
 # Changes
 
+## 2026-08-03 16:00
+
+Fix settings dialog not reflecting persisted font/backlight/orientation after reboot.
+
+The three toggle groups in the settings dialog were created with hardcoded defaults
+(Medium / High / Portrait), so after a cold boot the UI always showed those defaults
+even though the correct values had been loaded from NVS flash. A user seeing the
+wrong selection highlighted would click it to "confirm", inadvertently overwriting
+their saved preference.
+
+Added `sync_settings_ui()` which updates the `SelectOneOfState.selected` field of
+each toggle group to match the loaded indices. Called from the ESP main function
+immediately after `make_scene()`, before the first render.
+
 ## 2026-08-03 15:15
 
 Fixed OOM crash during glyph rasterization on device.
