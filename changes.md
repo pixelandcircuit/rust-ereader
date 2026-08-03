@@ -1,5 +1,16 @@
 # Changes
 
+## 2026-08-02 (Add put_pixel to iris-ui DrawingContext)
+
+Implemented `put_pixel(x, y, color)` on the `DrawingContext` trait and its `EmbeddedDrawingContext` concrete implementation in the local iris-ui build (`/Users/josh/RustroverProjects/rust-embedded-gui/`):
+
+- `gfx.rs`: Added default no-op `put_pixel` to the `DrawingContext` trait so all existing implementors (including `MockDrawingContext`) keep compiling without changes.
+- `device.rs`: Implemented `put_pixel` on `EmbeddedDrawingContext<T>` following the same clip / translate / scale pattern as the other draw methods:
+  - scale == 1: clips to `self.clip`, applies `self.offset`, emits a single `Pixel` via `draw_iter`
+  - scale > 1: routes through `ScaledDisplay` so each logical pixel becomes a scale×scale filled block on the physical display
+
+This unblocks using TTF rasterization (which emits one gray pixel at a time via a callback) inside an iris-ui View's draw function.
+
 ## 2026-08-01 (Add unit tests for layout engine)
 
 Added 11 `#[test]` functions to `src/layout.rs` covering:
