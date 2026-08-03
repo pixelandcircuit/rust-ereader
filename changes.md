@@ -1,5 +1,14 @@
 # Changes
 
+## 2026-08-03 14:30
+
+Added `ENABLE_WIFI_NTP` constant to disable the WiFi init and NTP time sync.
+
+- New `const ENABLE_WIFI_NTP: bool` (ESP-only) declared alongside `SSID`/`PASSWORD`.
+- Set to `false` to skip WiFi stack initialization and NTP query entirely (e.g. when
+  no network is present or to speed up boot during development).
+- Set to `true` (default) to retain existing cold-boot NTP sync behavior.
+
 ## 2026-08-03 (Load theme TTF fonts via Box::leak — works on both simulator and ESP)
 
 Replaced the previous cfg-gated `get_ttf_font()` approaches (OnceLock on simulator,

@@ -773,6 +773,9 @@ use log::info;
 const SSID:     &str = match option_env!("WIFI_SSID") { Some(s) => s, None => "SSID" };
 #[cfg(feature = "esp")]
 const PASSWORD: &str = match option_env!("WIFI_PASS") { Some(s) => s, None => "PASSWORD" };
+// Set to false to skip WiFi init and NTP sync entirely (e.g. when no network is available).
+#[cfg(feature = "esp")]
+const ENABLE_WIFI_NTP: bool = false;
 
 #[cfg(feature = "esp")]
 const NTP_ADDR:        [u8; 4] = [216, 239, 35, 0]; // time.google.com
@@ -943,55 +946,59 @@ async fn main(spawner: Spawner) -> ! {
     // ── WiFi + NTP time sync ──────────────────────────────────────────────────
     // Only sync on cold boot. On deep-sleep wakeup the RTC already holds the
     // correct time so there is no need to reconnect WiFi.
-    let station_config = Config::Station(
-        StationConfig::default()
-            .with_ssid(SSID)
-            .with_password(PASSWORD.into()),
-    );
-    let (mut controller, interfaces) = esp_radio::wifi::new(
-        peripherals.WIFI,
-        ControllerConfig::default().with_initial_config(station_config),
-    ).expect("wifi init");
-
-    if !is_sleep_wakeup {
-        let (stack, runner) = embassy_net::new(
-            interfaces.station,
-            embassy_net::Config::dhcpv4(Default::default()),
-            mk_static!(StackResources<3>, StackResources::<3>::new()),
-            seed,
+    if ENABLE_WIFI_NTP {
+        let station_config = Config::Station(
+            StationConfig::default()
+                .with_ssid(SSID)
+                .with_password(PASSWORD.into()),
         );
-        spawner.spawn(net_task(runner).expect("net_task"));
+        let (mut controller, interfaces) = esp_radio::wifi::new(
+            peripherals.WIFI,
+            ControllerConfig::default().with_initial_config(station_config),
+        ).expect("wifi init");
 
-        log::info!("NTP: connecting to '{}' ...", SSID);
-        let ntp_result = with_timeout(Duration::from_secs(20), async {
-            if let Err(e) = controller.connect_async().await {
-                log::warn!("NTP: wifi connect failed: {:?}", e);
-                return None;
-            }
-            log::info!("NTP: wifi connected, waiting for DHCP...");
-            stack.wait_config_up().await;
-            log::info!("NTP: DHCP obtained, querying time.google.com...");
-            query_ntp(stack).await
-        }).await;
+        if !is_sleep_wakeup {
+            let (stack, runner) = embassy_net::new(
+                interfaces.station,
+                embassy_net::Config::dhcpv4(Default::default()),
+                mk_static!(StackResources<3>, StackResources::<3>::new()),
+                seed,
+            );
+            spawner.spawn(net_task(runner).expect("net_task"));
 
-        match ntp_result {
-            Ok(Some(unix_secs)) => {
-                hw.set_current_time_secs(unix_secs);
-                let time_str = format_time_utc(unix_secs);
-                if let Some(view) = scene.get_view_mut(&ViewId::new("time")) {
-                    view.title = time_str.clone();
+            log::info!("NTP: connecting to '{}' ...", SSID);
+            let ntp_result = with_timeout(Duration::from_secs(20), async {
+                if let Err(e) = controller.connect_async().await {
+                    log::warn!("NTP: wifi connect failed: {:?}", e);
+                    return None;
                 }
-                scene.mark_layout_dirty();
-                log::info!("NTP synced: {}", time_str);
-            }
-            Ok(None) => log::warn!("NTP: query failed (no response or bad packet)"),
-            Err(_)   => log::warn!("NTP: timed out after 20 s (SSID: '{}')", SSID),
-        }
+                log::info!("NTP: wifi connected, waiting for DHCP...");
+                stack.wait_config_up().await;
+                log::info!("NTP: DHCP obtained, querying time.google.com...");
+                query_ntp(stack).await
+            }).await;
 
-        controller.disconnect_async().await.ok();
-        log::info!("NTP: wifi disconnected");
+            match ntp_result {
+                Ok(Some(unix_secs)) => {
+                    hw.set_current_time_secs(unix_secs);
+                    let time_str = format_time_utc(unix_secs);
+                    if let Some(view) = scene.get_view_mut(&ViewId::new("time")) {
+                        view.title = time_str.clone();
+                    }
+                    scene.mark_layout_dirty();
+                    log::info!("NTP synced: {}", time_str);
+                }
+                Ok(None) => log::warn!("NTP: query failed (no response or bad packet)"),
+                Err(_)   => log::warn!("NTP: timed out after 20 s (SSID: '{}')", SSID),
+            }
+
+            controller.disconnect_async().await.ok();
+            log::info!("NTP: wifi disconnected");
+        } else {
+            log::info!("NTP: skipped (woke from sleep, RTC time retained)");
+        }
     } else {
-        log::info!("NTP: skipped (woke from sleep, RTC time retained)");
+        log::info!("WiFi/NTP disabled (ENABLE_WIFI_NTP = false)");
     }
     let _ = seed;
 
