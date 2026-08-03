@@ -36,6 +36,7 @@ use ereader::hardware::EspHardware;
 
 const DIALOG_W: i32 = 420;
 const DIALOG_PAD: i32 = 16;
+const DIALOG_H: i32 = 600;
 
 const EPUB_DATA: &[u8] = include_bytes!("sherlock_holmes.epub");
 
@@ -256,7 +257,7 @@ fn make_scene(w: i32, h: i32) -> Scene {
     // --- settings dialog --------------------
     {
         let dialog_panel = make_panel(&DIALOG_ID)
-            .with_bounds(Bounds::new(50, 50, w - 100, 400))
+            .with_bounds(Bounds::new(50, 50, w - 100, DIALOG_H))
             .with_layout(Some(layout_vbox))
             .with_h_flex(Flex::Fixed)
             .with_v_flex(Flex::Fixed)
@@ -368,6 +369,19 @@ fn make_theme(font: &'static fontdue::Font, bold_font: &'static fontdue::Font) -
     }
 }
 
+fn set_font_size(theme: &mut Theme, font: &'static Font, bold_font: &'static Font, size: f32) {
+    theme.font = FontKind::TrueType {
+        font,
+        size,
+    };
+    theme.bold_font = FontKind::TrueType {
+        font:bold_font,
+        size
+    }
+}
+
+
+
 
 #[cfg(feature = "simulator")]
 fn main() {
@@ -388,7 +402,8 @@ fn main() {
 
     let mut scene = make_scene(win_w, win_h);
     let (font, bold_font) = load_fonts();
-    let theme = make_theme(font, bold_font);
+    let mut theme = make_theme(font, bold_font);
+    set_font_size(&mut theme, font, bold_font, 13.0);
     let handlers: Vec<Callback> = vec![handle_click];
 
     let epub = EpubArchive::new(EPUB_DATA).expect("sherlock_holmes.epub parse failed");
@@ -451,13 +466,14 @@ fn main() {
                                     session.reader.relayout(&cfg);
                                     update_content(&mut scene, &session, font_px_for(hw.font_size()));
                                 }
-                            } else if input.source == ViewId::new("font_size") {
+                            } else if input.source == FONT_SIZE_ID {
                                 hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
-                                // (theme.font, theme.bold_font) = match hw.font_size() {
-                                //     FontSize::Small  => (FONT_6X10,  FONT_6X10),
-                                //     FontSize::Medium => (FONT_9X15,  FONT_9X15_BOLD),
-                                //     FontSize::Large  => (FONT_10X20, FONT_10X20),
-                                // };
+                                let font_size = match hw.font_size() {
+                                    FontSize::Small => 13.0,
+                                    FontSize::Medium => 16.0,
+                                    FontSize::Large => 24.0,
+                                };
+                                set_font_size(&mut theme, font, bold_font, font_size);
                                 cfg = layout_cfg(hw.font_size(), win_w, win_h);
                                 session.reader.relayout(&cfg);
                                 scene.mark_layout_dirty();
@@ -732,6 +748,7 @@ use embassy_net::{Runner, StackResources, IpEndpoint, IpAddress, Ipv4Address,
 use embassy_time::{Duration, Instant, Timer as EmbassyTimer, with_timeout};
 #[cfg(feature = "esp")]
 use esp_radio::wifi::{Config, ControllerConfig, Interface, sta::StationConfig};
+use fontdue::Font;
 use iris_ui::input::OutputAction;
 use iris_ui::panel::{make_panel, PanelState};
 #[cfg(feature = "esp")]
@@ -894,7 +911,7 @@ async fn main(spawner: Spawner) -> ! {
     let mut bridge = Rgb565ToGray4::new(display, hw.orientation());
     let mut scene = make_scene(lw, lh);
     let (font, bold_font) = load_fonts();
-    let theme = make_theme(font, bold_font);
+    let mut theme = make_theme(font, bold_font);
     let handlers = vec![handle_click as Callback];
     let mut was_touching = false;
 
@@ -1022,13 +1039,14 @@ async fn main(spawner: Spawner) -> ! {
                     click_at(&mut scene, &handlers, GPoint::new(lx, ly))
                 {
                     if let Some(OutputAction::Command(ref cmd)) = input.action {
-                        if input.source == FONT_SIZE_ID) {
+                        if input.source == FONT_SIZE_ID {
                             hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
-                            // (theme.font, theme.bold_font) = match hw.font_size() {
-                            //     FontSize::Small  => (FONT_6X10,  FONT_6X10),
-                            //     FontSize::Medium => (FONT_9X15,  FONT_9X15_BOLD),
-                            //     FontSize::Large  => (FONT_10X20, FONT_10X20),
-                            // };
+                            let font_size = match hw.font_size() {
+                                FontSize::Small => 13.0,
+                                FontSize::Medium => 16.0,
+                                FontSize::Large => 24.0,
+                            };
+                            set_font_size(&mut theme, font, bold_font, font_size);
                             let (cur_w, cur_h) = hw.orientation().logical_size();
                             cfg = layout_cfg(hw.font_size(), cur_w, cur_h);
                             session.reader.relayout(&cfg);
