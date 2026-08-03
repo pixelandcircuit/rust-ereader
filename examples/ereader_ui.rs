@@ -151,7 +151,7 @@ fn render_ttf_text(
 
 const DIALOG_ID:ViewId = ViewId::new("dialog");
 const CONTENT_ID:ViewId = ViewId::new("content");
-
+const FONT_SIZE_ID:ViewId = ViewId::new("font_size");
 struct BookState {
     text: String,
     font_px: f32,
@@ -272,7 +272,7 @@ fn make_scene(w: i32, h: i32) -> Scene {
         scene.add_view_to_parent(make_label("dlg_title", "Settings"), &DIALOG_ID);
         scene.add_view_to_parent(make_label("dlg_font_lbl", "Font Size"), &DIALOG_ID);
         scene.add_view_to_parent(
-            make_toggle_group(&ViewId::new("font_size"), vec!["Small", "Medium", "Large"], 1),
+            make_toggle_group(&FONT_SIZE_ID, vec!["Small", "Medium", "Large"], 1),
             &DIALOG_ID,
         );
         scene.add_view_to_parent(make_label("dlg_bl_lbl", "Backlight"), &DIALOG_ID);
@@ -340,62 +340,31 @@ fn update_content(scene: &mut Scene, session: &BookSession, font_px: f32) {
     scene.mark_dirty_all();
 }
 
-#[cfg(feature = "simulator")]
-static TTF_FONT: std::sync::OnceLock<Option<fontdue::Font>> = std::sync::OnceLock::new();
+static FONT_BYTES: &[u8] = include_bytes!("../fonts/NoticiaText-Regular.ttf");
+static BOLD_FONT_BYTES: &[u8] = include_bytes!("../fonts/NoticiaText-Bold.ttf");
 
-#[cfg(feature = "simulator")]
-fn get_ttf_font() -> Option<&'static fontdue::Font> {
-    TTF_FONT
-        .get_or_init(|| {
-            let paths: &[&str] = &[
-                "../fonts/NoticiaText-Regular.ttf",
-                "/System/Library/Fonts/Geneva.ttf",
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
-
-            ];
-            for path in paths {
-                if let Ok(bytes) = std::fs::read(path) {
-                    if let Ok(font) =
-                        fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default())
-                    {
-                        info!("loaded TTF font from {path}");
-                        return Some(font);
-                    }
-                }
-            }
-            info!("no system TTF font found; TTF button will have no effect");
-            None
-        })
-        .as_ref()
+/// Parse both theme fonts and leak them into `'static` memory.
+/// Works on both std (simulator) and no_std+alloc (ESP) since both provide `Box`.
+fn load_fonts() -> (&'static fontdue::Font, &'static fontdue::Font) {
+    let font = Box::leak(Box::new(
+        fontdue::Font::from_bytes(FONT_BYTES, fontdue::FontSettings::default())
+            .expect("NoticiaText-Regular parse failed"),
+    ));
+    let bold = Box::leak(Box::new(
+        fontdue::Font::from_bytes(BOLD_FONT_BYTES, fontdue::FontSettings::default())
+            .expect("NoticiaText-Bold parse failed"),
+    ));
+    (font, bold)
 }
 
-
-fn make_theme() -> Theme {
-    let font_ref = get_ttf_font();
-    if let Some(font) = font_ref {
-        Theme {
-            standard: ViewStyle {
-                fill: Rgb565::WHITE,
-                text: Rgb565::BLACK,
-            },
-            accented: ViewStyle {
-                fill: Rgb565::WHITE,
-                text: Rgb565::BLACK,
-            },
-            selected: ViewStyle {
-                fill: Rgb565::WHITE,
-                text: Rgb565::BLACK,
-            },
-            panel: ViewStyle {
-                fill: Rgb565::WHITE,
-                text: Rgb565::BLACK,
-            },
-            font: FontKind::TrueType { size: 13.0, font: font },
-            bold_font: FontKind::TrueType { size: 13.0, font: font},
-        }
-    } else {
-        panic!("no TTF font found; TTF font will have no effect");
+fn make_theme(font: &'static fontdue::Font, bold_font: &'static fontdue::Font) -> Theme {
+    Theme {
+        standard: ViewStyle { fill: Rgb565::WHITE, text: Rgb565::BLACK },
+        accented: ViewStyle { fill: Rgb565::WHITE, text: Rgb565::BLACK },
+        selected: ViewStyle { fill: Rgb565::WHITE, text: Rgb565::BLACK },
+        panel:    ViewStyle { fill: Rgb565::WHITE, text: Rgb565::BLACK },
+        font:      FontKind::TrueType { size: 13.0, font },
+        bold_font: FontKind::TrueType { size: 13.0, font: bold_font },
     }
 }
 
@@ -418,7 +387,8 @@ fn main() {
     let mut window = Window::new("ereader_ui", &settings);
 
     let mut scene = make_scene(win_w, win_h);
-    let mut theme = make_theme();
+    let (font, bold_font) = load_fonts();
+    let theme = make_theme(font, bold_font);
     let handlers: Vec<Callback> = vec![handle_click];
 
     let epub = EpubArchive::new(EPUB_DATA).expect("sherlock_holmes.epub parse failed");
@@ -923,12 +893,8 @@ async fn main(spawner: Spawner) -> ! {
     let (lw, lh) = hw.orientation().logical_size();
     let mut bridge = Rgb565ToGray4::new(display, hw.orientation());
     let mut scene = make_scene(lw, lh);
-    let mut theme = make_theme();
-    (theme.font, theme.bold_font) = match hw.font_size() {
-        FontSize::Small  => (FONT_6X10,  FONT_6X10),
-        FontSize::Medium => (FONT_9X15,  FONT_9X15_BOLD),
-        FontSize::Large  => (FONT_10X20, FONT_10X20),
-    };
+    let (font, bold_font) = load_fonts();
+    let theme = make_theme(font, bold_font);
     let handlers = vec![handle_click as Callback];
     let mut was_touching = false;
 
@@ -1052,32 +1018,32 @@ async fn main(spawner: Spawner) -> ! {
         if let Some((tx, ty)) = bridge.display.read_touch(&mut gt911) {
             if !was_touching {
                 let (lx, ly) = hw.orientation().phys_to_logical(tx, ty);
-                if let Some((target, action)) =
+                if let Some(input) =
                     click_at(&mut scene, &handlers, GPoint::new(lx, ly))
                 {
-                    if let Action::Command(ref cmd) = action {
-                        if target == ViewId::new("font_size") {
+                    if let Some(OutputAction::Command(ref cmd)) = input.action {
+                        if input.source == FONT_SIZE_ID) {
                             hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
-                            (theme.font, theme.bold_font) = match hw.font_size() {
-                                FontSize::Small  => (FONT_6X10,  FONT_6X10),
-                                FontSize::Medium => (FONT_9X15,  FONT_9X15_BOLD),
-                                FontSize::Large  => (FONT_10X20, FONT_10X20),
-                            };
+                            // (theme.font, theme.bold_font) = match hw.font_size() {
+                            //     FontSize::Small  => (FONT_6X10,  FONT_6X10),
+                            //     FontSize::Medium => (FONT_9X15,  FONT_9X15_BOLD),
+                            //     FontSize::Large  => (FONT_10X20, FONT_10X20),
+                            // };
                             let (cur_w, cur_h) = hw.orientation().logical_size();
                             cfg = layout_cfg(hw.font_size(), cur_w, cur_h);
                             session.reader.relayout(&cfg);
                             scene.mark_layout_dirty();
                             update_content(&mut scene, &session, font_px_for(hw.font_size()));
                             save_settings(hw.font_size().to_index(), hw.backlight_level().to_index(), hw.orientation().to_index());
-                        } else if target == ViewId::new("backlight") {
+                        } else if input.source == ViewId::new("backlight") {
                             hw.set_backlight_level(BacklightLevel::from_cmd(cmd.as_str()));
                             scene.mark_dirty_all();
                             save_settings(hw.font_size().to_index(), hw.backlight_level().to_index(), hw.orientation().to_index());
-                        } else if target == ViewId::new("orientation") {
+                        } else if input.source == ViewId::new("orientation") {
                             hw.set_orientation(Orientation::from_cmd(cmd.as_str()));
                             bridge.orientation = hw.orientation();
                             let (new_w, new_h) = hw.orientation().logical_size();
-                            scene.bounds = Bounds::new(0, 0, new_w, new_h);
+                            // scene.bounds = Bounds::new(0, 0, new_w, new_h);
                             cfg = layout_cfg(hw.font_size(), new_w, new_h);
                             session.reader.relayout(&cfg);
                             scene.mark_layout_dirty();
@@ -1085,7 +1051,7 @@ async fn main(spawner: Spawner) -> ! {
                             save_settings(hw.font_size().to_index(), hw.backlight_level().to_index(), hw.orientation().to_index());
                         }
                     }
-                    if target == ViewId::new("sync_time") {
+                    if input.source == ViewId::new("sync_time") {
                         info!("sync_time pressed, querying NTP");
                         // if let Some(unix_secs) = query_ntp(stack).await {
                         //     let time_str = format_time_utc(unix_secs);
@@ -1097,7 +1063,7 @@ async fn main(spawner: Spawner) -> ! {
                         // } else {
                         //     info!("NTP query failed");
                         // }
-                    } else if target == ViewId::new("prev_page") {
+                    } else if input.source == ViewId::new("prev_page") {
                         if session.reader.current_page == 0 {
                             session.prev_chapter(&epub, &cfg).ok();
                         } else {
@@ -1106,7 +1072,7 @@ async fn main(spawner: Spawner) -> ! {
                         update_content(&mut scene, &session, font_px_for(hw.font_size()));
                         save_position(session.chapter_idx, session.reader.anchor_byte);
                         last_interaction = Instant::now();
-                    } else if target == ViewId::new("next_page") {
+                    } else if input.source == ViewId::new("next_page") {
                         if session.reader.current_page + 1 >= session.reader.page_count() {
                             session.next_chapter(&epub, &cfg).ok();
                         } else {

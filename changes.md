@@ -1,5 +1,27 @@
 # Changes
 
+## 2026-08-03 (Load theme TTF fonts via Box::leak — works on both simulator and ESP)
+
+Replaced the previous cfg-gated `get_ttf_font()` approaches (OnceLock on simulator,
+unsafe MaybeUninit on ESP) with a single unified pattern:
+
+- `FONT_BYTES` / `BOLD_FONT_BYTES` — `include_bytes!` statics that embed
+  `fonts/NoticiaText-Regular.ttf` and `fonts/NoticiaText-Bold.ttf` at compile time.
+  No filesystem access at runtime; works identically on simulator and ESP.
+- `load_fonts()` — parses both fonts and calls `Box::leak(Box::new(font))` to
+  obtain `&'static fontdue::Font` references. `Box` is available from `std` on the
+  simulator and from `alloc` on ESP, so no `#[cfg]` is needed.
+- `make_theme(font, bold_font)` now takes the two static font references directly
+  instead of calling a platform-specific getter internally.
+
+## 2026-08-03 (Fix f32::round() unavailable in no_std ESP build)
+
+`f32::round()` requires the std math library (or libm) and is not available in `no_std`.
+Replaced all three `.advance_width.round() as i32` calls in `iris-ui/src/device.rs`
+with `(advance_width + 0.5) as i32`, which rounds positive f32 values identically
+without any additional dependency. Advance widths from fontdue are always positive so
+the equivalence holds exactly.
+
 ## 2026-08-03 (Move book content into iris-ui View using BookState)
 
 Book text is now rendered entirely inside the scene tree through a plain iris-ui `View` with a custom draw function, eliminating the separate post-scene TTF render pass.
