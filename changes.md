@@ -1,5 +1,24 @@
 # Changes
 
+## 2026-08-03 15:15
+
+Fixed OOM crash during glyph rasterization on device.
+
+Root cause: `fontdue::Font::from_bytes()` was being called in three separate places
+(theme fonts via `load_fonts()`, layout measurement in `layout_cfg`, and book
+rendering in `BookState`), creating up to four Font instances simultaneously. Each
+parsed Font occupies tens of KB on the heap; together they exhausted SRAM (72 KB)
+before a rasterization `Vec<Line>` could grow.
+
+Changes:
+- `src/font.rs`: `TextRenderer` now holds `&'static fontdue::Font` instead of an
+  owned `Font`. `TextRenderer::from_static(font)` is the new preferred constructor
+  (zero allocation). `new()` and `with_font()` are kept but now leak via `Box::leak`
+  for use in standalone examples.
+- `examples/ereader_ui.rs`: `load_fonts()` is called first in both main functions;
+  the resulting `&'static Font` is threaded through `make_scene` and `layout_cfg` so
+  all TextRenderers share the same two underlying Font objects (Regular + Bold).
+
 ## 2026-08-03 14:30
 
 Added `ENABLE_WIFI_NTP` constant to disable the WiFi init and NTP time sync.

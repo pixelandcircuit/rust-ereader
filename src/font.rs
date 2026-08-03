@@ -1,21 +1,36 @@
+#[cfg(feature = "esp")]
+use alloc::boxed::Box;
+
 static FONT_DATA: &[u8] = include_bytes!("../fonts/NoticiaText-Regular.ttf");
 
 pub struct TextRenderer {
-    font: fontdue::Font,
+    font: &'static fontdue::Font,
 }
 
 impl TextRenderer {
-    pub fn new() -> Self {
-        let settings = fontdue::FontSettings::default();
-        let font = fontdue::Font::from_bytes(FONT_DATA, settings)
-            .expect("NoticiaText-Regular.ttf parse error");
+    /// Create a renderer from an already-parsed static Font reference.
+    /// Preferred on devices: avoids re-parsing the TTF into a second heap allocation.
+    pub fn from_static(font: &'static fontdue::Font) -> Self {
         TextRenderer { font }
     }
 
-    /// Create a renderer using arbitrary TTF/OTF data embedded via `include_bytes!`.
+    /// Parse and leak a new Font from the default NoticiaText-Regular bytes.
+    /// Only use where a static font reference isn't available (e.g. standalone examples).
+    pub fn new() -> Self {
+        let font: &'static fontdue::Font = Box::leak(Box::new(
+            fontdue::Font::from_bytes(FONT_DATA, fontdue::FontSettings::default())
+                .expect("NoticiaText-Regular.ttf parse error"),
+        ));
+        TextRenderer { font }
+    }
+
+    /// Parse and leak a new Font from arbitrary TTF/OTF bytes.
+    /// Only use where a static font reference isn't available.
     pub fn with_font(data: &'static [u8]) -> Self {
-        let font = fontdue::Font::from_bytes(data, fontdue::FontSettings::default())
-            .expect("font parse error");
+        let font: &'static fontdue::Font = Box::leak(Box::new(
+            fontdue::Font::from_bytes(data, fontdue::FontSettings::default())
+                .expect("font parse error"),
+        ));
         TextRenderer { font }
     }
 

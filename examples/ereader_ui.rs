@@ -52,9 +52,9 @@ fn font_px_for(size: FontSize) -> f32 {
 /// Build a LayoutConfig for Noticia Text at the given font size using real TTF
 /// metrics so that layout and rendering agree on where line breaks fall and how
 /// many lines fit per page.
-fn layout_cfg(font: FontSize, w: i32, h: i32) -> LayoutConfig {
+fn layout_cfg(ttf: &'static fontdue::Font, font: FontSize, w: i32, h: i32) -> LayoutConfig {
     let font_px = font_px_for(font);
-    let renderer = TextRenderer::new();
+    let renderer = TextRenderer::from_static(ttf);
 
     // Real line height to match render_ttf_text (+4 px leading matches the renderer).
     let line_h = (renderer.line_height(font_px) as u32).saturating_add(4);
@@ -119,13 +119,13 @@ fn next_ttf_line<'a>(
 /// Render page text with Noticia Text TTF, emitting one (x, y, gray4) pixel
 /// at a time to `put_pixel`. Handles word-wrap, padding, and bounds clipping.
 fn render_ttf_text(
+    renderer: &TextRenderer,
     text: &str,
     font_px: f32,
     bounds: Bounds,
     mut put_pixel: impl FnMut(i32, i32, u8),
 ) {
     if text.is_empty() { return; }
-    let renderer = TextRenderer::new();
     let line_h = renderer.line_height(font_px) + 4; // +4 px leading
     let pad_x = 16i32;
     let pad_y = 12i32;
@@ -156,16 +156,22 @@ const FONT_SIZE_ID:ViewId = ViewId::new("font_size");
 struct BookState {
     text: String,
     font_px: f32,
+    renderer: TextRenderer,
 }
 
 fn draw_book_content(e: &mut DrawEvent) {
     let bounds = e.view.bounds;
-    let (text, font_px) = match e.view.get_state::<BookState>() {
-        Some(s) => (s.text.clone(), s.font_px),
+    // get_state returns &mut BookState which borrows e.view. We need e.ctx in the
+    // pixel closure below, but can't hold both borrows simultaneously through e.
+    // Extract a raw pointer to renderer (safe: BookState lives in a Box inside the
+    // view for the entire function; we never replace the state box during rendering).
+    let (text, font_px, renderer_ptr) = match e.view.get_state::<BookState>() {
+        Some(s) => (s.text.clone(), s.font_px, &s.renderer as *const TextRenderer),
         None => return,
     };
+    let renderer = unsafe { &*renderer_ptr };
     e.ctx.fill_rect(&bounds, &Rgb565::WHITE);
-    render_ttf_text(&text, font_px, bounds, |px, py, g4| {
+    render_ttf_text(renderer, &text, font_px, bounds, |px, py, g4| {
         let gray8 = (g4 << 4) | g4;
         let v5 = (gray8 >> 3) as u8;
         let v6 = (gray8 >> 2) as u8;
@@ -186,7 +192,7 @@ fn handle_click(event: &mut GuiEvent) {
     }
 }
 
-fn make_scene(w: i32, h: i32) -> Scene {
+fn make_scene(ttf: &'static fontdue::Font, w: i32, h: i32) -> Scene {
     let mut scene = Scene::new_with_bounds(Bounds::new(0, 0, w, h));
     let main_id = ViewId::new("main");
     let main_panel = make_panel(&main_id)
@@ -232,7 +238,7 @@ fn make_scene(w: i32, h: i32) -> Scene {
         let content = View {
             name: CONTENT_ID.clone(),
             draw: Some(draw_book_content),
-            state: Some(Box::new(BookState { text: String::new(), font_px: 22.0 })),
+            state: Some(Box::new(BookState { text: String::new(), font_px: 22.0, renderer: TextRenderer::from_static(ttf) })),
             ..Default::default()
         }
             .with_layout(Some(fill_all_space))
@@ -413,14 +419,14 @@ fn main() {
     let settings = OutputSettingsBuilder::new().scale(1).build();
     let mut window = Window::new("ereader_ui", &settings);
 
-    let mut scene = make_scene(win_w, win_h);
     let (font, bold_font) = load_fonts();
+    let mut scene = make_scene(font, win_w, win_h);
     let mut theme = make_theme(font, bold_font);
     set_font_size(&mut theme, font, bold_font, 13.0);
     let handlers: Vec<Callback> = vec![handle_click];
 
     let epub = EpubArchive::new(EPUB_DATA).expect("sherlock_holmes.epub parse failed");
-    let mut cfg = layout_cfg(hw.font_size(), win_w, win_h);
+    let mut cfg = layout_cfg(font, hw.font_size(), win_w, win_h);
     let mut session = BookSession::new(&epub, &cfg).expect("BookSession init failed");
     update_content(&mut scene, &session, font_px_for(hw.font_size()));
 
@@ -475,7 +481,7 @@ fn main() {
                                         Size::new(win_w as u32, win_h as u32),
                                     );
                                     window = Window::new("ereader_ui", &settings);
-                                    cfg = layout_cfg(hw.font_size(), win_w, win_h);
+                                    cfg = layout_cfg(font, hw.font_size(), win_w, win_h);
                                     session.reader.relayout(&cfg);
                                     update_content(&mut scene, &session, font_px_for(hw.font_size()));
                                 }
@@ -487,7 +493,7 @@ fn main() {
                                     FontSize::Large => 24.0,
                                 };
                                 set_font_size(&mut theme, font, bold_font, font_size);
-                                cfg = layout_cfg(hw.font_size(), win_w, win_h);
+                                cfg = layout_cfg(font, hw.font_size(), win_w, win_h);
                                 session.reader.relayout(&cfg);
                                 scene.mark_layout_dirty();
                                 update_content(&mut scene, &session, font_px_for(hw.font_size()));
@@ -925,14 +931,14 @@ async fn main(spawner: Spawner) -> ! {
     );
     let (lw, lh) = hw.orientation().logical_size();
     let mut bridge = Rgb565ToGray4::new(display, hw.orientation());
-    let mut scene = make_scene(lw, lh);
     let (font, bold_font) = load_fonts();
+    let mut scene = make_scene(font, lw, lh);
     let mut theme = make_theme(font, bold_font);
     let handlers = vec![handle_click as Callback];
     let mut was_touching = false;
 
     let epub = EpubArchive::new(EPUB_DATA).expect("epub parse");
-    let mut cfg = layout_cfg(hw.font_size(), lw, lh);
+    let mut cfg = layout_cfg(font, hw.font_size(), lw, lh);
     let mut session = if saved_chapter > 0 || saved_anchor > 0 {
         BookSession::restore(&epub, &cfg, saved_chapter, saved_anchor)
             .unwrap_or_else(|_| BookSession::new(&epub, &cfg).expect("epub load"))
@@ -1068,7 +1074,7 @@ async fn main(spawner: Spawner) -> ! {
                             };
                             set_font_size(&mut theme, font, bold_font, font_size);
                             let (cur_w, cur_h) = hw.orientation().logical_size();
-                            cfg = layout_cfg(hw.font_size(), cur_w, cur_h);
+                            cfg = layout_cfg(font, hw.font_size(), cur_w, cur_h);
                             session.reader.relayout(&cfg);
                             scene.mark_layout_dirty();
                             update_content(&mut scene, &session, font_px_for(hw.font_size()));
@@ -1082,7 +1088,7 @@ async fn main(spawner: Spawner) -> ! {
                             bridge.orientation = hw.orientation();
                             let (new_w, new_h) = hw.orientation().logical_size();
                             // scene.bounds = Bounds::new(0, 0, new_w, new_h);
-                            cfg = layout_cfg(hw.font_size(), new_w, new_h);
+                            cfg = layout_cfg(font, hw.font_size(), new_w, new_h);
                             session.reader.relayout(&cfg);
                             scene.mark_layout_dirty();
                             update_content(&mut scene, &session, font_px_for(hw.font_size()));
