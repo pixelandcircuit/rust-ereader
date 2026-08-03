@@ -951,6 +951,10 @@ async fn main(spawner: Spawner) -> ! {
     let mut scene = make_scene(font, lw, lh);
     sync_settings_ui(&mut scene, font_idx, bl_idx, ori_idx);
     let mut theme = make_theme(font, bold_font);
+    let chrome_size = match hw.font_size() {
+        FontSize::Small => 13.0, FontSize::Medium => 16.0, FontSize::Large => 24.0,
+    };
+    set_font_size(&mut theme, font, bold_font, chrome_size);
     let handlers = vec![handle_click as Callback];
     let mut was_touching = false;
 
