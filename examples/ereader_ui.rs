@@ -191,7 +191,7 @@ fn make_scene(w: i32, h: i32) -> Scene {
     let main_id = ViewId::new("main");
     let main_panel = make_panel(&main_id)
         .with_layout(Some(layout_vbox))
-        .with_bounds(Bounds::new(20, 20, w-40, h-40))
+        .with_bounds(Bounds::new(0, 0, w-10, h-10))
         .with_h_flex(Flex::Fixed)
         .with_v_flex(Flex::Fixed)
         .with_state(Some(Box::new(PanelState {
@@ -199,7 +199,6 @@ fn make_scene(w: i32, h: i32) -> Scene {
             gap: 5,
             padding: Insets::new_same(0),
         })));
-    ;
 
     // ── Top bar ──────────────────────────────────────────────────────────────
     {
@@ -223,12 +222,20 @@ fn make_scene(w: i32, h: i32) -> Scene {
 
     // content — plain View with BookState; draw_book_content renders TTF text
     {
+        fn fill_all_space(layout: &mut LayoutEvent) {
+            if let Some(view) = layout.scene.get_view_mut(&layout.target) {
+                view.bounds.size.w = layout.space.w;
+                view.bounds.size.h = layout.space.h;
+            }
+        }
+
         let content = View {
             name: CONTENT_ID.clone(),
             draw: Some(draw_book_content),
             state: Some(Box::new(BookState { text: String::new(), font_px: 22.0 })),
             ..Default::default()
         }
+            .with_layout(Some(fill_all_space))
             .with_v_flex(Flex::Grow)
             .with_h_flex(Flex::Grow)
             .with_v_align(Align::Center)
