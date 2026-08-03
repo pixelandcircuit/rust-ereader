@@ -1,5 +1,16 @@
 # Changes
 
+## 2026-08-03 (Move book content into iris-ui View using BookState)
+
+Book text is now rendered entirely inside the scene tree through a plain iris-ui `View` with a custom draw function, eliminating the separate post-scene TTF render pass.
+
+- `BookState { text: String, font_px: f32 }` — stores the current page text and font size; lives in `view.state` as `Box<dyn Any>`.
+- `draw_book_content(e: &mut DrawEvent)` — bare `fn` matching `DrawFn`; reads `BookState` via `e.view.get_state::<BookState>()`, fills white, then renders TTF glyphs pixel-by-pixel via `e.ctx.put_pixel`.
+- The content `View` in `make_scene` is now a plain `View { draw: Some(draw_book_content), state: Some(Box::new(BookState { ... })), ..Default::default() }` instead of a `make_panel`.
+- `update_content` now takes a `font_px: f32` parameter and pushes the current page text and font size into `BookState` each time the page changes.
+- Removed the separate TTF render loops from both the simulator and ESP main loops.
+- Removed the now-unused `bounds_overlap` helper.
+
 ## 2026-08-02 (Add put_pixel to iris-ui DrawingContext)
 
 Implemented `put_pixel(x, y, color)` on the `DrawingContext` trait and its `EmbeddedDrawingContext` concrete implementation in the local iris-ui build (`/Users/josh/RustroverProjects/rust-embedded-gui/`):

@@ -114,13 +114,6 @@ fn next_ttf_line<'a>(
     (text.trim_end(), "")
 }
 
-/// True if rectangles a and b overlap (share at least one pixel).
-fn bounds_overlap(a: Bounds, b: Bounds) -> bool {
-    a.position.x < b.position.x + b.size.w
-        && a.position.x + a.size.w > b.position.x
-        && a.position.y < b.position.y + b.size.h
-        && a.position.y + a.size.h > b.position.y
-}
 
 /// Render page text with Noticia Text TTF, emitting one (x, y, gray4) pixel
 /// at a time to `put_pixel`. Handles word-wrap, padding, and bounds clipping.
@@ -157,6 +150,27 @@ fn render_ttf_text(
 }
 
 const DIALOG_ID:ViewId = ViewId::new("dialog");
+const CONTENT_ID:ViewId = ViewId::new("content");
+
+struct BookState {
+    text: String,
+    font_px: f32,
+}
+
+fn draw_book_content(e: &mut DrawEvent) {
+    let bounds = e.view.bounds;
+    let (text, font_px) = match e.view.get_state::<BookState>() {
+        Some(s) => (s.text.clone(), s.font_px),
+        None => return,
+    };
+    e.ctx.fill_rect(&bounds, &Rgb565::WHITE);
+    render_ttf_text(&text, font_px, bounds, |px, py, g4| {
+        let gray8 = (g4 << 4) | g4;
+        let v5 = (gray8 >> 3) as u8;
+        let v6 = (gray8 >> 2) as u8;
+        e.ctx.put_pixel(px, py, &Rgb565::new(v5, v6, v5));
+    });
+}
 
 fn handle_click(event: &mut GuiEvent) {
     if event.target == &ViewId::new("settings") {
@@ -204,18 +218,17 @@ fn make_scene(w: i32, h: i32) -> Scene {
     }
 
 
-    // content
-    let content_id = ViewId::new("content");
-    let content = make_panel(&content_id)
-        .with_v_flex(Flex::Grow)
-        .with_h_flex(Flex::Grow)
-        .with_h_align(Align::Start)
-        .with_bounds(Bounds::new(0, 0, 300,h-200))
-        .with_state(Some(Box::new(PanelState {
-            border_visible: true,
-            gap: 5,
-            padding: Insets::new_same(5),
-        })));
+    // content — plain View with BookState; draw_book_content renders TTF text
+    let content = View {
+        name: CONTENT_ID.clone(),
+        draw: Some(draw_book_content),
+        state: Some(Box::new(BookState { text: String::new(), font_px: 22.0 })),
+        ..Default::default()
+    }
+    .with_v_flex(Flex::Grow)
+    .with_h_flex(Flex::Grow)
+        .with_bounds(Bounds::new(0,0,w,h-100))
+        ;
     scene.add_view_to_parent(content, &main_id);
 
 
@@ -301,7 +314,7 @@ fn format_time_utc(unix_secs: u64) -> String {
     format!("{}:{:02} {}", h12, m, ampm)
 }
 
-fn update_content(scene: &mut Scene, session: &BookSession) {
+fn update_content(scene: &mut Scene, session: &BookSession, font_px: f32) {
     let chapter_str = format!(
         "Ch.{} of {}",
         session.chapter_idx + 1,
@@ -317,6 +330,12 @@ fn update_content(scene: &mut Scene, session: &BookSession) {
     );
     if let Some(v) = scene.get_view_mut(&ViewId::new("page")) {
         v.title = page_str;
+    }
+    if let Some(v) = scene.get_view_mut(&CONTENT_ID) {
+        if let Some(state) = v.get_state::<BookState>() {
+            state.text = session.reader.current_text().into();
+            state.font_px = font_px;
+        }
     }
     scene.mark_dirty_all();
 }
@@ -405,7 +424,7 @@ fn main() {
     let epub = EpubArchive::new(EPUB_DATA).expect("sherlock_holmes.epub parse failed");
     let mut cfg = layout_cfg(hw.font_size(), win_w, win_h);
     let mut session = BookSession::new(&epub, &cfg).expect("BookSession init failed");
-    update_content(&mut scene, &session);
+    update_content(&mut scene, &session, font_px_for(hw.font_size()));
 
     'running: loop {
         let dirty = scene.dirty_rect.clone();
@@ -414,25 +433,6 @@ fn main() {
             ctx.clip = dirty.clone();
             layout_scene(&mut scene, &theme);
             draw_scene(&mut scene, &mut ctx, &theme);
-        }
-
-        // Draw TrueType content if the content area was repainted.
-        if let Some(cv_bounds) = scene.get_view(&ViewId::new("content")).map(|v| v.bounds) {
-            // if !dirty.is_empty() && bounds_overlap(dirty, cv_bounds) {
-                info!("drawing true type");
-                use embedded_graphics::prelude::DrawTarget;
-                let font_px = font_px_for(hw.font_size());
-                let text = session.reader.current_text();
-                render_ttf_text(text, font_px, cv_bounds, |px, py, g4| {
-                    let gray8 = (g4 << 4) | g4;
-                    let _ = display.draw_iter(core::iter::once(
-                        embedded_graphics::Pixel(
-                            embedded_graphics::geometry::Point::new(px, py),
-                            Rgb565::new((gray8 >> 3) as u8, (gray8 >> 2) as u8, (gray8 >> 3) as u8),
-                        )
-                    ));
-                });
-            // }
         }
 
         window.update(&display);
@@ -449,7 +449,7 @@ fn main() {
                     } else {
                         session.reader.turn_page(false);
                     }
-                    update_content(&mut scene, &session);
+                    update_content(&mut scene, &session, font_px_for(hw.font_size()));
                 }
                 SimulatorEvent::KeyDown { keycode: Keycode::Right, repeat: false, .. }
                 | SimulatorEvent::KeyDown { keycode: Keycode::Space, repeat: false, .. } => {
@@ -458,7 +458,7 @@ fn main() {
                     } else {
                         session.reader.turn_page(true);
                     }
-                    update_content(&mut scene, &session);
+                    update_content(&mut scene, &session, font_px_for(hw.font_size()));
                 }
                 SimulatorEvent::MouseButtonUp { point, .. } => {
                     if let Some(input) =
@@ -479,7 +479,7 @@ fn main() {
                                     window = Window::new("ereader_ui", &settings);
                                     cfg = layout_cfg(hw.font_size(), win_w, win_h);
                                     session.reader.relayout(&cfg);
-                                    update_content(&mut scene, &session);
+                                    update_content(&mut scene, &session, font_px_for(hw.font_size()));
                                 }
                             } else if input.source == ViewId::new("font_size") {
                                 hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
@@ -491,7 +491,7 @@ fn main() {
                                 cfg = layout_cfg(hw.font_size(), win_w, win_h);
                                 session.reader.relayout(&cfg);
                                 scene.mark_layout_dirty();
-                                update_content(&mut scene, &session);
+                                update_content(&mut scene, &session, font_px_for(hw.font_size()));
                             } else if input.source == ViewId::new("backlight") {
                                 hw.set_backlight_level(BacklightLevel::from_cmd(cmd.as_str()));
                             }
@@ -508,14 +508,14 @@ fn main() {
                             } else {
                                 session.reader.turn_page(false);
                             }
-                            update_content(&mut scene, &session);
+                            update_content(&mut scene, &session, font_px_for(hw.font_size()));
                         } else if input.source == ViewId::new("next_page") {
                             if session.reader.current_page + 1 >= session.reader.page_count() {
                                 session.next_chapter(&epub, &cfg).ok();
                             } else {
                                 session.reader.turn_page(true);
                             }
-                            update_content(&mut scene, &session);
+                            update_content(&mut scene, &session, font_px_for(hw.font_size()));
                         }
                     }
                 }
@@ -940,7 +940,7 @@ async fn main(spawner: Spawner) -> ! {
     } else {
         BookSession::new(&epub, &cfg).expect("epub load")
     };
-    update_content(&mut scene, &session);
+    update_content(&mut scene, &session, font_px_for(hw.font_size()));
 
     let mut last_interaction = Instant::now();
 
@@ -1011,7 +1011,7 @@ async fn main(spawner: Spawner) -> ! {
             } else {
                 session.reader.turn_page(false);
             }
-            update_content(&mut scene, &session);
+            update_content(&mut scene, &session, font_px_for(hw.font_size()));
             save_position(session.chapter_idx, session.reader.anchor_byte);
             last_interaction = Instant::now();
         } else if hw.button_next_pressed() {
@@ -1023,7 +1023,7 @@ async fn main(spawner: Spawner) -> ! {
             } else {
                 session.reader.turn_page(true);
             }
-            update_content(&mut scene, &session);
+            update_content(&mut scene, &session, font_px_for(hw.font_size()));
             save_position(session.chapter_idx, session.reader.anchor_byte);
             last_interaction = Instant::now();
         }
@@ -1046,18 +1046,6 @@ async fn main(spawner: Spawner) -> ! {
                 layout_scene(&mut scene, &theme);
                 draw_scene(&mut scene, &mut ctx, &theme);
             }
-            // Draw TrueType content if the content area was in the dirty region.
-            if let Some(cv_bounds) = scene.get_view(&ViewId::new("content")).map(|v| v.bounds) {
-                if bounds_overlap(dirty_rect, cv_bounds) {
-                    let font_px = font_px_for(hw.font_size());
-                    let text = session.reader.current_text();
-                    let orientation = hw.orientation();
-                    render_ttf_text(text, font_px, cv_bounds, |lx, ly, g4| {
-                        let (px, py) = orientation.logical_to_phys(lx as u16, ly as u16);
-                        let _ = bridge.display.set_pixel(px, py, g4);
-                    });
-                }
-            }
             bridge.flush();
         }
 
@@ -1079,7 +1067,7 @@ async fn main(spawner: Spawner) -> ! {
                             cfg = layout_cfg(hw.font_size(), cur_w, cur_h);
                             session.reader.relayout(&cfg);
                             scene.mark_layout_dirty();
-                            update_content(&mut scene, &session);
+                            update_content(&mut scene, &session, font_px_for(hw.font_size()));
                             save_settings(hw.font_size().to_index(), hw.backlight_level().to_index(), hw.orientation().to_index());
                         } else if target == ViewId::new("backlight") {
                             hw.set_backlight_level(BacklightLevel::from_cmd(cmd.as_str()));
@@ -1093,7 +1081,7 @@ async fn main(spawner: Spawner) -> ! {
                             cfg = layout_cfg(hw.font_size(), new_w, new_h);
                             session.reader.relayout(&cfg);
                             scene.mark_layout_dirty();
-                            update_content(&mut scene, &session);
+                            update_content(&mut scene, &session, font_px_for(hw.font_size()));
                             save_settings(hw.font_size().to_index(), hw.backlight_level().to_index(), hw.orientation().to_index());
                         }
                     }
@@ -1115,7 +1103,7 @@ async fn main(spawner: Spawner) -> ! {
                         } else {
                             session.reader.turn_page(false);
                         }
-                        update_content(&mut scene, &session);
+                        update_content(&mut scene, &session, font_px_for(hw.font_size()));
                         save_position(session.chapter_idx, session.reader.anchor_byte);
                         last_interaction = Instant::now();
                     } else if target == ViewId::new("next_page") {
@@ -1124,7 +1112,7 @@ async fn main(spawner: Spawner) -> ! {
                         } else {
                             session.reader.turn_page(true);
                         }
-                        update_content(&mut scene, &session);
+                        update_content(&mut scene, &session, font_px_for(hw.font_size()));
                         save_position(session.chapter_idx, session.reader.anchor_byte);
                         last_interaction = Instant::now();
                     } else {
@@ -1159,7 +1147,7 @@ async fn main(spawner: Spawner) -> ! {
             // don't loop immediately back into the sleep check.
             hw.enter_deep_sleep(session.chapter_idx, session.reader.anchor_byte);
             last_interaction = Instant::now();
-            update_content(&mut scene, &session);
+            update_content(&mut scene, &session, font_px_for(hw.font_size()));
         }
 
         EmbassyTimer::after(Duration::from_millis(50)).await;
