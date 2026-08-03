@@ -411,21 +411,11 @@ fn main() {
                 // Keyboard shortcuts: arrow keys / Space simulate physical buttons.
                 SimulatorEvent::KeyDown { keycode: Keycode::Left, repeat: false, .. }
                 | SimulatorEvent::KeyDown { keycode: Keycode::Backspace, repeat: false, .. } => {
-                    if session.reader.current_page == 0 {
-                        session.prev_chapter(&epub, &cfg).ok();
-                    } else {
-                        session.reader.turn_page(false);
-                    }
-                    bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                    nav_prev_page(&mut hw, &mut scene, &epub, &mut cfg, &mut session);
                 }
                 SimulatorEvent::KeyDown { keycode: Keycode::Right, repeat: false, .. }
                 | SimulatorEvent::KeyDown { keycode: Keycode::Space, repeat: false, .. } => {
-                    if session.reader.current_page + 1 >= session.reader.page_count() {
-                        session.next_chapter(&epub, &cfg).ok();
-                    } else {
-                        session.reader.turn_page(true);
-                    }
-                    bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                    nav_next_page(&mut hw, &mut scene, &epub, &mut cfg, &mut session);
                 }
                 SimulatorEvent::MouseButtonUp { point, .. } => {
                     if let Some(input) =
@@ -471,19 +461,9 @@ fn main() {
                             }
                             scene.mark_layout_dirty();
                         } else if input.source == ViewId::new("prev_page") {
-                            if session.reader.current_page == 0 {
-                                session.prev_chapter(&epub, &cfg).ok();
-                            } else {
-                                session.reader.turn_page(false);
-                            }
-                            bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                            nav_prev_page(&mut hw, &mut scene, &epub, &mut cfg, &mut session);
                         } else if input.source == ViewId::new("next_page") {
-                            if session.reader.current_page + 1 >= session.reader.page_count() {
-                                session.next_chapter(&epub, &cfg).ok();
-                            } else {
-                                session.reader.turn_page(true);
-                            }
-                            bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                            nav_next_page(&mut hw, &mut scene, &epub, &mut cfg, &mut session);
                         }
                     }
                 }
@@ -491,6 +471,32 @@ fn main() {
             }
         }
     }
+}
+
+fn nav_next_page(mut hw: &mut dyn HardwareAccess,
+                 mut scene: &mut Scene,
+                 epub: &EpubArchive,
+                 cfg: &mut LayoutConfig,
+                 session: &mut BookSession) {
+    if session.reader.current_page + 1 >= session.reader.page_count() {
+        session.next_chapter(&epub, &cfg).ok();
+    } else {
+        session.reader.turn_page(true);
+    }
+    bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
+}
+
+fn nav_prev_page(mut hw: &mut dyn HardwareAccess,
+                 mut scene: &mut Scene,
+                 epub: &EpubArchive,
+                 cfg: &mut LayoutConfig,
+                 session: &mut BookSession) {
+    if session.reader.current_page == 0 {
+        session.prev_chapter(&epub, &cfg).ok();
+    } else {
+        session.reader.turn_page(false);
+    }
+    bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
 }
 
 // ── ESP path ──────────────────────────────────────────────────────────────────
@@ -986,24 +992,14 @@ async fn main(spawner: Spawner) -> ! {
             while hw.button_prev_pressed() {
                 EmbassyTimer::after(Duration::from_millis(10)).await;
             }
-            if session.reader.current_page == 0 {
-                session.prev_chapter(&epub, &cfg).ok();
-            } else {
-                session.reader.turn_page(false);
-            }
-            bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
+            nav_prev_page(&mut hw, &mut scene, &epub, &mut cfg, &mut session);
             save_position(session.chapter_idx, session.reader.anchor_byte);
             last_interaction = Instant::now();
         } else if hw.button_next_pressed() {
             while hw.button_next_pressed() {
                 EmbassyTimer::after(Duration::from_millis(10)).await;
             }
-            if session.reader.current_page + 1 >= session.reader.page_count() {
-                session.next_chapter(&epub, &cfg).ok();
-            } else {
-                session.reader.turn_page(true);
-            }
-            bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
+            nav_next_page(&mut hw, &mut scene, &epub, &mut cfg, &mut session);
             save_position(session.chapter_idx, session.reader.anchor_byte);
             last_interaction = Instant::now();
         }
@@ -1079,21 +1075,11 @@ async fn main(spawner: Spawner) -> ! {
                         //     info!("NTP query failed");
                         // }
                     } else if input.source == ViewId::new("prev_page") {
-                        if session.reader.current_page == 0 {
-                            session.prev_chapter(&epub, &cfg).ok();
-                        } else {
-                            session.reader.turn_page(false);
-                        }
-                        bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                        nav_prev_page(&mut hw, &mut scene, &epub, &mut cfg, &mut session);
                         save_position(session.chapter_idx, session.reader.anchor_byte);
                         last_interaction = Instant::now();
                     } else if input.source == ViewId::new("next_page") {
-                        if session.reader.current_page + 1 >= session.reader.page_count() {
-                            session.next_chapter(&epub, &cfg).ok();
-                        } else {
-                            session.reader.turn_page(true);
-                        }
-                        bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                        nav_next_page(&mut hw, &mut scene, &epub, &mut cfg, &mut session);
                         save_position(session.chapter_idx, session.reader.anchor_byte);
                         last_interaction = Instant::now();
                     } else {
