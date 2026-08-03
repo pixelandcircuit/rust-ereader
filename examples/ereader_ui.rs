@@ -381,7 +381,7 @@ fn make_theme(font: &'static fontdue::Font, bold_font: &'static fontdue::Font) -
     Theme {
         standard: ViewStyle { fill: Rgb565::WHITE, text: Rgb565::BLACK },
         accented: ViewStyle { fill: Rgb565::WHITE, text: Rgb565::BLACK },
-        selected: ViewStyle { fill: Rgb565::WHITE, text: Rgb565::BLACK },
+        selected: ViewStyle { fill: Rgb565::BLACK, text: Rgb565::WHITE },
         panel:    ViewStyle { fill: Rgb565::WHITE, text: Rgb565::BLACK },
         font:      FontKind::TrueType { size: 13.0, font },
         bold_font: FontKind::TrueType { size: 13.0, font: bold_font },
