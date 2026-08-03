@@ -12,9 +12,18 @@ extern crate alloc;
 #[cfg(feature = "esp")]
 use alloc::{boxed::Box, string::String};
 
-use embedded_graphics::mono_font::ascii::{FONT_6X10, FONT_9X15, FONT_9X15_BOLD, FONT_10X20};
+use embedded_graphics::mono_font::ascii::{FONT_10X20, FONT_6X10, FONT_9X15, FONT_9X15_BOLD};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::RgbColor;
+use ereader::epub::EpubArchive;
+use ereader::font::TextRenderer;
+#[cfg(feature = "esp")]
+use ereader::hardware::EspHardware;
+#[cfg(feature = "simulator")]
+use ereader::hardware::SimHardware;
+use ereader::hardware::{BacklightLevel, FontSize, HardwareAccess, Orientation};
+use ereader::layout::{FontMetrics, LayoutConfig};
+use ereader::reader::BookSession;
 use iris_ui::button::{make_button, make_full_button};
 use iris_ui::device::EmbeddedDrawingContext;
 use iris_ui::geom::{Bounds, Insets, Point as GPoint, Size};
@@ -24,15 +33,6 @@ use iris_ui::scene::{click_at, draw_scene, layout_scene, Scene};
 use iris_ui::toggle_group::{make_toggle_group, SelectOneOfState};
 use iris_ui::view::{Align, Flex, View, ViewId};
 use iris_ui::{Callback, DrawEvent, FontKind, GuiEvent, LayoutEvent, Theme, ViewStyle};
-use ereader::epub::EpubArchive;
-use ereader::font::TextRenderer;
-use ereader::hardware::{BacklightLevel, FontSize, HardwareAccess, Orientation};
-use ereader::layout::{FontMetrics, LayoutConfig};
-use ereader::reader::BookSession;
-#[cfg(feature = "simulator")]
-use ereader::hardware::SimHardware;
-#[cfg(feature = "esp")]
-use ereader::hardware::EspHardware;
 
 const DIALOG_W: i32 = 420;
 const DIALOG_PAD: i32 = 16;
@@ -153,32 +153,6 @@ fn render_ttf_text(
 const DIALOG_ID:ViewId = ViewId::new("dialog");
 const CONTENT_ID:ViewId = ViewId::new("content");
 const FONT_SIZE_ID:ViewId = ViewId::new("font_size");
-struct BookState {
-    text: String,
-    font_px: f32,
-    renderer: TextRenderer,
-}
-
-fn draw_book_content(e: &mut DrawEvent) {
-    let bounds = e.view.bounds;
-    // get_state returns &mut BookState which borrows e.view. We need e.ctx in the
-    // pixel closure below, but can't hold both borrows simultaneously through e.
-    // Extract a raw pointer to renderer (safe: BookState lives in a Box inside the
-    // view for the entire function; we never replace the state box during rendering).
-    let (text, font_px, renderer_ptr) = match e.view.get_state::<BookState>() {
-        Some(s) => (s.text.clone(), s.font_px, &s.renderer as *const TextRenderer),
-        None => return,
-    };
-    let renderer = unsafe { &*renderer_ptr };
-    e.ctx.fill_rect(&bounds, &Rgb565::WHITE);
-    render_ttf_text(renderer, &text, font_px, bounds, |px, py, g4| {
-        let gray8 = (g4 << 4) | g4;
-        let v5 = (gray8 >> 3) as u8;
-        let v6 = (gray8 >> 2) as u8;
-        e.ctx.put_pixel(px, py, &Rgb565::new(v5, v6, v5));
-    });
-    e.ctx.stroke_rect(&bounds, &Rgb565::BLACK);
-}
 
 fn handle_click(event: &mut GuiEvent) {
     if event.target == &ViewId::new("settings") {
@@ -253,8 +227,12 @@ fn make_scene(ttf: &'static fontdue::Font, w: i32, h: i32) -> Scene {
 
         let content = View {
             name: CONTENT_ID.clone(),
-            draw: Some(draw_book_content),
-            state: Some(Box::new(BookState { text: String::new(), font_px: 22.0, renderer: TextRenderer::from_static(ttf) })),
+            draw: Some(bookview::draw_book_content),
+            state: Some(Box::new(BookState {
+                text: String::new(),
+                font_px: 22.0,
+                renderer: TextRenderer::from_static(ttf)
+            })),
             ..Default::default()
         }
             .with_layout(Some(fill_all_space))
@@ -262,8 +240,6 @@ fn make_scene(ttf: &'static fontdue::Font, w: i32, h: i32) -> Scene {
             .with_h_flex(Flex::Grow)
             .with_v_align(Align::Center)
             .with_h_align(Align::Center);
-            // .with_bounds(Bounds::new(0, 0, w, h - 100))
-            ;
         scene.add_view_to_parent(content, &main_id);
     }
 
@@ -350,38 +326,12 @@ fn format_time_utc(unix_secs: u64) -> String {
     format!("{}:{:02} {}", h12, m, ampm)
 }
 
-fn update_content(scene: &mut Scene, session: &BookSession, font_px: f32) {
-    let chapter_str = format!(
-        "Ch.{} of {}",
-        session.chapter_idx + 1,
-        session.chapter_count()
-    );
-    if let Some(v) = scene.get_view_mut(&ViewId::new("chapter")) {
-        v.title = chapter_str;
-    }
-    let page_str = format!(
-        "p.{}/{}",
-        session.reader.current_page + 1,
-        session.reader.page_count()
-    );
-    if let Some(v) = scene.get_view_mut(&ViewId::new("page")) {
-        v.title = page_str;
-    }
-    if let Some(v) = scene.get_view_mut(&CONTENT_ID) {
-        if let Some(state) = v.get_state::<BookState>() {
-            state.text = session.reader.current_text().into();
-            state.font_px = font_px;
-        }
-    }
-    scene.mark_dirty_all();
-}
-
 static FONT_BYTES: &[u8] = include_bytes!("../fonts/NoticiaText-Regular.ttf");
 static BOLD_FONT_BYTES: &[u8] = include_bytes!("../fonts/NoticiaText-Bold.ttf");
 
 /// Parse both theme fonts and leak them into `'static` memory.
 /// Works on both std (simulator) and no_std+alloc (ESP) since both provide `Box`.
-fn load_fonts() -> (&'static fontdue::Font, &'static fontdue::Font) {
+fn load_fonts() -> (&'static Font, &'static Font) {
     let font = Box::leak(Box::new(
         fontdue::Font::from_bytes(FONT_BYTES, fontdue::FontSettings::default())
             .expect("NoticiaText-Regular parse failed"),
@@ -393,7 +343,7 @@ fn load_fonts() -> (&'static fontdue::Font, &'static fontdue::Font) {
     (font, bold)
 }
 
-fn make_theme(font: &'static fontdue::Font, bold_font: &'static fontdue::Font) -> Theme {
+fn make_theme(font: &'static Font, bold_font: &'static Font) -> Theme {
     Theme {
         standard: ViewStyle { fill: Rgb565::WHITE, text: Rgb565::BLACK },
         accented: ViewStyle { fill: Rgb565::WHITE, text: Rgb565::BLACK },
@@ -414,9 +364,6 @@ fn set_font_size(theme: &mut Theme, font: &'static Font, bold_font: &'static Fon
         size
     }
 }
-
-
-
 
 #[cfg(feature = "simulator")]
 fn main() {
@@ -444,7 +391,7 @@ fn main() {
     let epub = EpubArchive::new(EPUB_DATA).expect("sherlock_holmes.epub parse failed");
     let mut cfg = layout_cfg(font, hw.font_size(), win_w, win_h);
     let mut session = BookSession::new(&epub, &cfg).expect("BookSession init failed");
-    update_content(&mut scene, &session, font_px_for(hw.font_size()));
+    bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
 
     'running: loop {
         let dirty = scene.dirty_rect.clone();
@@ -469,7 +416,7 @@ fn main() {
                     } else {
                         session.reader.turn_page(false);
                     }
-                    update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                    bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
                 }
                 SimulatorEvent::KeyDown { keycode: Keycode::Right, repeat: false, .. }
                 | SimulatorEvent::KeyDown { keycode: Keycode::Space, repeat: false, .. } => {
@@ -478,7 +425,7 @@ fn main() {
                     } else {
                         session.reader.turn_page(true);
                     }
-                    update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                    bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
                 }
                 SimulatorEvent::MouseButtonUp { point, .. } => {
                     if let Some(input) =
@@ -499,7 +446,7 @@ fn main() {
                                     window = Window::new("ereader_ui", &settings);
                                     cfg = layout_cfg(font, hw.font_size(), win_w, win_h);
                                     session.reader.relayout(&cfg);
-                                    update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                                    bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
                                 }
                             } else if input.source == FONT_SIZE_ID {
                                 hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
@@ -512,7 +459,7 @@ fn main() {
                                 cfg = layout_cfg(font, hw.font_size(), win_w, win_h);
                                 session.reader.relayout(&cfg);
                                 scene.mark_layout_dirty();
-                                update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                                bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
                             } else if input.source == ViewId::new("backlight") {
                                 hw.set_backlight_level(BacklightLevel::from_cmd(cmd.as_str()));
                             }
@@ -529,14 +476,14 @@ fn main() {
                             } else {
                                 session.reader.turn_page(false);
                             }
-                            update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                            bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
                         } else if input.source == ViewId::new("next_page") {
                             if session.reader.current_page + 1 >= session.reader.page_count() {
                                 session.next_chapter(&epub, &cfg).ok();
                             } else {
                                 session.reader.turn_page(true);
                             }
-                            update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                            bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
                         }
                     }
                 }
@@ -556,9 +503,9 @@ esp_bootloader_esp_idf::esp_app_desc!();
 #[cfg(feature = "esp")]
 use ereader::driver::display::{Display, DrawMode};
 #[cfg(feature = "esp")]
-use ereader::driver::Gt911;
-#[cfg(feature = "esp")]
 use ereader::driver::gt911::GT911_ADDR_PRIMARY;
+#[cfg(feature = "esp")]
+use ereader::driver::Gt911;
 
 // ── Flash storage ─────────────────────────────────────────────────────────────
 #[cfg(feature = "esp")]
@@ -758,6 +705,16 @@ impl<'a> embedded_graphics::geometry::OriginDimensions for Rgb565ToGray4<'a> {
     }
 }
 
+use bookview::BookState;
+#[cfg(feature = "esp")]
+use embassy_executor::Spawner;
+#[cfg(feature = "esp")]
+use embassy_net::{
+    udp::{PacketMetadata, UdpSocket}, IpAddress, IpEndpoint, Ipv4Address, Runner, StackResources};
+#[cfg(feature = "esp")]
+use embassy_time::{with_timeout, Duration, Instant, Timer as EmbassyTimer};
+#[cfg(feature = "esp")]
+use ereader::hardware::rtc_store_read;
 #[cfg(feature = "esp")]
 use esp_hal::{
     gpio::{Input, InputConfig, Pull},
@@ -773,22 +730,15 @@ use esp_hal::{
     timer::timg::TimerGroup,
 };
 #[cfg(feature = "esp")]
-use ereader::hardware::rtc_store_read;
-#[cfg(feature = "esp")]
-use embassy_executor::Spawner;
-#[cfg(feature = "esp")]
-use embassy_net::{Runner, StackResources, IpEndpoint, IpAddress, Ipv4Address,
-                  udp::{PacketMetadata, UdpSocket}};
-#[cfg(feature = "esp")]
-use embassy_time::{Duration, Instant, Timer as EmbassyTimer, with_timeout};
-#[cfg(feature = "esp")]
-use esp_radio::wifi::{Config, ControllerConfig, Interface, sta::StationConfig};
+use esp_radio::wifi::{sta::StationConfig, Config, ControllerConfig, Interface};
 use fontdue::Font;
 use iris_ui::input::OutputAction;
 use iris_ui::panel::{make_panel, PanelState};
+use log::info;
 #[cfg(feature = "esp")]
 use static_cell::StaticCell;
-use log::info;
+
+mod bookview;
 
 // WiFi credentials — set WIFI_SSID and WIFI_PASS at build time.
 #[cfg(feature = "esp")]
@@ -966,7 +916,7 @@ async fn main(spawner: Spawner) -> ! {
     } else {
         BookSession::new(&epub, &cfg).expect("epub load")
     };
-    update_content(&mut scene, &session, font_px_for(hw.font_size()));
+    bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
 
     let mut last_interaction = Instant::now();
 
@@ -1041,7 +991,7 @@ async fn main(spawner: Spawner) -> ! {
             } else {
                 session.reader.turn_page(false);
             }
-            update_content(&mut scene, &session, font_px_for(hw.font_size()));
+            bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
             save_position(session.chapter_idx, session.reader.anchor_byte);
             last_interaction = Instant::now();
         } else if hw.button_next_pressed() {
@@ -1053,7 +1003,7 @@ async fn main(spawner: Spawner) -> ! {
             } else {
                 session.reader.turn_page(true);
             }
-            update_content(&mut scene, &session, font_px_for(hw.font_size()));
+            bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
             save_position(session.chapter_idx, session.reader.anchor_byte);
             last_interaction = Instant::now();
         }
@@ -1098,7 +1048,7 @@ async fn main(spawner: Spawner) -> ! {
                             cfg = layout_cfg(font, hw.font_size(), cur_w, cur_h);
                             session.reader.relayout(&cfg);
                             scene.mark_layout_dirty();
-                            update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                            bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
                             save_settings(hw.font_size().to_index(), hw.backlight_level().to_index(), hw.orientation().to_index());
                         } else if input.source == ViewId::new("backlight") {
                             hw.set_backlight_level(BacklightLevel::from_cmd(cmd.as_str()));
@@ -1112,7 +1062,7 @@ async fn main(spawner: Spawner) -> ! {
                             cfg = layout_cfg(font, hw.font_size(), new_w, new_h);
                             session.reader.relayout(&cfg);
                             scene.mark_layout_dirty();
-                            update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                            bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
                             save_settings(hw.font_size().to_index(), hw.backlight_level().to_index(), hw.orientation().to_index());
                         }
                     }
@@ -1134,7 +1084,7 @@ async fn main(spawner: Spawner) -> ! {
                         } else {
                             session.reader.turn_page(false);
                         }
-                        update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                        bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
                         save_position(session.chapter_idx, session.reader.anchor_byte);
                         last_interaction = Instant::now();
                     } else if input.source == ViewId::new("next_page") {
@@ -1143,7 +1093,7 @@ async fn main(spawner: Spawner) -> ! {
                         } else {
                             session.reader.turn_page(true);
                         }
-                        update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                        bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
                         save_position(session.chapter_idx, session.reader.anchor_byte);
                         last_interaction = Instant::now();
                     } else {
@@ -1178,7 +1128,7 @@ async fn main(spawner: Spawner) -> ! {
             // don't loop immediately back into the sleep check.
             hw.enter_deep_sleep(session.chapter_idx, session.reader.anchor_byte);
             last_interaction = Instant::now();
-            update_content(&mut scene, &session, font_px_for(hw.font_size()));
+            bookview::update_content(&mut scene, &session, font_px_for(hw.font_size()));
         }
 
         EmbassyTimer::after(Duration::from_millis(50)).await;
