@@ -171,6 +171,7 @@ fn draw_book_content(e: &mut DrawEvent) {
         let v6 = (gray8 >> 2) as u8;
         e.ctx.put_pixel(px, py, &Rgb565::new(v5, v6, v5));
     });
+    e.ctx.stroke_rect(&bounds, &Rgb565::BLACK);
 }
 
 fn handle_click(event: &mut GuiEvent) {
@@ -190,12 +191,13 @@ fn make_scene(w: i32, h: i32) -> Scene {
     let main_id = ViewId::new("main");
     let main_panel = make_panel(&main_id)
         .with_layout(Some(layout_vbox))
-        .with_h_flex(Flex::Grow)
-        .with_v_flex(Flex::Grow)
+        .with_bounds(Bounds::new(20, 20, w-40, h-40))
+        .with_h_flex(Flex::Fixed)
+        .with_v_flex(Flex::Fixed)
         .with_state(Some(Box::new(PanelState {
             border_visible: true,
             gap: 5,
-            padding: Insets::new_same(5),
+            padding: Insets::new_same(0),
         })));
     ;
 
@@ -220,17 +222,21 @@ fn make_scene(w: i32, h: i32) -> Scene {
 
 
     // content — plain View with BookState; draw_book_content renders TTF text
-    let content = View {
-        name: CONTENT_ID.clone(),
-        draw: Some(draw_book_content),
-        state: Some(Box::new(BookState { text: String::new(), font_px: 22.0 })),
-        ..Default::default()
+    {
+        let content = View {
+            name: CONTENT_ID.clone(),
+            draw: Some(draw_book_content),
+            state: Some(Box::new(BookState { text: String::new(), font_px: 22.0 })),
+            ..Default::default()
+        }
+            .with_v_flex(Flex::Grow)
+            .with_h_flex(Flex::Grow)
+            .with_v_align(Align::Center)
+            .with_h_align(Align::Center);
+            // .with_bounds(Bounds::new(0, 0, w, h - 100))
+            ;
+        scene.add_view_to_parent(content, &main_id);
     }
-    .with_v_flex(Flex::Grow)
-    .with_h_flex(Flex::Grow)
-        .with_bounds(Bounds::new(0,0,w,h-100))
-        ;
-    scene.add_view_to_parent(content, &main_id);
 
 
     // ── Bottom bar ───────────────────────────────────────────────────────────
