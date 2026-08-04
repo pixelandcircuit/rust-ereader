@@ -16,7 +16,7 @@ use embedded_graphics::mono_font::ascii::{FONT_10X20, FONT_6X10, FONT_9X15, FONT
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::RgbColor;
 use ereader::epub::EpubArchive;
-use ereader::font::TextRenderer;
+use ereader::font::{char_advance, draw_str, line_height, measure_width};
 #[cfg(feature = "esp")]
 use ereader::hardware::EspHardware;
 #[cfg(feature = "simulator")]
@@ -52,17 +52,16 @@ fn font_px_for(size: FontSize) -> f32 {
 /// Build a LayoutConfig for Noticia Text at the given font size using real TTF
 /// metrics so that layout and rendering agree on where line breaks fall and how
 /// many lines fit per page.
-fn layout_cfg(ttf: &'static fontdue::Font, font: FontSize, w: i32, h: i32) -> LayoutConfig {
-    let font_px = font_px_for(font);
-    let renderer = TextRenderer::from_static(ttf);
+fn layout_cfg(font: &'static Font, font_size: FontSize, w: i32, h: i32) -> LayoutConfig {
+    let font_px = font_px_for(font_size);
 
     // Real line height to match render_ttf_text (+4 px leading matches the renderer).
-    let line_h = (renderer.line_height(font_px) as u32).saturating_add(4);
+    let line_h = (line_height(font, font_px) as u32).saturating_add(4);
     // Real space width; 0 would let the layout engine measure it via the gcache.
-    let space_w = renderer.char_advance(' ', font_px) as u32;
+    let space_w = char_advance(font,' ', font_px) as u32;
 
     // Chrome bars use the bitmap font whose height tracks FontSize.
-    let chrome_char_h: u32 = match font {
+    let chrome_char_h: u32 = match font_size {
         FontSize::Small  => 10,
         FontSize::Medium => 15,
         FontSize::Large  => 20,
@@ -80,7 +79,7 @@ fn layout_cfg(ttf: &'static fontdue::Font, font: FontSize, w: i32, h: i32) -> La
         font: FontMetrics {
             line_height_px: line_h,
             space_width_px: space_w,
-            measure: Box::new(move |s: &str| renderer.measure_width(s, font_px).max(0) as u32),
+            measure: Box::new(move |s: &str| measure_width(font, s, font_px).max(0) as u32),
         },
     }
 }
@@ -88,7 +87,7 @@ fn layout_cfg(ttf: &'static fontdue::Font, font: FontSize, w: i32, h: i32) -> La
 /// Word-wrap one line of text to fit `max_px` pixels wide at the given TTF size.
 /// Handles hard newlines; advances past trailing spaces on the remainder.
 fn next_ttf_line<'a>(
-    renderer: &TextRenderer,
+    font: &'static Font,
     text: &'a str,
     max_px: i32,
     font_px: f32,
@@ -101,7 +100,7 @@ fn next_ttf_line<'a>(
             let after = text[i + 1..].trim_start_matches('\r');
             return (text[..i].trim_end(), after);
         }
-        let adv = renderer.char_advance(c, font_px);
+        let adv = char_advance(font, c, font_px);
         if cursor + adv > max_px as f32 + 0.5 {
             return if let Some(sp) = last_space {
                 (text[..sp].trim_end(), text[sp..].trim_start())
@@ -119,14 +118,14 @@ fn next_ttf_line<'a>(
 /// Render page text with Noticia Text TTF, emitting one (x, y, gray4) pixel
 /// at a time to `put_pixel`. Handles word-wrap, padding, and bounds clipping.
 fn render_ttf_text(
-    renderer: &TextRenderer,
+    font: &'static Font,
     text: &str,
     font_px: f32,
     bounds: Bounds,
     mut put_pixel: impl FnMut(i32, i32, u8),
 ) {
     if text.is_empty() { return; }
-    let line_h = renderer.line_height(font_px) + 4; // +4 px leading
+    let line_h = line_height(font, font_px) + 4; // +4 px leading
     let pad_x = 16i32;
     let pad_y = 12i32;
     let cx = bounds.position.x;
@@ -134,12 +133,12 @@ fn render_ttf_text(
     let cw = bounds.size.w;
     let ch = bounds.size.h;
     let max_px = cw - pad_x * 2;
-    let mut baseline = cy + pad_y + renderer.line_height(font_px);
+    let mut baseline = cy + pad_y + line_height(font, font_px);
     let mut remaining = text;
     while !remaining.is_empty() && baseline < cy + ch - pad_y {
-        let (line, rest) = next_ttf_line(&renderer, remaining, max_px, font_px);
+        let (line, rest) = next_ttf_line(&font, remaining, max_px, font_px);
         if !line.is_empty() {
-            renderer.draw_str(line, cx + pad_x, baseline, font_px, 15, &mut |px, py, g4| {
+            draw_str(font, line, cx + pad_x, baseline, font_px, 15, &mut |px, py, g4| {
                 if px >= cx && px < cx + cw && py >= cy && py < cy + ch {
                     put_pixel(px, py, g4);
                 }
@@ -182,7 +181,7 @@ fn sync_settings_ui(scene: &mut Scene, font_idx: usize, bl_idx: usize, ori_idx: 
     }
 }
 
-fn make_scene(ttf: &'static fontdue::Font, w: i32, h: i32) -> Scene {
+fn make_scene(font: &'static Font, w: i32, h: i32) -> Scene {
     let mut scene = Scene::new_with_bounds(Bounds::new(0, 0, w, h));
     let main_id = ViewId::new("main");
     let main_panel = make_panel(&main_id)
@@ -231,7 +230,7 @@ fn make_scene(ttf: &'static fontdue::Font, w: i32, h: i32) -> Scene {
             state: Some(Box::new(BookState {
                 text: String::new(),
                 font_px: 22.0,
-                renderer: TextRenderer::from_static(ttf)
+                font,
             })),
             ..Default::default()
         }
@@ -279,7 +278,6 @@ fn make_scene(ttf: &'static fontdue::Font, w: i32, h: i32) -> Scene {
                 gap: 5,
                 padding: Insets::new_same(5),
             })));
-        ;
         // ── Settings dialog (hidden, drawn last so it appears on top) ────────────
         scene.add_view_to_parent(make_label("dlg_title", "Settings"), &DIALOG_ID);
         scene.add_view_to_parent(make_label("dlg_font_lbl", "Font Size"), &DIALOG_ID);
@@ -307,7 +305,6 @@ fn make_scene(ttf: &'static fontdue::Font, w: i32, h: i32) -> Scene {
         scene.add_view_to_root(dialog_panel);
     }
 
-    log::info!("scene built");
     scene
 }
 

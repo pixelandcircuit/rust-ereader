@@ -101,12 +101,13 @@ fn draw_line(
     y: i32,
     font_px: f32,
 ) -> i32 {
-    let renderer = TextRenderer::with_font(font_data);
-    let lh = renderer.line_height(font_px);
-    renderer.draw_str(text, x, y, font_px, 15, &mut |lx, ly, g4| {
-        put_pixel(display, lx, ly, g4);
-    });
-    lh
+    // let renderer = TextRenderer::with_font(font_data);
+    // let lh = renderer.line_height(font_px);
+    // renderer.draw_str(text, x, y, font_px, 15, &mut |lx, ly, g4| {
+    //     put_pixel(display, lx, ly, g4);
+    // });
+    // lh
+    20
 }
 
 // ── Horizontal rule ───────────────────────────────────────────────────────────
