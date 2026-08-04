@@ -77,12 +77,12 @@ fn make_scene(font: &'static Font, w: i32, h: i32) -> Scene {
     let main_id = ViewId::new("main");
     let main_panel = make_panel(&main_id)
         .with_layout(Some(layout_vbox))
-        .with_bounds(Bounds::new(0, 0, w-10, h-10))
-        .with_h_flex(Flex::Fixed)
-        .with_v_flex(Flex::Fixed)
+        // .with_bounds(Bounds::new(0, 0, w-10, h-10))
+        .with_h_flex(Flex::Grow)
+        .with_v_flex(Flex::Grow)
         .with_state(Some(Box::new(PanelState {
             border_visible: true,
-            gap: 5,
+            gap: 0,
             padding: Insets::new_same(0),
         })));
 
@@ -158,16 +158,14 @@ fn make_scene(font: &'static Font, w: i32, h: i32) -> Scene {
     // --- settings dialog --------------------
     {
         let dialog_panel = make_panel(&DIALOG_ID)
-            .with_bounds(Bounds::new(50, 50, w - 100, DIALOG_H))
             .with_layout(Some(layout_vbox))
-            .with_h_flex(Flex::Fixed)
-            .with_v_flex(Flex::Fixed)
-            .with_h_align(Align::Center)
+            .with_h_flex(Flex::Grow)
+            .with_v_flex(Flex::Grow)
             .with_visible(false)
             .with_state(Some(Box::new(PanelState {
                 border_visible: true,
-                gap: 5,
-                padding: Insets::new_same(5),
+                gap: 10,
+                padding: Insets::new_same(10),
             })));
         // ── Settings dialog (hidden, drawn last so it appears on top) ────────────
         scene.add_view_to_parent(make_label("dlg_title", "Settings"), &DIALOG_ID);
@@ -316,8 +314,7 @@ fn main() {
                                 if new_w != win_w || new_h != win_h {
                                     win_w = new_w;
                                     win_h = new_h;
-                                    // scene.bounds = Bounds::new(0, 0, win_w, win_h);
-                                    scene.mark_layout_dirty();
+                                    scene.resize(Bounds::new(0, 0, win_w, win_h));
                                     display = SimulatorDisplay::new(
                                         Size::new(win_w as u32, win_h as u32),
                                     );
