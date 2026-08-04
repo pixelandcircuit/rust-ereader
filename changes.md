@@ -1,5 +1,25 @@
 # Changes
 
+## 2026-08-04 16:30
+
+Fix crashes in library dialog list view.
+
+- `rust-embedded-gui/src/list_view.rs`: Guard against divide-by-zero and integer overflow when `items` is empty or `cell_height` is zero (dialog hidden during initial layout gives zero bounds). Added early-return guards in `draw_list` and `input_list`, and usize underflow guard in `select_next`.
+- `examples/ereader_ui.rs`: Call `scene.mark_layout_dirty()` when opening the library dialog and populating its list, so the list view's height is recomputed from item count before the next draw.
+
+## 2026-08-04 16:00
+
+Add Library feature: list and load epub files at runtime.
+
+A new "Library" button in the topbar opens a dialog listing available epub files. Selecting a file loads it, replacing the current book. On the simulator, files are read from `examples/library/`. On ESP, files are read from the SD card root.
+
+Changes:
+- `src/epub.rs`: Removed lifetime from `EpubArchive` — backing store is now owned `Vec<u8>`. Kept `new(&[u8])` for backward compatibility (copies bytes). Added `from_vec(Vec<u8>)` zero-copy constructor for runtime loading.
+- `src/hardware.rs`: Added `list_epub_files() -> Vec<String>` and `load_epub_file(name) -> Option<Vec<u8>>` to the `HardwareAccess` trait. `SimHardware` reads from `./library/` via `std::fs`. `EspHardware` steals SPI2 + GPIO 12/13/14/21 on demand to access the SD card via `embedded-sdmmc`.
+- `Cargo.toml`: Added `embedded-sdmmc = "0.9"` and `embedded-hal-bus = "0.2"` as optional deps under the `esp` feature.
+- `examples/ereader_ui.rs`: Library button and dialog added to scene. Dialog uses `make_list_view` populated lazily when opened. Both simulator and ESP event loops handle `"library"` (open/populate), `"library_close"` (close), and `"lib_list"` (select and load) events. `EpubArchive` is now mutable in both loops to allow reassignment.
+- `examples/library/`: Created directory with `test.epub` and `sherlock_holmes.epub` for simulator testing.
+
 ## 2026-08-04 14:30
 
 Replace subsetted AtkinsonHyperlegible fonts with full versions from Google Fonts.

@@ -123,18 +123,23 @@ fn extract_entry(data: &[u8], entry: &ZipEntry) -> Result<Vec<u8>, EpubError> {
 
 // ── Public EPUB archive ───────────────────────────────────────────────────────
 
-/// An EPUB archive backed by a byte slice (e.g. from `include_bytes!` or an
-/// SD-card buffer). The ZIP central directory is parsed once at construction;
-/// individual chapters are decompressed on demand.
-pub struct EpubArchive<'a> {
-    data:    &'a [u8],
+/// An EPUB archive that owns its backing bytes. The ZIP central directory is
+/// parsed once at construction; individual chapters are decompressed on demand.
+pub struct EpubArchive {
+    data:    Vec<u8>,
     entries: Vec<ZipEntry>,
 }
 
-impl<'a> EpubArchive<'a> {
-    /// Parse the ZIP central directory. Cheap — does not decompress anything.
-    pub fn new(data: &'a [u8]) -> Result<Self, EpubError> {
-        let entries = parse_cdr(data)?;
+impl EpubArchive {
+    /// Parse the ZIP central directory from a byte slice. Copies the data.
+    /// Cheap — does not decompress anything.
+    pub fn new(data: &[u8]) -> Result<Self, EpubError> {
+        Self::from_vec(data.to_vec())
+    }
+
+    /// Parse the ZIP central directory from an owned buffer. Zero-copy.
+    pub fn from_vec(data: Vec<u8>) -> Result<Self, EpubError> {
+        let entries = parse_cdr(&data)?;
         Ok(Self { data, entries })
     }
 
@@ -168,7 +173,7 @@ impl<'a> EpubArchive<'a> {
 
     fn extract_named(&self, name: &str) -> Result<Vec<u8>, EpubError> {
         let entry = self.find_entry(name).ok_or(EpubError::EntryNotFound)?;
-        extract_entry(self.data, entry)
+        extract_entry(&self.data, entry)
     }
 
     fn find_entry(&self, name: &str) -> Option<&ZipEntry> {

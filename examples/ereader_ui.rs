@@ -29,6 +29,7 @@ use iris_ui::geom::{Bounds, Insets, Point as GPoint, Size};
 use iris_ui::label::make_label;
 use iris_ui::layouts::{layout_hbox, layout_std_panel, layout_vbox};
 use iris_ui::scene::{click_at, draw_scene, layout_scene, Scene};
+use iris_ui::list_view::{make_list_view, ListState};
 use iris_ui::toggle_group::{make_toggle_group, SelectOneOfState};
 use iris_ui::view::{Align, Flex, View, ViewId};
 use iris_ui::{util, Callback, DrawEvent, FontKind, GuiEvent, LayoutEvent, Theme, ViewStyle};
@@ -37,6 +38,7 @@ use iris_ui::{util, Callback, DrawEvent, FontKind, GuiEvent, LayoutEvent, Theme,
 const EPUB_DATA: &[u8] = include_bytes!("sherlock_holmes.epub");
 
 const DIALOG_ID:ViewId = ViewId::new("dialog");
+const LIBRARY_DIALOG_ID:ViewId = ViewId::new("library_dialog");
 const ORIENTATION_ID:ViewId = ViewId::new("orientation");
 const BACKLIGHT_ID:ViewId = ViewId::new("backlight");
 const FONT_SIZE_ID:ViewId = ViewId::new("font_size");
@@ -47,12 +49,17 @@ const UI_FONT_SIZE_LARGE: f32 = 24.0;
 
 fn handle_click(event: &mut GuiEvent) {
     if event.target == &ViewId::new("settings") {
-        info!("showing the dialog");
         event.scene.show_view(&ViewId::new("dialog"));
         event.scene.mark_dirty_all();
     } else if event.target == &ViewId::new("dialog_close") {
-        info!("hiding the dialog");
         event.scene.hide_view(&ViewId::new("dialog"));
+        event.scene.mark_dirty_all();
+    } else if event.target == &ViewId::new("library") {
+        event.scene.show_view(&ViewId::new("library_dialog"));
+        event.scene.mark_layout_dirty();
+        event.scene.mark_dirty_all();
+    } else if event.target == &ViewId::new("library_close") {
+        event.scene.hide_view(&ViewId::new("library_dialog"));
         event.scene.mark_dirty_all();
     }
 }
@@ -123,6 +130,7 @@ fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
         scene.add_view_to_parent(make_label("battery", "85%"), &topbar_id);
         scene.add_view_to_parent(make_spacer(&ViewId::new("spacer2")).with_h_flex(Grow), &topbar_id);
         scene.add_view_to_parent(make_label("booktitle", "Sherlock Holmes"), &topbar_id);
+        scene.add_view_to_parent(make_button(&ViewId::new("library"), "Library"), &topbar_id);
         let topbar = make_panel(&topbar_id)
             .with_layout(Some(layout_hbox))
             .with_h_flex(Flex::Grow)
@@ -169,7 +177,8 @@ fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
         scene.add_view_to_parent(make_button(&ViewId::new("prev_page"), "< Prev"), &bottombar_id);
         scene.add_view_to_parent(make_label("chapter", "Loading..."), &bottombar_id);
         scene.add_view_to_parent(make_label("page", ""), &bottombar_id);
-        scene.add_view_to_parent(make_spacer(&ViewId::new("spacer2")).with_h_flex(Grow), &bottombar_id);
+        scene.add_view_to_parent(make_spacer(&ViewId::new("spacer3")).with_h_flex(Grow),
+                                 &bottombar_id);
         scene.add_view_to_parent(make_button(&ViewId::new("next_page"), "Next >"), &bottombar_id);
         let bottombar = make_panel(&bottombar_id)
             .with_layout(Some(layout_hbox))
@@ -222,6 +231,30 @@ fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
         scene.add_view_to_parent(make_label("dlg_battery", "Battery: 85%  (Charging)"), &DIALOG_ID);
         scene.add_view_to_parent(make_button(&ViewId::new("dialog_close"), "Close"), &DIALOG_ID);
         scene.add_view_to_root(dialog_panel);
+    }
+
+    // ── Library dialog (hidden, shown when Library button pressed) ───────────
+    {
+        let lib_panel = make_panel(&LIBRARY_DIALOG_ID)
+            .with_layout(Some(layout_vbox))
+            .with_h_flex(Flex::Grow)
+            .with_v_flex(Flex::Grow)
+            .with_visible(false)
+            .with_state(Some(Box::new(PanelState {
+                border_visible: true,
+                gap: 10,
+                padding: Insets::new_same(10),
+            })));
+        scene.add_view_to_parent(make_label("lib_title", "Library"), &LIBRARY_DIALOG_ID);
+        scene.add_view_to_parent(
+            make_list_view(&ViewId::new("lib_list"), vec![], 0),
+            &LIBRARY_DIALOG_ID,
+        );
+        scene.add_view_to_parent(
+            make_button(&ViewId::new("library_close"), "Close"),
+            &LIBRARY_DIALOG_ID,
+        );
+        scene.add_view_to_root(lib_panel);
     }
 
     scene
@@ -309,7 +342,7 @@ fn main() {
     set_ui_font_size(&mut theme, font, bold_font, UI_FONT_SIZE_MEDIUM);
     let handlers: Vec<Callback> = vec![handle_click];
 
-    let epub = EpubArchive::new(EPUB_DATA).expect("sherlock_holmes.epub parse failed");
+    let mut epub = EpubArchive::new(EPUB_DATA).expect("sherlock_holmes.epub parse failed");
     let mut cfg = layout_cfg(body_font, hw.font_size(), win_w, win_h);
     let mut session = BookSession::new(&epub, &cfg).expect("BookSession init failed");
     update_content(&mut scene, &session, font_px_for(hw.font_size()));
@@ -380,6 +413,35 @@ fn main() {
                             nav_prev_page(&mut hw, &mut scene, &epub, &mut cfg, &mut session);
                         } else if input.source == ViewId::new("next_page") {
                             nav_next_page(&mut hw, &mut scene, &epub, &mut cfg, &mut session);
+                        } else if input.source == ViewId::new("library") {
+                            let files = hw.list_epub_files();
+                            if let Some(v) = scene.get_view_mut(&ViewId::new("lib_list")) {
+                                if let Some(s) = v.get_state::<ListState>() {
+                                    s.items = files;
+                                    s.selected = 0;
+                                }
+                            }
+                            scene.mark_layout_dirty();
+                            scene.mark_dirty_all();
+                        } else if input.source == ViewId::new("lib_list") {
+                            if let Some(OutputAction::Command(ref filename)) = input.action {
+                                if let Some(data) = hw.load_epub_file(filename) {
+                                    match EpubArchive::from_vec(data) {
+                                        Ok(new_epub) => {
+                                            epub = new_epub;
+                                            cfg = layout_cfg(body_font, hw.font_size(), win_w, win_h);
+                                            session = BookSession::new(&epub, &cfg).expect("book load");
+                                            update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                                            if let Some(v) = scene.get_view_mut(&ViewId::new("booktitle")) {
+                                                v.title = filename.clone();
+                                            }
+                                            scene.hide_view(&ViewId::new("library_dialog"));
+                                            scene.mark_dirty_all();
+                                        }
+                                        Err(e) => log::warn!("failed to load epub {:?}: {:?}", filename, e),
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -695,7 +757,7 @@ async fn main(spawner: Spawner) -> ! {
     let handlers = vec![handle_click as Callback];
     let mut was_touching = false;
 
-    let epub = EpubArchive::new(EPUB_DATA).expect("epub parse");
+    let mut epub = EpubArchive::new(EPUB_DATA).expect("epub parse");
     let mut cfg = layout_cfg(body_font, hw.font_size(), lw, lh);
     let mut session = if saved_chapter > 0 || saved_anchor > 0 {
         BookSession::restore(&epub, &cfg, saved_chapter, saved_anchor)
@@ -858,6 +920,39 @@ async fn main(spawner: Spawner) -> ! {
                     } else if input.source == ViewId::new("next_page") {
                         nav_next_page(&mut hw, &mut scene, &epub, &mut cfg, &mut session);
                         hw.save_position(session.chapter_idx, session.reader.anchor_byte);
+                        last_interaction = Instant::now();
+                    } else if input.source == ViewId::new("library") {
+                        let files = hw.list_epub_files();
+                        if let Some(v) = scene.get_view_mut(&ViewId::new("lib_list")) {
+                            if let Some(s) = v.get_state::<ListState>() {
+                                s.items = files;
+                                s.selected = 0;
+                            }
+                        }
+                        scene.mark_layout_dirty();
+                        scene.mark_dirty_all();
+                        last_interaction = Instant::now();
+                    } else if input.source == ViewId::new("lib_list") {
+                        if let Some(OutputAction::Command(ref filename)) = input.action {
+                            if let Some(data) = hw.load_epub_file(filename) {
+                                match EpubArchive::from_vec(data) {
+                                    Ok(new_epub) => {
+                                        hw.save_position(session.chapter_idx, session.reader.anchor_byte);
+                                        epub = new_epub;
+                                        let (cw, ch) = hw.orientation().logical_size();
+                                        cfg = layout_cfg(body_font, hw.font_size(), cw, ch);
+                                        session = BookSession::new(&epub, &cfg).expect("book load");
+                                        update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                                        if let Some(v) = scene.get_view_mut(&ViewId::new("booktitle")) {
+                                            v.title = filename.clone();
+                                        }
+                                        scene.hide_view(&ViewId::new("library_dialog"));
+                                        scene.mark_dirty_all();
+                                    }
+                                    Err(e) => log::warn!("failed to load epub: {:?}", e),
+                                }
+                            }
+                        }
                         last_interaction = Instant::now();
                     } else {
                         last_interaction = Instant::now();

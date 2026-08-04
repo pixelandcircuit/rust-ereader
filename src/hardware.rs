@@ -3,6 +3,18 @@
 /// Provides uniform access to font size, backlight level, orientation,
 /// and current time across the simulator and the real ESP32-S3 device.
 
+#[cfg(feature = "esp")]
+extern crate alloc;
+
+#[cfg(feature = "esp")]
+use alloc::string::String;
+#[cfg(feature = "esp")]
+use alloc::vec::Vec;
+#[cfg(not(feature = "esp"))]
+use std::string::String;
+#[cfg(not(feature = "esp"))]
+use std::vec::Vec;
+
 // Physical panel dimensions (landscape orientation).
 pub const PANEL_W: u16 = 960;
 pub const PANEL_H: u16 = 540;
@@ -179,6 +191,13 @@ pub trait HardwareAccess {
     /// Persist the current font/backlight/orientation settings to flash.
     /// No-op on simulator.
     fn save_settings(&mut self);
+
+    /// Return bare filenames of `.epub` files available to load.
+    /// Simulator: reads `./library/`. ESP: reads SD card root (empty if no card).
+    fn list_epub_files(&self) -> Vec<String>;
+    /// Read the named epub into memory. `name` is a value from `list_epub_files`.
+    /// Returns `None` if the file cannot be read.
+    fn load_epub_file(&self, name: &str) -> Option<Vec<u8>>;
 }
 
 // ── Simulator implementation ──────────────────────────────────────────────────
@@ -222,6 +241,20 @@ impl HardwareAccess for SimHardware {
     fn enter_deep_sleep(&mut self, _chapter_idx: usize, _anchor_byte: usize) {}
     fn save_position(&mut self, _chapter_idx: usize, _anchor_byte: usize) {}
     fn save_settings(&mut self) {}
+
+    fn list_epub_files(&self) -> Vec<String> {
+        std::fs::read_dir("library")
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.to_lowercase().ends_with(".epub"))
+            .collect()
+    }
+
+    fn load_epub_file(&self, name: &str) -> Option<Vec<u8>> {
+        std::fs::read(format!("library/{name}")).ok()
+    }
 }
 
 // ── ESP flash storage ─────────────────────────────────────────────────────────
@@ -481,5 +514,89 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
         save(KEY_FONT, self.font_size.to_index() as u32);
         save(KEY_BL,   self.backlight.to_index()  as u32);
         save(KEY_ORI,  self.orientation.to_index() as u32);
+    }
+
+    fn list_epub_files(&self) -> Vec<String> {
+        use esp_hal::{delay::Delay, gpio::{Level, Output, OutputConfig}, spi::master::{Config as SpiConfig, Spi}};
+        use embedded_hal_bus::spi::ExclusiveDevice;
+        use embedded_sdmmc::{Error, SdCard, SdCardError, VolumeIdx, VolumeManager};
+
+        let cs = unsafe { Output::new(esp_hal::gpio::AnyPin::steal(12), Level::High, OutputConfig::default()) };
+        let spi = unsafe {
+            Spi::new(esp_hal::peripherals::SPI2::steal(), SpiConfig::default())
+                .expect("SPI2 init")
+                .with_sck(esp_hal::gpio::AnyPin::steal(14))
+                .with_mosi(esp_hal::gpio::AnyPin::steal(13))
+                .with_miso(esp_hal::gpio::AnyPin::steal(21))
+        };
+        let Ok(spi_dev) = ExclusiveDevice::new(spi, cs, Delay::new()) else { return alloc::vec::Vec::new() };
+        let sdcard = SdCard::new(spi_dev, Delay::new());
+        let mgr = VolumeManager::<_, _, 16, 4, 1>::new_with_limits(sdcard, DummyTimesource, 0);
+        let vol = match mgr.open_volume(VolumeIdx(0)) {
+            Ok(v) => v,
+            Err(Error::DeviceError(SdCardError::CardNotFound)) => { log::info!("SD: no card"); return alloc::vec::Vec::new(); }
+            Err(e) => { log::warn!("SD error: {:?}", e); return alloc::vec::Vec::new(); }
+        };
+        let Ok(root) = vol.open_root_dir() else { return alloc::vec::Vec::new() };
+
+        let mut files = alloc::vec::Vec::new();
+        let _ = root.iterate_dir(|e| {
+            if e.attributes.is_lfn() || e.attributes.is_volume() || e.attributes.is_directory() { return; }
+            if e.name.extension().eq_ignore_ascii_case(b"EPU") {
+                files.push(alloc::format!("{}", e.name));
+            }
+        });
+        files
+    }
+
+    fn load_epub_file(&self, name: &str) -> Option<alloc::vec::Vec<u8>> {
+        use esp_hal::{delay::Delay, gpio::{Level, Output, OutputConfig}, spi::master::{Config as SpiConfig, Spi}};
+        use embedded_hal_bus::spi::ExclusiveDevice;
+        use embedded_sdmmc::{Error, Mode, SdCard, SdCardError, VolumeIdx, VolumeManager};
+
+        let cs = unsafe { Output::new(esp_hal::gpio::AnyPin::steal(12), Level::High, OutputConfig::default()) };
+        let spi = unsafe {
+            Spi::new(esp_hal::peripherals::SPI2::steal(), SpiConfig::default())
+                .expect("SPI2 init")
+                .with_sck(esp_hal::gpio::AnyPin::steal(14))
+                .with_mosi(esp_hal::gpio::AnyPin::steal(13))
+                .with_miso(esp_hal::gpio::AnyPin::steal(21))
+        };
+        let spi_dev = ExclusiveDevice::new(spi, cs, Delay::new()).ok()?;
+        let sdcard = SdCard::new(spi_dev, Delay::new());
+        let mgr = VolumeManager::<_, _, 16, 4, 1>::new_with_limits(sdcard, DummyTimesource, 0);
+        let vol = match mgr.open_volume(VolumeIdx(0)) {
+            Ok(v) => v,
+            Err(Error::DeviceError(SdCardError::CardNotFound)) => { log::info!("SD: no card"); return None; }
+            Err(e) => { log::warn!("SD error: {:?}", e); return None; }
+        };
+        let root = vol.open_root_dir().ok()?;
+
+        // Find the ShortFileName matching the given display name, then read the file.
+        let mut sfn: Option<embedded_sdmmc::ShortFileName> = None;
+        let _ = root.iterate_dir(|e| {
+            if sfn.is_none() && alloc::format!("{}", e.name) == name {
+                sfn = Some(e.name.clone());
+            }
+        });
+        let mut f = root.open_file_in_dir(sfn?, Mode::ReadOnly).ok()?;
+        let mut buf = alloc::vec![0u8; f.length() as usize];
+        f.read(&mut buf).ok()?;
+        Some(buf)
+    }
+}
+
+// ── SD card helpers (ESP only) ────────────────────────────────────────────────
+
+#[cfg(feature = "esp")]
+struct DummyTimesource;
+
+#[cfg(feature = "esp")]
+impl embedded_sdmmc::TimeSource for DummyTimesource {
+    fn get_timestamp(&self) -> embedded_sdmmc::Timestamp {
+        embedded_sdmmc::Timestamp {
+            year_since_1970: 0, zero_indexed_month: 0, zero_indexed_day: 0,
+            hours: 0, minutes: 0, seconds: 0,
+        }
     }
 }

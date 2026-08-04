@@ -26,6 +26,8 @@ esp = [
     "dep:embassy-net",
     "dep:embassy-time",
     "dep:static_cell",
+    "dep:embedded-sdmmc",
+    "dep:embedded-hal-bus",
 ]
 simulator = [
     "dep:embedded-graphics",
@@ -65,6 +67,8 @@ embassy-executor = { version = "0.10.0", optional = true }
 embassy-net      = { version = "0.8.0",  features = ["dhcpv4", "medium-ethernet", "udp"], optional = true }
 embassy-time     = { version = "0.5.0",  optional = true }
 static_cell      = { version = "2.1.0",  optional = true }
+embedded-sdmmc   = { version = "0.9",  default-features = false, optional = true }
+embedded-hal-bus = { version = "0.2",  optional = true }
 
 [profile.dev]
 opt-level = "s"
