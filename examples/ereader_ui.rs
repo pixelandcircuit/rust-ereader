@@ -41,6 +41,10 @@ const ORIENTATION_ID:ViewId = ViewId::new("orientation");
 const BACKLIGHT_ID:ViewId = ViewId::new("backlight");
 const FONT_SIZE_ID:ViewId = ViewId::new("font_size");
 
+const UI_FONT_SIZE_SMALL: f32 = 16.0;
+const UI_FONT_SIZE_MEDIUM: f32 = 20.0;
+const UI_FONT_SIZE_LARGE: f32 = 24.0;
+
 fn handle_click(event: &mut GuiEvent) {
     if event.target == &ViewId::new("settings") {
         info!("showing the dialog");
@@ -97,7 +101,7 @@ fn make_spacer(id: &ViewId) -> View {
     }
 }
 
-fn make_scene(font: &'static Font, w: i32, h: i32) -> Scene {
+fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
     let mut scene = Scene::new_with_bounds(Bounds::new(0, 0, w, h));
     let main_id = ViewId::new("main");
     let main_panel = make_panel(&main_id)
@@ -146,7 +150,7 @@ fn make_scene(font: &'static Font, w: i32, h: i32) -> Scene {
             state: Some(Box::new(BookState {
                 text: String::new(),
                 font_px: 22.0,
-                font,
+                font: body_font,
             })),
             ..Default::default()
         }
@@ -266,12 +270,12 @@ fn make_theme(font: &'static Font, bold_font: &'static Font) -> Theme {
         accented: ViewStyle { fill: Rgb565::WHITE, text: Rgb565::BLACK },
         selected: ViewStyle { fill: Rgb565::BLACK, text: Rgb565::WHITE },
         panel:    ViewStyle { fill: Rgb565::WHITE, text: Rgb565::BLACK },
-        font:      FontKind::TrueType { size: 13.0, font },
-        bold_font: FontKind::TrueType { size: 13.0, font: bold_font },
+        font:      FontKind::TrueType { size: UI_FONT_SIZE_MEDIUM, font },
+        bold_font: FontKind::TrueType { size: UI_FONT_SIZE_MEDIUM, font: bold_font },
     }
 }
 
-fn set_font_size(theme: &mut Theme, font: &'static Font, bold_font: &'static Font, size: f32) {
+fn set_ui_font_size(theme: &mut Theme, font: &'static Font, bold_font: &'static Font, size: f32) {
     theme.font = FontKind::TrueType {
         font,
         size,
@@ -302,7 +306,7 @@ fn main() {
     let (font, bold_font, body_font) = load_fonts();
     let mut scene = make_scene(body_font, win_w, win_h);
     let mut theme = make_theme(font, bold_font);
-    set_font_size(&mut theme, font, bold_font, 13.0);
+    set_ui_font_size(&mut theme, font, bold_font, UI_FONT_SIZE_MEDIUM);
     let handlers: Vec<Callback> = vec![handle_click];
 
     let epub = EpubArchive::new(EPUB_DATA).expect("sherlock_holmes.epub parse failed");
@@ -358,11 +362,11 @@ fn main() {
                             } else if input.source == FONT_SIZE_ID {
                                 hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
                                 let font_size = match hw.font_size() {
-                                    FontSize::Small => 13.0,
-                                    FontSize::Medium => 16.0,
-                                    FontSize::Large => 24.0,
+                                    FontSize::Small => UI_FONT_SIZE_SMALL,
+                                    FontSize::Medium => UI_FONT_SIZE_MEDIUM,
+                                    FontSize::Large => UI_FONT_SIZE_LARGE,
                                 };
-                                set_font_size(&mut theme, font, bold_font, font_size);
+                                set_ui_font_size(&mut theme, font, bold_font, font_size);
                                 cfg = layout_cfg(body_font, hw.font_size(), win_w, win_h);
                                 session.reader.relayout(&cfg);
                                 scene.mark_layout_dirty();
@@ -825,9 +829,11 @@ async fn main(spawner: Spawner) -> ! {
     sync_settings_ui(&mut scene, font_idx, bl_idx, ori_idx);
     let mut theme = make_theme(font, bold_font);
     let chrome_size = match hw.font_size() {
-        FontSize::Small => 13.0, FontSize::Medium => 16.0, FontSize::Large => 24.0,
+        FontSize::Small => UI_FONT_SIZE_SMALL,
+        FontSize::Medium => UI_FONT_SIZE_MEDIUM,
+        FontSize::Large => UI_FONT_SIZE_LARGE,
     };
-    set_font_size(&mut theme, font, bold_font, chrome_size);
+    set_ui_font_size(&mut theme, font, bold_font, chrome_size);
     let handlers = vec![handle_click as Callback];
     let mut was_touching = false;
 
@@ -952,11 +958,11 @@ async fn main(spawner: Spawner) -> ! {
                         if input.source == FONT_SIZE_ID {
                             hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
                             let font_size = match hw.font_size() {
-                                FontSize::Small => 13.0,
-                                FontSize::Medium => 16.0,
-                                FontSize::Large => 24.0,
+                                FontSize::Small => UI_FONT_SIZE_SMALL,
+                                FontSize::Medium => UI_FONT_SIZE_MEDIUM,
+                                FontSize::Large => UI_FONT_SIZE_LARGE,
                             };
-                            set_font_size(&mut theme, font, bold_font, font_size);
+                            set_ui_font_size(&mut theme, font, bold_font, font_size);
                             let (cur_w, cur_h) = hw.orientation().logical_size();
                             cfg = layout_cfg(body_font, hw.font_size(), cur_w, cur_h);
                             session.reader.relayout(&cfg);
