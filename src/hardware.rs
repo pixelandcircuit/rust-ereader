@@ -172,6 +172,13 @@ pub trait HardwareAccess {
     /// backlight, and enter deep sleep (wakes on BOOT button / GPIO0 LOW).
     /// On ESP this never returns. On simulator it is a no-op.
     fn enter_deep_sleep(&mut self, chapter_idx: usize, anchor_byte: usize);
+
+    /// Persist the current reading position (chapter + byte offset) to flash.
+    /// No-op on simulator.
+    fn save_position(&mut self, chapter_idx: usize, anchor_byte: usize);
+    /// Persist the current font/backlight/orientation settings to flash.
+    /// No-op on simulator.
+    fn save_settings(&mut self);
 }
 
 // ── Simulator implementation ──────────────────────────────────────────────────
@@ -213,6 +220,115 @@ impl HardwareAccess for SimHardware {
     fn button_prev_pressed(&self) -> bool { false }
     fn button_next_pressed(&self) -> bool { false }
     fn enter_deep_sleep(&mut self, _chapter_idx: usize, _anchor_byte: usize) {}
+    fn save_position(&mut self, _chapter_idx: usize, _anchor_byte: usize) {}
+    fn save_settings(&mut self) {}
+}
+
+// ── ESP flash storage ─────────────────────────────────────────────────────────
+
+#[cfg(feature = "esp")]
+use esp_storage::FlashStorage;
+#[cfg(feature = "esp")]
+use sequential_storage::{cache::NoCache, map};
+
+#[cfg(feature = "esp")]
+const NVS_RANGE: core::ops::Range<u32> = 0x9000..0xF000;
+#[cfg(feature = "esp")]
+const KEY_FONT:    u8 = 10;
+#[cfg(feature = "esp")]
+const KEY_BL:      u8 = 11;
+#[cfg(feature = "esp")]
+const KEY_ORI:     u8 = 12;
+#[cfg(feature = "esp")]
+const KEY_CHAPTER: u8 = 13;
+#[cfg(feature = "esp")]
+const KEY_ANCHOR:  u8 = 14;
+
+#[cfg(feature = "esp")]
+struct FlashAdapter(FlashStorage);
+
+#[cfg(feature = "esp")]
+impl embedded_storage::nor_flash::ErrorType for FlashAdapter {
+    type Error = esp_storage::FlashStorageError;
+}
+
+#[cfg(feature = "esp")]
+impl embedded_storage_async::nor_flash::ReadNorFlash for FlashAdapter {
+    const READ_SIZE: usize = FlashStorage::WORD_SIZE as usize;
+    async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
+        embedded_storage::nor_flash::ReadNorFlash::read(&mut self.0, offset, bytes)
+    }
+    fn capacity(&self) -> usize {
+        embedded_storage::nor_flash::ReadNorFlash::capacity(&self.0)
+    }
+}
+
+#[cfg(feature = "esp")]
+impl embedded_storage_async::nor_flash::NorFlash for FlashAdapter {
+    const WRITE_SIZE: usize = FlashStorage::WORD_SIZE as usize;
+    const ERASE_SIZE: usize = FlashStorage::SECTOR_SIZE as usize;
+    async fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
+        embedded_storage::nor_flash::NorFlash::erase(&mut self.0, from, to)
+    }
+    async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+        embedded_storage::nor_flash::NorFlash::write(&mut self.0, offset, bytes)
+    }
+}
+
+#[cfg(feature = "esp")]
+fn block_on<F: core::future::Future>(mut f: F) -> F::Output {
+    use core::{pin::Pin, task::{Context, Poll, RawWaker, RawWakerVTable, Waker}};
+    static VTABLE: RawWakerVTable =
+        RawWakerVTable::new(|p| RawWaker::new(p, &VTABLE), |_| {}, |_| {}, |_| {});
+    let waker = unsafe { Waker::from_raw(RawWaker::new(core::ptr::null(), &VTABLE)) };
+    let mut cx = Context::from_waker(&waker);
+    loop {
+        match unsafe { Pin::new_unchecked(&mut f) }.poll(&mut cx) {
+            Poll::Ready(v) => return v,
+            Poll::Pending => {}
+        }
+    }
+}
+
+/// Returns (font_idx, bl_idx, ori_idx). Defaults: Medium (1), High (2), Portrait (0).
+#[cfg(feature = "esp")]
+pub fn load_settings() -> (usize, usize, usize) {
+    let mut flash = FlashAdapter(FlashStorage::new());
+    let mut cache = NoCache::new();
+    let mut buf = [0u8; 64];
+    let mut load = |key: u8, default: u32| -> u32 {
+        match block_on(map::fetch_item::<u8, u32, _>(
+            &mut flash, NVS_RANGE, &mut cache, &mut buf, &key,
+        )) {
+            Ok(Some(v)) => v,
+            _ => default,
+        }
+    };
+    let font = load(KEY_FONT, 1) as usize;
+    let bl   = load(KEY_BL,   2) as usize;
+    let ori  = load(KEY_ORI,  0) as usize;
+    log::info!("settings loaded: font={} bl={} ori={}", font, bl, ori);
+    (font, bl, ori)
+}
+
+/// Returns (chapter_idx, anchor_byte). Defaults: chapter 0, byte 0.
+#[cfg(feature = "esp")]
+pub fn load_position() -> (usize, usize) {
+    let mut flash = FlashAdapter(FlashStorage::new());
+    let mut cache = NoCache::new();
+    let mut buf = [0u8; 64];
+    let mut load = |key: u8| -> u32 {
+        match block_on(map::fetch_item::<u8, u32, _>(
+            &mut flash, NVS_RANGE, &mut cache, &mut buf, &key,
+        )) {
+            Ok(Some(v)) => v,
+            _ => 0,
+        }
+    };
+    let chapter = load(KEY_CHAPTER) as usize;
+    let anchor  = load(KEY_ANCHOR)  as usize;
+    log::info!("position loaded: chapter={} anchor={}", chapter, anchor);
+    (chapter, anchor)
 }
 
 // ── ESP implementation ────────────────────────────────────────────────────────
@@ -334,5 +450,36 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
         let wakeup_pin = unsafe { esp_hal::gpio::AnyPin::steal(0) };
         let boot_src = Ext0WakeupSource::new(wakeup_pin, WakeupLevel::Low);
         self.rtc.sleep_deep(&[&boot_src]);
+    }
+
+    fn save_position(&mut self, chapter_idx: usize, anchor_byte: usize) {
+        let mut flash = FlashAdapter(FlashStorage::new());
+        let mut cache = NoCache::new();
+        let mut buf = [0u8; 64];
+        let mut save = |key: u8, val: u32| {
+            if let Err(e) = block_on(map::store_item::<u8, u32, _>(
+                &mut flash, NVS_RANGE, &mut cache, &mut buf, &key, &val,
+            )) {
+                log::warn!("flash save key {} failed: {:?}", key, e);
+            }
+        };
+        save(KEY_CHAPTER, chapter_idx as u32);
+        save(KEY_ANCHOR,  anchor_byte as u32);
+    }
+
+    fn save_settings(&mut self) {
+        let mut flash = FlashAdapter(FlashStorage::new());
+        let mut cache = NoCache::new();
+        let mut buf = [0u8; 64];
+        let mut save = |key: u8, val: u32| {
+            if let Err(e) = block_on(map::store_item::<u8, u32, _>(
+                &mut flash, NVS_RANGE, &mut cache, &mut buf, &key, &val,
+            )) {
+                log::warn!("flash save key {} failed: {:?}", key, e);
+            }
+        };
+        save(KEY_FONT, self.font_size.to_index() as u32);
+        save(KEY_BL,   self.backlight.to_index()  as u32);
+        save(KEY_ORI,  self.orientation.to_index() as u32);
     }
 }

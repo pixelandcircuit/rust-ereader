@@ -1,5 +1,32 @@
 # Changes
 
+## 2026-08-04 14:30
+
+Replace subsetted AtkinsonHyperlegible fonts with full versions from Google Fonts.
+
+The bundled `AtkinsonHyperlegible-Regular.ttf` and `AtkinsonHyperlegible-Bold.ttf`
+were 15 KB subsets sharing an identical 60-glyph character set that omitted 'M',
+'D', 'E', 'J', 'K', 'U', 'W', 'X', 'Z', '?', '-', ':', '<', '>', and '%'. This
+caused missing glyphs on UI labels such as "Medium", "< Prev", "Next >", "--:-- --",
+and "85%". Replaced both files with the full v12 fonts (51–52 KB) downloaded from
+Google Fonts (fonts.gstatic.com). No code changes required.
+
+## 2026-08-04 14:00
+
+Move flash persistence behind `HardwareAccess` trait; add `save_position` and `save_settings`.
+
+Previously the ESP main function in `ereader_ui.rs` contained ~140 lines of
+hardware-specific flash storage code (`FlashAdapter`, `block_on`, NVS constants,
+`save_position`, `save_settings`, `load_settings`, `load_position`) that had no
+simulator equivalent and cluttered the example.
+
+Changes:
+- `src/hardware.rs`: Added two new trait methods to `HardwareAccess`:
+  - `save_position(&mut self, chapter_idx, anchor_byte)` — writes chapter/anchor to NVS flash on ESP, no-op on simulator.
+  - `save_settings(&mut self)` — writes font/backlight/orientation from `self` to NVS flash on ESP, no-op on simulator.
+  Moved all flash storage infrastructure (`FlashAdapter`, `block_on`, NVS key constants) into `hardware.rs`. `load_settings()` and `load_position()` remain as `pub` standalone functions since they must be called before `EspHardware` is constructed (chicken-and-egg with initialization).
+- `examples/ereader_ui.rs`: Removed all duplicated flash code. Updated 7 call sites: `save_position(...)` → `hw.save_position(...)`, `save_settings(hw.font_size()..., ...)` → `hw.save_settings()`. Added `load_settings`/`load_position` to the ESP import line.
+
 ## 2026-08-03 16:00
 
 Fix settings dialog not reflecting persisted font/backlight/orientation after reboot.

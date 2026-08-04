@@ -17,7 +17,7 @@ use embedded_graphics::prelude::RgbColor;
 use ereader::epub::EpubArchive;
 use ereader::font::{char_advance, draw_str, font_px_for, line_height, measure_width};
 #[cfg(feature = "esp")]
-use ereader::hardware::EspHardware;
+use ereader::hardware::{EspHardware, load_position, load_settings};
 #[cfg(feature = "simulator")]
 use ereader::hardware::SimHardware;
 use ereader::hardware::{BacklightLevel, FontSize, HardwareAccess, Orientation};
@@ -437,149 +437,9 @@ use ereader::driver::gt911::GT911_ADDR_PRIMARY;
 #[cfg(feature = "esp")]
 use ereader::driver::Gt911;
 
-// ── Flash storage ─────────────────────────────────────────────────────────────
-#[cfg(feature = "esp")]
-use esp_storage::FlashStorage;
-#[cfg(feature = "esp")]
-use sequential_storage::{cache::NoCache, map};
-
-#[cfg(feature = "esp")]
-struct FlashAdapter(FlashStorage);
-
-#[cfg(feature = "esp")]
-impl embedded_storage::nor_flash::ErrorType for FlashAdapter {
-    type Error = esp_storage::FlashStorageError;
-}
-
-#[cfg(feature = "esp")]
-impl embedded_storage_async::nor_flash::ReadNorFlash for FlashAdapter {
-    const READ_SIZE: usize = FlashStorage::WORD_SIZE as usize;
-    async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
-        embedded_storage::nor_flash::ReadNorFlash::read(&mut self.0, offset, bytes)
-    }
-    fn capacity(&self) -> usize {
-        embedded_storage::nor_flash::ReadNorFlash::capacity(&self.0)
-    }
-}
-
-#[cfg(feature = "esp")]
-impl embedded_storage_async::nor_flash::NorFlash for FlashAdapter {
-    const WRITE_SIZE: usize = FlashStorage::WORD_SIZE as usize;
-    const ERASE_SIZE: usize = FlashStorage::SECTOR_SIZE as usize;
-    async fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
-        embedded_storage::nor_flash::NorFlash::erase(&mut self.0, from, to)
-    }
-    async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
-        embedded_storage::nor_flash::NorFlash::write(&mut self.0, offset, bytes)
-    }
-}
-
-#[cfg(feature = "esp")]
-fn block_on<F: core::future::Future>(mut f: F) -> F::Output {
-    use core::{pin::Pin, task::{Context, Poll, RawWaker, RawWakerVTable, Waker}};
-    static VTABLE: RawWakerVTable =
-        RawWakerVTable::new(|p| RawWaker::new(p, &VTABLE), |_| {}, |_| {}, |_| {});
-    let waker = unsafe { Waker::from_raw(RawWaker::new(core::ptr::null(), &VTABLE)) };
-    let mut cx = Context::from_waker(&waker);
-    loop {
-        match unsafe { Pin::new_unchecked(&mut f) }.poll(&mut cx) {
-            Poll::Ready(v) => return v,
-            Poll::Pending => {}
-        }
-    }
-}
-
 // Deep sleep after 60 seconds of inactivity.
 #[cfg(feature = "esp")]
 const SLEEP_AFTER_SECS: u64 = 60;
-
-// Keys 10–14 to avoid collisions with ereader_full (which uses 0–4).
-#[cfg(feature = "esp")]
-const NVS_RANGE: core::ops::Range<u32> = 0x9000..0xF000;
-#[cfg(feature = "esp")]
-const KEY_FONT:    u8 = 10;
-#[cfg(feature = "esp")]
-const KEY_BL:      u8 = 11;
-#[cfg(feature = "esp")]
-const KEY_ORI:     u8 = 12;
-#[cfg(feature = "esp")]
-const KEY_CHAPTER: u8 = 13;
-#[cfg(feature = "esp")]
-const KEY_ANCHOR:  u8 = 14;
-
-/// Returns (font_idx, bl_idx, ori_idx). Defaults: Medium (1), High (2), Portrait (0).
-#[cfg(feature = "esp")]
-fn load_settings() -> (usize, usize, usize) {
-    let mut flash = FlashAdapter(FlashStorage::new());
-    let mut cache = NoCache::new();
-    let mut buf = [0u8; 64];
-    let mut load = |key: u8, default: u32| -> u32 {
-        match block_on(map::fetch_item::<u8, u32, _>(
-            &mut flash, NVS_RANGE, &mut cache, &mut buf, &key,
-        )) {
-            Ok(Some(v)) => v,
-            _ => default,
-        }
-    };
-    let font = load(KEY_FONT, 1) as usize;
-    let bl   = load(KEY_BL,   2) as usize;
-    let ori  = load(KEY_ORI,  0) as usize;
-    log::info!("settings loaded: font={} bl={} ori={}", font, bl, ori);
-    (font, bl, ori)
-}
-
-#[cfg(feature = "esp")]
-fn save_settings(font_idx: usize, bl_idx: usize, ori_idx: usize) {
-    let mut flash = FlashAdapter(FlashStorage::new());
-    let mut cache = NoCache::new();
-    let mut buf = [0u8; 64];
-    let mut save = |key: u8, val: u32| {
-        if let Err(e) = block_on(map::store_item::<u8, u32, _>(
-            &mut flash, NVS_RANGE, &mut cache, &mut buf, &key, &val,
-        )) {
-            log::warn!("flash save key {} failed: {:?}", key, e);
-        }
-    };
-    save(KEY_FONT, font_idx as u32);
-    save(KEY_BL,   bl_idx   as u32);
-    save(KEY_ORI,  ori_idx  as u32);
-}
-
-/// Returns (chapter_idx, anchor_byte). Defaults: chapter 0, byte 0.
-#[cfg(feature = "esp")]
-fn load_position() -> (usize, usize) {
-    let mut flash = FlashAdapter(FlashStorage::new());
-    let mut cache = NoCache::new();
-    let mut buf = [0u8; 64];
-    let mut load = |key: u8| -> u32 {
-        match block_on(map::fetch_item::<u8, u32, _>(
-            &mut flash, NVS_RANGE, &mut cache, &mut buf, &key,
-        )) {
-            Ok(Some(v)) => v,
-            _ => 0,
-        }
-    };
-    let chapter = load(KEY_CHAPTER) as usize;
-    let anchor  = load(KEY_ANCHOR)  as usize;
-    log::info!("position loaded: chapter={} anchor={}", chapter, anchor);
-    (chapter, anchor)
-}
-
-#[cfg(feature = "esp")]
-fn save_position(chapter_idx: usize, anchor_byte: usize) {
-    let mut flash = FlashAdapter(FlashStorage::new());
-    let mut cache = NoCache::new();
-    let mut buf = [0u8; 64];
-    let mut save = |key: u8, val: u32| {
-        if let Err(e) = block_on(map::store_item::<u8, u32, _>(
-            &mut flash, NVS_RANGE, &mut cache, &mut buf, &key, &val,
-        )) {
-            log::warn!("flash save key {} failed: {:?}", key, e);
-        }
-    };
-    save(KEY_CHAPTER, chapter_idx as u32);
-    save(KEY_ANCHOR,  anchor_byte as u32);
-}
 
 /// Wraps the Gray4 e-paper display and presents an Rgb565 DrawTarget for iris-ui.
 /// Converts Rgb565 luminance to 4-bit gray and applies orientation rotation so
@@ -816,7 +676,7 @@ async fn main(spawner: Spawner) -> ! {
 
     // Capture seed before rtc is moved into hw.
     let seed = rtc.current_time_us();
-    let mut hw: dyn HardwareAccess = EspHardware::new(
+    let mut hw = EspHardware::new(
         bl_ch,
         rtc,
         btn_prev,
@@ -914,14 +774,14 @@ async fn main(spawner: Spawner) -> ! {
                 EmbassyTimer::after(Duration::from_millis(10)).await;
             }
             nav_prev_page(&mut hw, &mut scene, &epub, &mut cfg, &mut session);
-            save_position(session.chapter_idx, session.reader.anchor_byte);
+            hw.save_position(session.chapter_idx, session.reader.anchor_byte);
             last_interaction = Instant::now();
         } else if hw.button_next_pressed() {
             while hw.button_next_pressed() {
                 EmbassyTimer::after(Duration::from_millis(10)).await;
             }
             nav_next_page(&mut hw, &mut scene, &epub, &mut cfg, &mut session);
-            save_position(session.chapter_idx, session.reader.anchor_byte);
+            hw.save_position(session.chapter_idx, session.reader.anchor_byte);
             last_interaction = Instant::now();
         }
 
@@ -962,11 +822,11 @@ async fn main(spawner: Spawner) -> ! {
                             session.reader.relayout(&cfg);
                             scene.mark_layout_dirty();
                             update_content(&mut scene, &session, font_px_for(hw.font_size()));
-                            save_settings(hw.font_size().to_index(), hw.backlight_level().to_index(), hw.orientation().to_index());
+                            hw.save_settings();
                         } else if input.source == BACKLIGHT_ID {
                             hw.set_backlight_level(BacklightLevel::from_cmd(cmd.as_str()));
                             scene.mark_dirty_all();
-                            save_settings(hw.font_size().to_index(), hw.backlight_level().to_index(), hw.orientation().to_index());
+                            hw.save_settings();
                         } else if input.source == ORIENTATION_ID {
                             hw.set_orientation(Orientation::from_cmd(cmd.as_str()));
                             bridge.orientation = hw.orientation();
@@ -976,7 +836,7 @@ async fn main(spawner: Spawner) -> ! {
                             session.reader.relayout(&cfg);
                             scene.mark_layout_dirty();
                             update_content(&mut scene, &session, font_px_for(hw.font_size()));
-                            save_settings(hw.font_size().to_index(), hw.backlight_level().to_index(), hw.orientation().to_index());
+                            hw.save_settings();
                         }
                     }
                     if input.source == ViewId::new("sync_time") {
@@ -993,11 +853,11 @@ async fn main(spawner: Spawner) -> ! {
                         // }
                     } else if input.source == ViewId::new("prev_page") {
                         nav_prev_page(&mut hw, &mut scene, &epub, &mut cfg, &mut session);
-                        save_position(session.chapter_idx, session.reader.anchor_byte);
+                        hw.save_position(session.chapter_idx, session.reader.anchor_byte);
                         last_interaction = Instant::now();
                     } else if input.source == ViewId::new("next_page") {
                         nav_next_page(&mut hw, &mut scene, &epub, &mut cfg, &mut session);
-                        save_position(session.chapter_idx, session.reader.anchor_byte);
+                        hw.save_position(session.chapter_idx, session.reader.anchor_byte);
                         last_interaction = Instant::now();
                     } else {
                         last_interaction = Instant::now();
