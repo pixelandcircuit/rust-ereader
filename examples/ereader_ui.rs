@@ -11,7 +11,7 @@
 extern crate alloc;
 #[cfg(feature = "esp")]
 use alloc::{boxed::Box, string::String};
-
+use Align::Center;
 use embedded_graphics::mono_font::ascii::{FONT_10X20, FONT_6X10, FONT_9X15, FONT_9X15_BOLD};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::RgbColor;
@@ -32,7 +32,7 @@ use iris_ui::layouts::{layout_hbox, layout_std_panel, layout_vbox};
 use iris_ui::scene::{click_at, draw_scene, layout_scene, Scene};
 use iris_ui::toggle_group::{make_toggle_group, SelectOneOfState};
 use iris_ui::view::{Align, Flex, View, ViewId};
-use iris_ui::{Callback, DrawEvent, FontKind, GuiEvent, LayoutEvent, Theme, ViewStyle};
+use iris_ui::{util, Callback, DrawEvent, FontKind, GuiEvent, LayoutEvent, Theme, ViewStyle};
 
 
 const EPUB_DATA: &[u8] = include_bytes!("sherlock_holmes.epub");
@@ -70,6 +70,34 @@ fn sync_settings_ui(scene: &mut Scene, font_idx: usize, bl_idx: usize, ori_idx: 
     }
 }
 
+fn make_spacer(id: &ViewId) -> View {
+    View {
+        name: id.clone(),
+        h_flex: Shrink,
+        h_align: Center,
+        v_flex: Shrink,
+        v_align: Center,
+        bounds: Bounds::new(0,0,10,10),
+        visible:true,
+        title: "spacer".into(),
+        draw:Some(|e| {
+            e.ctx.stroke_rect(&e.view.bounds, &e.theme.panel.text);
+        }),
+        input:None,
+        layout: Some(|e|{
+            if let Some(view) = e.scene.get_view_mut(&e.target) {
+                if view.h_flex == Grow {
+                    // view.bounds.size.w = e.space.w;
+                }
+                if view.v_flex == Grow {
+                    // view.bounds.size.h = e.space.h;
+                }
+            }
+        }),
+        state: None
+    }
+}
+
 fn make_scene(font: &'static Font, w: i32, h: i32) -> Scene {
     let mut scene = Scene::new_with_bounds(Bounds::new(0, 0, w, h));
     let main_id = ViewId::new("main");
@@ -90,7 +118,7 @@ fn make_scene(font: &'static Font, w: i32, h: i32) -> Scene {
         scene.add_view_to_parent(settings_button, &topbar_id);
         scene.add_view_to_parent(make_label("time", "--:-- --"), &topbar_id);
         scene.add_view_to_parent(make_label("battery", "85%"), &topbar_id);
-        scene.add_view_to_parent(make_label("spacer1","...").with_h_flex(Flex::Grow), &topbar_id);
+        scene.add_view_to_parent(make_spacer(&ViewId::new("spacer2")).with_h_flex(Grow), &topbar_id);
         scene.add_view_to_parent(make_label("booktitle", "Sherlock Holmes"), &topbar_id);
         let topbar = make_panel(&topbar_id)
             .with_layout(Some(layout_hbox))
@@ -126,8 +154,8 @@ fn make_scene(font: &'static Font, w: i32, h: i32) -> Scene {
             .with_layout(Some(fill_all_space))
             .with_v_flex(Flex::Grow)
             .with_h_flex(Flex::Grow)
-            .with_v_align(Align::Center)
-            .with_h_align(Align::Center);
+            .with_v_align(Center)
+            .with_h_align(Center);
         scene.add_view_to_parent(content, &main_id);
     }
 
@@ -138,6 +166,7 @@ fn make_scene(font: &'static Font, w: i32, h: i32) -> Scene {
         scene.add_view_to_parent(make_button(&ViewId::new("prev_page"), "< Prev"), &bottombar_id);
         scene.add_view_to_parent(make_label("chapter", "Loading..."), &bottombar_id);
         scene.add_view_to_parent(make_label("page", ""), &bottombar_id);
+        scene.add_view_to_parent(make_spacer(&ViewId::new("spacer2")).with_h_flex(Grow), &bottombar_id);
         scene.add_view_to_parent(make_button(&ViewId::new("next_page"), "Next >"), &bottombar_id);
         let bottombar = make_panel(&bottombar_id)
             .with_layout(Some(layout_hbox))
@@ -286,6 +315,7 @@ fn main() {
             draw_scene(&mut scene, &mut ctx, &theme);
         }
 
+        scene.mark_layout_dirty();
         window.update(&display);
 
         let events: Vec<_> = window.events().collect();
@@ -601,6 +631,7 @@ use embassy_net::{
     udp::{PacketMetadata, UdpSocket}, IpAddress, IpEndpoint, Ipv4Address, Runner, StackResources};
 #[cfg(feature = "esp")]
 use embassy_time::{with_timeout, Duration, Instant, Timer as EmbassyTimer};
+use env_logger::fmt::style::Color;
 #[cfg(feature = "esp")]
 use ereader::hardware::rtc_store_read;
 #[cfg(feature = "esp")]
@@ -619,9 +650,11 @@ use esp_hal::{
 };
 #[cfg(feature = "esp")]
 use esp_radio::wifi::{sta::StationConfig, Config, ControllerConfig, Interface};
+use Flex::Shrink;
 use fontdue::Font;
 use iris_ui::input::OutputAction;
 use iris_ui::panel::{make_panel, PanelState};
+use iris_ui::view::Flex::Grow;
 use log::info;
 #[cfg(feature = "esp")]
 use static_cell::StaticCell;
