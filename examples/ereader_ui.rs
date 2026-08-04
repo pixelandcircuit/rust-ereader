@@ -361,12 +361,7 @@ fn main() {
                                 }
                             } else if input.source == FONT_SIZE_ID {
                                 hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
-                                let font_size = match hw.font_size() {
-                                    FontSize::Small => UI_FONT_SIZE_SMALL,
-                                    FontSize::Medium => UI_FONT_SIZE_MEDIUM,
-                                    FontSize::Large => UI_FONT_SIZE_LARGE,
-                                };
-                                set_ui_font_size(&mut theme, font, bold_font, font_size);
+                                set_ui_font_size(&mut theme, font, bold_font, calc_font_size(hw.font_size()));
                                 cfg = layout_cfg(body_font, hw.font_size(), win_w, win_h);
                                 session.reader.relayout(&cfg);
                                 scene.mark_layout_dirty();
@@ -391,6 +386,14 @@ fn main() {
                 _ => {}
             }
         }
+    }
+}
+
+fn calc_font_size(font_size: FontSize) -> f32 {
+    match font_size {
+        FontSize::Small => UI_FONT_SIZE_SMALL,
+        FontSize::Medium => UI_FONT_SIZE_MEDIUM,
+        FontSize::Large => UI_FONT_SIZE_LARGE,
     }
 }
 
@@ -828,12 +831,7 @@ async fn main(spawner: Spawner) -> ! {
     let mut scene = make_scene(body_font, lw, lh);
     sync_settings_ui(&mut scene, font_idx, bl_idx, ori_idx);
     let mut theme = make_theme(font, bold_font);
-    let chrome_size = match hw.font_size() {
-        FontSize::Small => UI_FONT_SIZE_SMALL,
-        FontSize::Medium => UI_FONT_SIZE_MEDIUM,
-        FontSize::Large => UI_FONT_SIZE_LARGE,
-    };
-    set_ui_font_size(&mut theme, font, bold_font, chrome_size);
+    set_ui_font_size(&mut theme, font, bold_font, calc_font_size(hw.font_size()));
     let handlers = vec![handle_click as Callback];
     let mut was_touching = false;
 
@@ -957,12 +955,7 @@ async fn main(spawner: Spawner) -> ! {
                     if let Some(OutputAction::Command(ref cmd)) = input.action {
                         if input.source == FONT_SIZE_ID {
                             hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
-                            let font_size = match hw.font_size() {
-                                FontSize::Small => UI_FONT_SIZE_SMALL,
-                                FontSize::Medium => UI_FONT_SIZE_MEDIUM,
-                                FontSize::Large => UI_FONT_SIZE_LARGE,
-                            };
-                            set_ui_font_size(&mut theme, font, bold_font, font_size);
+                            set_ui_font_size(&mut theme, font, bold_font, calc_font_size(hw.font_size()));
                             let (cur_w, cur_h) = hw.orientation().logical_size();
                             cfg = layout_cfg(body_font, hw.font_size(), cur_w, cur_h);
                             session.reader.relayout(&cfg);
