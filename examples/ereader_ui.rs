@@ -816,7 +816,7 @@ async fn main(spawner: Spawner) -> ! {
 
     // Capture seed before rtc is moved into hw.
     let seed = rtc.current_time_us();
-    let mut hw = EspHardware::new(
+    let mut hw: dyn HardwareAccess = EspHardware::new(
         bl_ch,
         rtc,
         btn_prev,
