@@ -34,14 +34,12 @@ use iris_ui::toggle_group::{make_toggle_group, SelectOneOfState};
 use iris_ui::view::{Align, Flex, View, ViewId};
 use iris_ui::{Callback, DrawEvent, FontKind, GuiEvent, LayoutEvent, Theme, ViewStyle};
 
-const DIALOG_W: i32 = 420;
-const DIALOG_PAD: i32 = 16;
-const DIALOG_H: i32 = 600;
 
 const EPUB_DATA: &[u8] = include_bytes!("sherlock_holmes.epub");
 
-
 const DIALOG_ID:ViewId = ViewId::new("dialog");
+const ORIENTATION_ID:ViewId = ViewId::new("orientation");
+const BACKLIGHT_ID:ViewId = ViewId::new("backlight");
 const FONT_SIZE_ID:ViewId = ViewId::new("font_size");
 
 fn handle_click(event: &mut GuiEvent) {
@@ -61,8 +59,8 @@ fn handle_click(event: &mut GuiEvent) {
 fn sync_settings_ui(scene: &mut Scene, font_idx: usize, bl_idx: usize, ori_idx: usize) {
     for (id, idx) in [
         (FONT_SIZE_ID.clone(),           font_idx),
-        (ViewId::new("backlight"),       bl_idx),
-        (ViewId::new("orientation"),     ori_idx),
+        (BACKLIGHT_ID,       bl_idx),
+        (ORIENTATION_ID,     ori_idx),
     ] {
         if let Some(v) = scene.get_view_mut(&id) {
             if let Some(s) = v.get_state::<SelectOneOfState>() {
@@ -77,7 +75,6 @@ fn make_scene(font: &'static Font, w: i32, h: i32) -> Scene {
     let main_id = ViewId::new("main");
     let main_panel = make_panel(&main_id)
         .with_layout(Some(layout_vbox))
-        // .with_bounds(Bounds::new(0, 0, w-10, h-10))
         .with_h_flex(Flex::Grow)
         .with_v_flex(Flex::Grow)
         .with_state(Some(Box::new(PanelState {
@@ -93,6 +90,7 @@ fn make_scene(font: &'static Font, w: i32, h: i32) -> Scene {
         scene.add_view_to_parent(settings_button, &topbar_id);
         scene.add_view_to_parent(make_label("time", "--:-- --"), &topbar_id);
         scene.add_view_to_parent(make_label("battery", "85%"), &topbar_id);
+        scene.add_view_to_parent(make_label("spacer1","...").with_h_flex(Flex::Grow), &topbar_id);
         scene.add_view_to_parent(make_label("booktitle", "Sherlock Holmes"), &topbar_id);
         let topbar = make_panel(&topbar_id)
             .with_layout(Some(layout_hbox))
@@ -176,13 +174,13 @@ fn make_scene(font: &'static Font, w: i32, h: i32) -> Scene {
         );
         scene.add_view_to_parent(make_label("dlg_bl_lbl", "Backlight"), &DIALOG_ID);
         scene.add_view_to_parent(
-            make_toggle_group(&ViewId::new("backlight"), vec!["Off", "Low", "High"], 2),
+            make_toggle_group(&BACKLIGHT_ID, vec!["Off", "Low", "High"], 2),
             &DIALOG_ID,
         );
         scene.add_view_to_parent(make_label("dlg_orient_lbl", "Orientation"), &DIALOG_ID);
         scene.add_view_to_parent(
             make_toggle_group(
-                &ViewId::new("orientation"),
+                &ORIENTATION_ID,
                 vec!["Port", "Land", "R.Port", "R.Land"],
                 0,
             ),
@@ -308,7 +306,7 @@ fn main() {
                         click_at(&mut scene, &handlers, GPoint::new(point.x, point.y))
                     {
                         if let Some(OutputAction::Command(ref cmd)) = input.action {
-                            if input.source == ViewId::new("orientation") {
+                            if input.source == ORIENTATION_ID {
                                 hw.set_orientation(Orientation::from_cmd(cmd.as_str()));
                                 let (new_w, new_h) = hw.orientation().logical_size();
                                 if new_w != win_w || new_h != win_h {
@@ -335,7 +333,7 @@ fn main() {
                                 session.reader.relayout(&cfg);
                                 scene.mark_layout_dirty();
                                 update_content(&mut scene, &session, font_px_for(hw.font_size()));
-                            } else if input.source == ViewId::new("backlight") {
+                            } else if input.source == BACKLIGHT_ID {
                                 hw.set_backlight_level(BacklightLevel::from_cmd(cmd.as_str()));
                             }
                         }
@@ -929,11 +927,11 @@ async fn main(spawner: Spawner) -> ! {
                             scene.mark_layout_dirty();
                             update_content(&mut scene, &session, font_px_for(hw.font_size()));
                             save_settings(hw.font_size().to_index(), hw.backlight_level().to_index(), hw.orientation().to_index());
-                        } else if input.source == ViewId::new("backlight") {
+                        } else if input.source == BACKLIGHT_ID {
                             hw.set_backlight_level(BacklightLevel::from_cmd(cmd.as_str()));
                             scene.mark_dirty_all();
                             save_settings(hw.font_size().to_index(), hw.backlight_level().to_index(), hw.orientation().to_index());
-                        } else if input.source == ViewId::new("orientation") {
+                        } else if input.source == ORIENTATION_ID {
                             hw.set_orientation(Orientation::from_cmd(cmd.as_str()));
                             bridge.orientation = hw.orientation();
                             let (new_w, new_h) = hw.orientation().logical_size();
