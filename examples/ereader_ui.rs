@@ -12,7 +12,6 @@ extern crate alloc;
 #[cfg(feature = "esp")]
 use alloc::{boxed::Box, string::String};
 use Align::Center;
-use embedded_graphics::mono_font::ascii::{FONT_10X20, FONT_6X10, FONT_9X15, FONT_9X15_BOLD};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::RgbColor;
 use ereader::epub::EpubArchive;
@@ -239,21 +238,26 @@ fn format_time_utc(unix_secs: u64) -> String {
     format!("{}:{:02} {}", h12, m, ampm)
 }
 
-static FONT_BYTES: &[u8] = include_bytes!("../fonts/NoticiaText-Regular.ttf");
-static BOLD_FONT_BYTES: &[u8] = include_bytes!("../fonts/NoticiaText-Bold.ttf");
+static FONT_BYTES: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Regular.ttf");
+static BODY_FONT_BYTES: &[u8] = include_bytes!("../fonts/NoticiaText-Regular.ttf");
+static BOLD_FONT_BYTES: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Bold.ttf");
 
 /// Parse both theme fonts and leak them into `'static` memory.
 /// Works on both std (simulator) and no_std+alloc (ESP) since both provide `Box`.
-fn load_fonts() -> (&'static Font, &'static Font) {
+fn load_fonts() -> (&'static Font, &'static Font, &'static Font) {
     let font = Box::leak(Box::new(
         fontdue::Font::from_bytes(FONT_BYTES, fontdue::FontSettings::default())
-            .expect("NoticiaText-Regular parse failed"),
+            .expect("AtkinsonHyperlegible-Regular parse failed"),
     ));
     let bold = Box::leak(Box::new(
         fontdue::Font::from_bytes(BOLD_FONT_BYTES, fontdue::FontSettings::default())
             .expect("NoticiaText-Bold parse failed"),
     ));
-    (font, bold)
+    let body = Box::leak(Box::new(
+        fontdue::Font::from_bytes(BODY_FONT_BYTES, fontdue::FontSettings::default())
+            .expect("NoticiaText-Regular parse failed"),
+    ));
+    (font, bold, body)
 }
 
 fn make_theme(font: &'static Font, bold_font: &'static Font) -> Theme {
@@ -295,14 +299,14 @@ fn main() {
     let settings = OutputSettingsBuilder::new().scale(1).build();
     let mut window = Window::new("ereader_ui", &settings);
 
-    let (font, bold_font) = load_fonts();
-    let mut scene = make_scene(font, win_w, win_h);
+    let (font, bold_font, body_font) = load_fonts();
+    let mut scene = make_scene(body_font, win_w, win_h);
     let mut theme = make_theme(font, bold_font);
     set_font_size(&mut theme, font, bold_font, 13.0);
     let handlers: Vec<Callback> = vec![handle_click];
 
     let epub = EpubArchive::new(EPUB_DATA).expect("sherlock_holmes.epub parse failed");
-    let mut cfg = layout_cfg(font, hw.font_size(), win_w, win_h);
+    let mut cfg = layout_cfg(body_font, hw.font_size(), win_w, win_h);
     let mut session = BookSession::new(&epub, &cfg).expect("BookSession init failed");
     update_content(&mut scene, &session, font_px_for(hw.font_size()));
 
@@ -347,7 +351,7 @@ fn main() {
                                         Size::new(win_w as u32, win_h as u32),
                                     );
                                     window = Window::new("ereader_ui", &settings);
-                                    cfg = layout_cfg(font, hw.font_size(), win_w, win_h);
+                                    cfg = layout_cfg(body_font, hw.font_size(), win_w, win_h);
                                     session.reader.relayout(&cfg);
                                     update_content(&mut scene, &session, font_px_for(hw.font_size()));
                                 }
@@ -359,7 +363,7 @@ fn main() {
                                     FontSize::Large => 24.0,
                                 };
                                 set_font_size(&mut theme, font, bold_font, font_size);
-                                cfg = layout_cfg(font, hw.font_size(), win_w, win_h);
+                                cfg = layout_cfg(body_font, hw.font_size(), win_w, win_h);
                                 session.reader.relayout(&cfg);
                                 scene.mark_layout_dirty();
                                 update_content(&mut scene, &session, font_px_for(hw.font_size()));
@@ -631,7 +635,6 @@ use embassy_net::{
     udp::{PacketMetadata, UdpSocket}, IpAddress, IpEndpoint, Ipv4Address, Runner, StackResources};
 #[cfg(feature = "esp")]
 use embassy_time::{with_timeout, Duration, Instant, Timer as EmbassyTimer};
-use env_logger::fmt::style::Color;
 #[cfg(feature = "esp")]
 use ereader::hardware::rtc_store_read;
 #[cfg(feature = "esp")]
@@ -817,8 +820,8 @@ async fn main(spawner: Spawner) -> ! {
     );
     let (lw, lh) = hw.orientation().logical_size();
     let mut bridge = Rgb565ToGray4::new(display, hw.orientation());
-    let (font, bold_font) = load_fonts();
-    let mut scene = make_scene(font, lw, lh);
+    let (font, bold_font, body_font) = load_fonts();
+    let mut scene = make_scene(body_font, lw, lh);
     sync_settings_ui(&mut scene, font_idx, bl_idx, ori_idx);
     let mut theme = make_theme(font, bold_font);
     let chrome_size = match hw.font_size() {
@@ -829,7 +832,7 @@ async fn main(spawner: Spawner) -> ! {
     let mut was_touching = false;
 
     let epub = EpubArchive::new(EPUB_DATA).expect("epub parse");
-    let mut cfg = layout_cfg(font, hw.font_size(), lw, lh);
+    let mut cfg = layout_cfg(body_font, hw.font_size(), lw, lh);
     let mut session = if saved_chapter > 0 || saved_anchor > 0 {
         BookSession::restore(&epub, &cfg, saved_chapter, saved_anchor)
             .unwrap_or_else(|_| BookSession::new(&epub, &cfg).expect("epub load"))
@@ -955,7 +958,7 @@ async fn main(spawner: Spawner) -> ! {
                             };
                             set_font_size(&mut theme, font, bold_font, font_size);
                             let (cur_w, cur_h) = hw.orientation().logical_size();
-                            cfg = layout_cfg(font, hw.font_size(), cur_w, cur_h);
+                            cfg = layout_cfg(body_font, hw.font_size(), cur_w, cur_h);
                             session.reader.relayout(&cfg);
                             scene.mark_layout_dirty();
                             update_content(&mut scene, &session, font_px_for(hw.font_size()));
@@ -969,7 +972,7 @@ async fn main(spawner: Spawner) -> ! {
                             bridge.orientation = hw.orientation();
                             let (new_w, new_h) = hw.orientation().logical_size();
                             // scene.bounds = Bounds::new(0, 0, new_w, new_h);
-                            cfg = layout_cfg(font, hw.font_size(), new_w, new_h);
+                            cfg = layout_cfg(body_font, hw.font_size(), new_w, new_h);
                             session.reader.relayout(&cfg);
                             scene.mark_layout_dirty();
                             update_content(&mut scene, &session, font_px_for(hw.font_size()));
