@@ -1,19 +1,23 @@
-use crate::CONTENT_ID;
+// use crate::CONTENT_ID;
 #[cfg(feature = "esp")]
 use alloc::boxed::Box;
 #[cfg(feature = "esp")]
+use alloc::format;
+#[cfg(feature = "esp")]
 use alloc::string::String;
 use embedded_graphics_core::pixelcolor::{Rgb565, RgbColor};
-use ereader::font::{char_advance, draw_str, line_height, measure_width};
-use ereader::hardware::FontSize;
-use ereader::layout::{FontMetrics, LayoutConfig};
-use ereader::reader::BookSession;
 use fontdue::Font;
 use iris_ui::geom::Bounds;
 use iris_ui::gfx::DrawingContext;
 use iris_ui::scene::Scene;
 use iris_ui::view::ViewId;
 use iris_ui::DrawEvent;
+use crate::font::{char_advance, draw_str, font_px_for, line_height, measure_width};
+use crate::hardware::FontSize;
+use crate::layout::{FontMetrics, LayoutConfig};
+use crate::reader::BookSession;
+
+pub const CONTENT_ID:ViewId = ViewId::new("content");
 
 pub struct BookState {
     pub text: String,
@@ -69,7 +73,7 @@ pub fn update_content(scene: &mut Scene, session: &BookSession, font_px: f32) {
 /// metrics so that layout and rendering agree on where line breaks fall and how
 /// many lines fit per page.
 pub fn layout_cfg(font: &'static Font, font_size: FontSize, w: i32, h: i32) -> LayoutConfig {
-    let font_px = crate::font_px_for(font_size);
+    let font_px = font_px_for(font_size);
 
     // Real line height to match render_ttf_text (+4 px leading matches the renderer).
     let line_h = (line_height(font, font_px) as u32).saturating_add(4);

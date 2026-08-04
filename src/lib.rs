@@ -9,3 +9,4 @@ pub mod hardware;
 pub mod layout;
 pub mod epub;
 pub mod reader;
+pub mod bookview;
