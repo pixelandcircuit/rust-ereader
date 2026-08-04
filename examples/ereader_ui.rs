@@ -314,17 +314,17 @@ fn main() {
     let mut session = BookSession::new(&epub, &cfg).expect("BookSession init failed");
     update_content(&mut scene, &session, font_px_for(hw.font_size()));
 
+    scene.mark_layout_dirty();
     'running: loop {
-        let dirty = scene.dirty_rect.clone();
-        {
+        if(!scene.dirty_rect.is_empty()) {
+            info!("clip rect {}", scene.dirty_rect);
+            let dirty = scene.dirty_rect.clone();
             let mut ctx = EmbeddedDrawingContext::new(&mut display);
             ctx.clip = dirty.clone();
             layout_scene(&mut scene, &theme);
             draw_scene(&mut scene, &mut ctx, &theme);
+            window.update(&display);
         }
-
-        scene.mark_layout_dirty();
-        window.update(&display);
 
         let events: Vec<_> = window.events().collect();
         for event in events {
@@ -906,7 +906,7 @@ async fn main(spawner: Spawner) -> ! {
     }
     let _ = seed;
 
-    loop {
+    'running: loop {
         // Physical button handling: BOOT (GPIO0) = prev, GPIO38 = next.
         // Debounce by waiting for release before acting.
         if hw.button_prev_pressed() {
@@ -931,6 +931,7 @@ async fn main(spawner: Spawner) -> ! {
         let needs_full_refresh = dirty_rect.size.w >= scene_w && dirty_rect.size.h >= scene_h;
 
         if was_dirty {
+            info!("clip rect {}", scene.dirty_rect);
             if needs_full_refresh {
                 // Ghost-clear pass: needed for dark→light pixel transitions (e.g. dialog dismiss).
                 // Matches the page-turn pattern in ereader_full: fill white → WhiteOnBlack → draw → BlackOnWhite.
@@ -970,7 +971,7 @@ async fn main(spawner: Spawner) -> ! {
                             hw.set_orientation(Orientation::from_cmd(cmd.as_str()));
                             bridge.orientation = hw.orientation();
                             let (new_w, new_h) = hw.orientation().logical_size();
-                            // scene.bounds = Bounds::new(0, 0, new_w, new_h);
+                            scene.resize(Bounds::new(0, 0, new_w, new_h));
                             cfg = layout_cfg(body_font, hw.font_size(), new_w, new_h);
                             session.reader.relayout(&cfg);
                             scene.mark_layout_dirty();
