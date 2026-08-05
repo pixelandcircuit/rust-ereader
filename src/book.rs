@@ -41,7 +41,7 @@ impl Book for TxtBook {
 
     fn chapter_text(&self, _id: &str) -> Result<String, EpubError> {
         core::str::from_utf8(&self.data)
-            .map(|s| s.to_owned())
+            .map(String::from)
             .map_err(|_| EpubError::Utf8Error)
     }
 }

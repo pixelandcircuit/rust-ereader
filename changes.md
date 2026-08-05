@@ -1,5 +1,13 @@
 # Changes
 
+## 2026-08-05 (2)
+
+Fix ESP and simulator compile errors in `examples/ereader_ui.rs`.
+
+- All `make_label("id", ...)` calls updated to `make_label(&ViewId::new("id"), ...)` to match the current `&ViewId` signature (affected 11 call sites).
+- `src/book.rs`: `s.to_owned()` replaced with `String::from(s)` — `ToOwned` is not in scope in the `alloc`/no_std environment.
+- `examples/ereader_ui.rs`: Added `vec::Vec` to the ESP `alloc` import; removed unused imports (`char_advance`, `draw_str`, `line_height`, `measure_width`, `FontMetrics`, `Size`, `layout_std_panel`, `DrawEvent`, `util`); removed spurious `mut` on `scene` and `hw` parameters in `nav_next_page`/`nav_prev_page`.
+
 ## 2026-08-05
 
 Add tests for HTML/text parsing and reader pagination.

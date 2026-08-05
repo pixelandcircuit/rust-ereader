@@ -10,30 +10,30 @@
 #[macro_use]
 extern crate alloc;
 #[cfg(feature = "esp")]
-use alloc::{boxed::Box, string::String};
+use alloc::{boxed::Box, string::String, vec::Vec};
 use Align::Center;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::RgbColor;
 use ereader::book::{Book, HtmlBook, TxtBook};
 use ereader::epub::EpubArchive;
-use ereader::font::{char_advance, draw_str, font_px_for, line_height, measure_width};
+use ereader::font::font_px_for;
 #[cfg(feature = "esp")]
 use ereader::hardware::{EspHardware, load_position, load_settings};
 #[cfg(feature = "simulator")]
 use ereader::hardware::SimHardware;
 use ereader::hardware::{BacklightLevel, FontSize, HardwareAccess, Orientation};
-use ereader::layout::{FontMetrics, LayoutConfig};
+use ereader::layout::LayoutConfig;
 use ereader::reader::BookSession;
 use iris_ui::button::{make_button, make_full_button};
 use iris_ui::device::EmbeddedDrawingContext;
-use iris_ui::geom::{Bounds, Insets, Point as GPoint, Size};
+use iris_ui::geom::{Bounds, Insets, Point as GPoint};
 use iris_ui::label::make_label;
-use iris_ui::layouts::{layout_hbox, layout_std_panel, layout_vbox};
+use iris_ui::layouts::{layout_hbox, layout_vbox};
 use iris_ui::scene::{click_at, draw_scene, layout_scene, Scene};
 use iris_ui::list_view::{make_list_view, ListState};
 use iris_ui::toggle_group::{make_toggle_group, SelectOneOfState};
 use iris_ui::view::{Align, Flex, View, ViewId};
-use iris_ui::{util, Callback, DrawEvent, FontKind, GuiEvent, LayoutEvent, Theme, ViewStyle};
+use iris_ui::{Callback, FontKind, GuiEvent, LayoutEvent, Theme, ViewStyle};
 
 
 const EPUB_DATA: &[u8] = include_bytes!("sherlock_holmes.epub");
@@ -127,10 +127,10 @@ fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
         let topbar_id = ViewId::new("topbar");
         let settings_button = make_full_button(&ViewId::new("settings"), "Settings", "settings", false);
         scene.add_view_to_parent(settings_button, &topbar_id);
-        scene.add_view_to_parent(make_label("time", "--:-- --"), &topbar_id);
-        scene.add_view_to_parent(make_label("battery", "85%"), &topbar_id);
+        scene.add_view_to_parent(make_label(&ViewId::new("time"), "--:-- --"), &topbar_id);
+        scene.add_view_to_parent(make_label(&ViewId::new("battery"), "85%"), &topbar_id);
         scene.add_view_to_parent(make_spacer(&ViewId::new("spacer2")).with_h_flex(Grow), &topbar_id);
-        scene.add_view_to_parent(make_label("booktitle", "Sherlock Holmes"), &topbar_id);
+        scene.add_view_to_parent(make_label(&ViewId::new("booktitle"), "Sherlock Holmes"), &topbar_id);
         scene.add_view_to_parent(make_button(&ViewId::new("library"), "Library"), &topbar_id);
         let topbar = make_panel(&topbar_id)
             .with_layout(Some(layout_hbox))
@@ -176,8 +176,8 @@ fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
     {
         let bottombar_id = ViewId::new("bottombar");
         scene.add_view_to_parent(make_button(&ViewId::new("prev_page"), "< Prev"), &bottombar_id);
-        scene.add_view_to_parent(make_label("chapter", "Loading..."), &bottombar_id);
-        scene.add_view_to_parent(make_label("page", ""), &bottombar_id);
+        scene.add_view_to_parent(make_label(&ViewId::new("chapter"), "Loading..."), &bottombar_id);
+        scene.add_view_to_parent(make_label(&ViewId::new("page"), ""), &bottombar_id);
         scene.add_view_to_parent(make_spacer(&ViewId::new("spacer3")).with_h_flex(Grow),
                                  &bottombar_id);
         scene.add_view_to_parent(make_button(&ViewId::new("next_page"), "Next >"), &bottombar_id);
@@ -208,18 +208,18 @@ fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
                 padding: Insets::new_same(10),
             })));
         // ── Settings dialog (hidden, drawn last so it appears on top) ────────────
-        scene.add_view_to_parent(make_label("dlg_title", "Settings"), &DIALOG_ID);
-        scene.add_view_to_parent(make_label("dlg_font_lbl", "Font Size"), &DIALOG_ID);
+        scene.add_view_to_parent(make_label(&ViewId::new("dlg_title"), "Settings"), &DIALOG_ID);
+        scene.add_view_to_parent(make_label(&ViewId::new("dlg_font_lbl"), "Font Size"), &DIALOG_ID);
         scene.add_view_to_parent(
             make_toggle_group(&FONT_SIZE_ID, vec!["Small", "Medium", "Large"], 1),
             &DIALOG_ID,
         );
-        scene.add_view_to_parent(make_label("dlg_bl_lbl", "Backlight"), &DIALOG_ID);
+        scene.add_view_to_parent(make_label(&ViewId::new("dlg_bl_lbl"), "Backlight"), &DIALOG_ID);
         scene.add_view_to_parent(
             make_toggle_group(&BACKLIGHT_ID, vec!["Off", "Low", "High"], 2),
             &DIALOG_ID,
         );
-        scene.add_view_to_parent(make_label("dlg_orient_lbl", "Orientation"), &DIALOG_ID);
+        scene.add_view_to_parent(make_label(&ViewId::new("dlg_orient_lbl"), "Orientation"), &DIALOG_ID);
         scene.add_view_to_parent(
             make_toggle_group(
                 &ORIENTATION_ID,
@@ -229,7 +229,7 @@ fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
             &DIALOG_ID,
         );
         scene.add_view_to_parent(make_button(&ViewId::new("sync_time"), "Sync Time"), &DIALOG_ID);
-        scene.add_view_to_parent(make_label("dlg_battery", "Battery: 85%  (Charging)"), &DIALOG_ID);
+        scene.add_view_to_parent(make_label(&ViewId::new("dlg_battery"), "Battery: 85%  (Charging)"), &DIALOG_ID);
         scene.add_view_to_parent(make_button(&ViewId::new("dialog_close"), "Close"), &DIALOG_ID);
         scene.add_view_to_root(dialog_panel);
     }
@@ -246,7 +246,7 @@ fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
                 gap: 10,
                 padding: Insets::new_same(10),
             })));
-        scene.add_view_to_parent(make_label("lib_title", "Library"), &LIBRARY_DIALOG_ID);
+        scene.add_view_to_parent(make_label(&ViewId::new("lib_title"), "Library"), &LIBRARY_DIALOG_ID);
         scene.add_view_to_parent(
             make_list_view(&ViewId::new("lib_list"), vec![], 0),
             &LIBRARY_DIALOG_ID,
@@ -472,8 +472,8 @@ fn calc_font_size(font_size: FontSize) -> f32 {
     }
 }
 
-fn nav_next_page(mut hw: &mut dyn HardwareAccess,
-                 mut scene: &mut Scene,
+fn nav_next_page(hw: &mut dyn HardwareAccess,
+                 scene: &mut Scene,
                  epub: &dyn Book,
                  cfg: &mut LayoutConfig,
                  session: &mut BookSession) {
@@ -482,11 +482,11 @@ fn nav_next_page(mut hw: &mut dyn HardwareAccess,
     } else {
         session.reader.turn_page(true);
     }
-    update_content(&mut scene, &session, font_px_for(hw.font_size()));
+    update_content(scene, &session, font_px_for(hw.font_size()));
 }
 
-fn nav_prev_page(mut hw: &mut dyn HardwareAccess,
-                 mut scene: &mut Scene,
+fn nav_prev_page(hw: &mut dyn HardwareAccess,
+                 scene: &mut Scene,
                  epub: &dyn Book,
                  cfg: &mut LayoutConfig,
                  session: &mut BookSession) {
@@ -495,7 +495,7 @@ fn nav_prev_page(mut hw: &mut dyn HardwareAccess,
     } else {
         session.reader.turn_page(false);
     }
-    update_content(&mut scene, &session, font_px_for(hw.font_size()));
+    update_content(scene, &session, font_px_for(hw.font_size()));
 }
 
 // ── ESP path ──────────────────────────────────────────────────────────────────
