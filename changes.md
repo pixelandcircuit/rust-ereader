@@ -1,5 +1,23 @@
 # Changes
 
+## 2026-08-05
+
+Add tests for HTML/text parsing and reader pagination.
+
+- `src/book.rs`: 27 tests covering `TxtBook` (spine, content, invalid UTF-8), `HtmlBook`, and `html_to_text` (whitespace collapse, skipped sections, block elements, named/numeric entities, case-insensitive and self-closing tags).
+- `src/reader.rs`: 18 tests covering `ReaderState` (page count, navigation, boundary clamping, `relayout` anchor preservation) and `BookSession` (open, chapter navigation, `restore`), using a `MockBook` helper for multi-chapter scenarios.
+
+## 2026-08-04 18:00
+
+Add support for reading `.html` and `.txt` files.
+
+- New `src/book.rs`: `Book` trait (`spine`, `chapter_text`), `TxtBook` (whole file as one chapter), `HtmlBook` (HTML-to-text converter preserving headings, paragraphs, lists, and common entities).
+- `src/epub.rs`: `impl Book for EpubArchive` delegating to existing methods.
+- `src/reader.rs`: `BookSession` methods now take `&dyn Book` instead of `&EpubArchive`.
+- `src/hardware.rs`: Renamed `list_epub_files`/`load_epub_file` → `list_book_files`/`load_book_file`. Simulator filter expanded to `.epub`, `.html`, `.htm`, `.txt`. ESP SD card filter expanded to include `.HTM` and `.TXT` short extensions.
+- `examples/ereader_ui.rs`: `epub: EpubArchive` replaced by `book: Box<dyn Book>` in both main loops. New `book_from_data(filename, data)` helper dispatches on file extension to construct the correct type. Library dialog now lists all supported formats.
+- `library/sample.html` and `library/sample.txt` added for simulator testing.
+
 ## 2026-08-04 17:00
 
 Consolidate dialog ViewId string literals to constants; rename library Cancel button.
@@ -25,7 +43,7 @@ Changes:
 - `src/hardware.rs`: Added `list_epub_files() -> Vec<String>` and `load_epub_file(name) -> Option<Vec<u8>>` to the `HardwareAccess` trait. `SimHardware` reads from `./library/` via `std::fs`. `EspHardware` steals SPI2 + GPIO 12/13/14/21 on demand to access the SD card via `embedded-sdmmc`.
 - `Cargo.toml`: Added `embedded-sdmmc = "0.9"` and `embedded-hal-bus = "0.2"` as optional deps under the `esp` feature.
 - `examples/ereader_ui.rs`: Library button and dialog added to scene. Dialog uses `make_list_view` populated lazily when opened. Both simulator and ESP event loops handle `"library"` (open/populate), `"library_close"` (close), and `"lib_list"` (select and load) events. `EpubArchive` is now mutable in both loops to allow reassignment.
-- `examples/library/`: Created directory with `test.epub` and `sherlock_holmes.epub` for simulator testing.
+- `examples/library/`: Created directory with `moby_dick.epub` and `sherlock_holmes.epub` for simulator testing.
 
 ## 2026-08-04 14:30
 

@@ -14,6 +14,7 @@ use alloc::{boxed::Box, string::String};
 use Align::Center;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::RgbColor;
+use ereader::book::{Book, HtmlBook, TxtBook};
 use ereader::epub::EpubArchive;
 use ereader::font::{char_advance, draw_str, font_px_for, line_height, measure_width};
 #[cfg(feature = "esp")]
@@ -342,9 +343,9 @@ fn main() {
     set_ui_font_size(&mut theme, font, bold_font, UI_FONT_SIZE_MEDIUM);
     let handlers: Vec<Callback> = vec![handle_click];
 
-    let mut epub = EpubArchive::new(EPUB_DATA).expect("sherlock_holmes.epub parse failed");
+    let mut book: Box<dyn Book> = Box::new(EpubArchive::new(EPUB_DATA).expect("sherlock_holmes.epub parse failed"));
     let mut cfg = layout_cfg(body_font, hw.font_size(), win_w, win_h);
-    let mut session = BookSession::new(&epub, &cfg).expect("BookSession init failed");
+    let mut session = BookSession::new(book.as_ref(), &cfg).expect("BookSession init failed");
     update_content(&mut scene, &session, font_px_for(hw.font_size()));
 
     scene.mark_layout_dirty();
@@ -366,11 +367,11 @@ fn main() {
                 // Keyboard shortcuts: arrow keys / Space simulate physical buttons.
                 SimulatorEvent::KeyDown { keycode: Keycode::Left, repeat: false, .. }
                 | SimulatorEvent::KeyDown { keycode: Keycode::Backspace, repeat: false, .. } => {
-                    nav_prev_page(&mut hw, &mut scene, &epub, &mut cfg, &mut session);
+                    nav_prev_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
                 }
                 SimulatorEvent::KeyDown { keycode: Keycode::Right, repeat: false, .. }
                 | SimulatorEvent::KeyDown { keycode: Keycode::Space, repeat: false, .. } => {
-                    nav_next_page(&mut hw, &mut scene, &epub, &mut cfg, &mut session);
+                    nav_next_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
                 }
                 SimulatorEvent::MouseButtonUp { point, .. } => {
                     if let Some(input) =
@@ -409,11 +410,11 @@ fn main() {
                                 view.title = format_time_utc(t);
                             }
                         } else if input.source == ViewId::new("prev_page") {
-                            nav_prev_page(&mut hw, &mut scene, &epub, &mut cfg, &mut session);
+                            nav_prev_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
                         } else if input.source == ViewId::new("next_page") {
-                            nav_next_page(&mut hw, &mut scene, &epub, &mut cfg, &mut session);
+                            nav_next_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
                         } else if input.source == ViewId::new("library") {
-                            let files = hw.list_epub_files();
+                            let files = hw.list_book_files();
                             if let Some(v) = scene.get_view_mut(&ViewId::new("lib_list")) {
                                 if let Some(s) = v.get_state::<ListState>() {
                                     s.items = files;
@@ -424,27 +425,40 @@ fn main() {
                             scene.mark_dirty_all();
                         } else if input.source == ViewId::new("lib_list") {
                             if let Some(OutputAction::Command(ref filename)) = input.action {
-                                if let Some(data) = hw.load_epub_file(filename) {
-                                    match EpubArchive::from_vec(data) {
-                                        Ok(new_epub) => {
-                                            epub = new_epub;
-                                            cfg = layout_cfg(body_font, hw.font_size(), win_w, win_h);
-                                            session = BookSession::new(&epub, &cfg).expect("book load");
-                                            update_content(&mut scene, &session, font_px_for(hw.font_size()));
-                                            if let Some(v) = scene.get_view_mut(&ViewId::new("booktitle")) {
-                                                v.title = filename.clone();
-                                            }
-                                            scene.hide_view(&LIBRARY_DIALOG_ID);
-                                            scene.mark_dirty_all();
-                                        }
-                                        Err(e) => log::warn!("failed to load epub {:?}: {:?}", filename, e),
+                                if let Some(data) = hw.load_book_file(filename) {
+                                    let new_book = book_from_data(filename, data);
+                                    cfg = layout_cfg(body_font, hw.font_size(), win_w, win_h);
+                                    session = BookSession::new(new_book.as_ref(), &cfg).expect("book load");
+                                    book = new_book;
+                                    update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                                    if let Some(v) = scene.get_view_mut(&ViewId::new("booktitle")) {
+                                        v.title = filename.clone();
                                     }
+                                    scene.hide_view(&LIBRARY_DIALOG_ID);
+                                    scene.mark_dirty_all();
                                 }
                             }
                         }
                     }
                 }
                 _ => {}
+            }
+        }
+    }
+}
+
+fn book_from_data(filename: &str, data: Vec<u8>) -> Box<dyn Book> {
+    let lower = filename.to_ascii_lowercase();
+    if lower.ends_with(".html") || lower.ends_with(".htm") {
+        Box::new(HtmlBook::from_vec(data))
+    } else if lower.ends_with(".txt") {
+        Box::new(TxtBook::from_vec(data))
+    } else {
+        match EpubArchive::from_vec(data) {
+            Ok(epub) => Box::new(epub),
+            Err(e) => {
+                log::warn!("failed to open epub {}: {:?}", filename, e);
+                Box::new(TxtBook::from_vec(b"[Could not open file]".to_vec()))
             }
         }
     }
@@ -460,11 +474,11 @@ fn calc_font_size(font_size: FontSize) -> f32 {
 
 fn nav_next_page(mut hw: &mut dyn HardwareAccess,
                  mut scene: &mut Scene,
-                 epub: &EpubArchive,
+                 epub: &dyn Book,
                  cfg: &mut LayoutConfig,
                  session: &mut BookSession) {
     if session.reader.current_page + 1 >= session.reader.page_count() {
-        session.next_chapter(&epub, &cfg).ok();
+        session.next_chapter(epub, cfg).ok();
     } else {
         session.reader.turn_page(true);
     }
@@ -473,11 +487,11 @@ fn nav_next_page(mut hw: &mut dyn HardwareAccess,
 
 fn nav_prev_page(mut hw: &mut dyn HardwareAccess,
                  mut scene: &mut Scene,
-                 epub: &EpubArchive,
+                 epub: &dyn Book,
                  cfg: &mut LayoutConfig,
                  session: &mut BookSession) {
     if session.reader.current_page == 0 {
-        session.prev_chapter(&epub, &cfg).ok();
+        session.prev_chapter(epub, cfg).ok();
     } else {
         session.reader.turn_page(false);
     }
@@ -756,13 +770,13 @@ async fn main(spawner: Spawner) -> ! {
     let handlers = vec![handle_click as Callback];
     let mut was_touching = false;
 
-    let mut epub = EpubArchive::new(EPUB_DATA).expect("epub parse");
+    let mut book: Box<dyn Book> = Box::new(EpubArchive::new(EPUB_DATA).expect("epub parse"));
     let mut cfg = layout_cfg(body_font, hw.font_size(), lw, lh);
     let mut session = if saved_chapter > 0 || saved_anchor > 0 {
-        BookSession::restore(&epub, &cfg, saved_chapter, saved_anchor)
-            .unwrap_or_else(|_| BookSession::new(&epub, &cfg).expect("epub load"))
+        BookSession::restore(book.as_ref(), &cfg, saved_chapter, saved_anchor)
+            .unwrap_or_else(|_| BookSession::new(book.as_ref(), &cfg).expect("epub load"))
     } else {
-        BookSession::new(&epub, &cfg).expect("epub load")
+        BookSession::new(book.as_ref(), &cfg).expect("epub load")
     };
     update_content(&mut scene, &session, font_px_for(hw.font_size()));
 
@@ -834,14 +848,14 @@ async fn main(spawner: Spawner) -> ! {
             while hw.button_prev_pressed() {
                 EmbassyTimer::after(Duration::from_millis(10)).await;
             }
-            nav_prev_page(&mut hw, &mut scene, &epub, &mut cfg, &mut session);
+            nav_prev_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
             hw.save_position(session.chapter_idx, session.reader.anchor_byte);
             last_interaction = Instant::now();
         } else if hw.button_next_pressed() {
             while hw.button_next_pressed() {
                 EmbassyTimer::after(Duration::from_millis(10)).await;
             }
-            nav_next_page(&mut hw, &mut scene, &epub, &mut cfg, &mut session);
+            nav_next_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
             hw.save_position(session.chapter_idx, session.reader.anchor_byte);
             last_interaction = Instant::now();
         }
@@ -913,15 +927,15 @@ async fn main(spawner: Spawner) -> ! {
                         //     info!("NTP query failed");
                         // }
                     } else if input.source == ViewId::new("prev_page") {
-                        nav_prev_page(&mut hw, &mut scene, &epub, &mut cfg, &mut session);
+                        nav_prev_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
                         hw.save_position(session.chapter_idx, session.reader.anchor_byte);
                         last_interaction = Instant::now();
                     } else if input.source == ViewId::new("next_page") {
-                        nav_next_page(&mut hw, &mut scene, &epub, &mut cfg, &mut session);
+                        nav_next_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
                         hw.save_position(session.chapter_idx, session.reader.anchor_byte);
                         last_interaction = Instant::now();
                     } else if input.source == ViewId::new("library") {
-                        let files = hw.list_epub_files();
+                        let files = hw.list_book_files();
                         if let Some(v) = scene.get_view_mut(&ViewId::new("lib_list")) {
                             if let Some(s) = v.get_state::<ListState>() {
                                 s.items = files;
@@ -933,23 +947,19 @@ async fn main(spawner: Spawner) -> ! {
                         last_interaction = Instant::now();
                     } else if input.source == ViewId::new("lib_list") {
                         if let Some(OutputAction::Command(ref filename)) = input.action {
-                            if let Some(data) = hw.load_epub_file(filename) {
-                                match EpubArchive::from_vec(data) {
-                                    Ok(new_epub) => {
-                                        hw.save_position(session.chapter_idx, session.reader.anchor_byte);
-                                        epub = new_epub;
-                                        let (cw, ch) = hw.orientation().logical_size();
-                                        cfg = layout_cfg(body_font, hw.font_size(), cw, ch);
-                                        session = BookSession::new(&epub, &cfg).expect("book load");
-                                        update_content(&mut scene, &session, font_px_for(hw.font_size()));
-                                        if let Some(v) = scene.get_view_mut(&ViewId::new("booktitle")) {
-                                            v.title = filename.clone();
-                                        }
-                                        scene.hide_view(&LIBRARY_DIALOG_ID);
-                                        scene.mark_dirty_all();
-                                    }
-                                    Err(e) => log::warn!("failed to load epub: {:?}", e),
+                            if let Some(data) = hw.load_book_file(filename) {
+                                hw.save_position(session.chapter_idx, session.reader.anchor_byte);
+                                let new_book = book_from_data(filename, data);
+                                let (cw, ch) = hw.orientation().logical_size();
+                                cfg = layout_cfg(body_font, hw.font_size(), cw, ch);
+                                session = BookSession::new(new_book.as_ref(), &cfg).expect("book load");
+                                book = new_book;
+                                update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                                if let Some(v) = scene.get_view_mut(&ViewId::new("booktitle")) {
+                                    v.title = filename.clone();
                                 }
+                                scene.hide_view(&LIBRARY_DIALOG_ID);
+                                scene.mark_dirty_all();
                             }
                         }
                         last_interaction = Instant::now();

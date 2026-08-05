@@ -8,5 +8,6 @@ pub mod font;
 pub mod hardware;
 pub mod layout;
 pub mod epub;
+pub mod book;
 pub mod reader;
 pub mod bookview;

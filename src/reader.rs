@@ -10,7 +10,8 @@ use std::string::String;
 #[cfg(not(feature = "esp"))]
 use std::vec::Vec;
 
-use crate::epub::{EpubArchive, EpubError};
+use crate::book::Book;
+use crate::epub::EpubError;
 use crate::layout::{layout_chapter, Layout, LayoutConfig};
 
 /// Stateful e-reader: holds one chapter's text, its paginated layout, and the
@@ -102,7 +103,7 @@ pub struct BookSession {
 
 impl BookSession {
     /// Open the EPUB and load the first chapter.
-    pub fn new(epub: &EpubArchive, cfg: &LayoutConfig) -> Result<Self, EpubError> {
+    pub fn new(epub: &dyn Book, cfg: &LayoutConfig) -> Result<Self, EpubError> {
         let spine = epub.spine()?;
         if spine.is_empty() { return Err(EpubError::MissingSpine); }
         let text = epub.chapter_text(&spine[0])?;
@@ -112,7 +113,7 @@ impl BookSession {
     /// Restore a previously saved position. Loads `chapter_idx` and seeks to
     /// the page containing `anchor_byte` without re-running layout twice.
     pub fn restore(
-        epub:        &EpubArchive,
+        epub:        &dyn Book,
         cfg:         &LayoutConfig,
         chapter_idx: usize,
         anchor_byte: usize,
@@ -135,7 +136,7 @@ impl BookSession {
     pub fn go_to_chapter(
         &mut self,
         idx:  usize,
-        epub: &EpubArchive,
+        epub: &dyn Book,
         cfg:  &LayoutConfig,
     ) -> Result<(), EpubError> {
         let idx  = idx.min(self.spine.len().saturating_sub(1));
@@ -148,7 +149,7 @@ impl BookSession {
     /// Advance to the next chapter. Returns `false` if already at the last.
     pub fn next_chapter(
         &mut self,
-        epub: &EpubArchive,
+        epub: &dyn Book,
         cfg:  &LayoutConfig,
     ) -> Result<bool, EpubError> {
         if self.chapter_idx + 1 >= self.spine.len() { return Ok(false); }
@@ -159,7 +160,7 @@ impl BookSession {
     /// Return to the previous chapter. Returns `false` if already at the first.
     pub fn prev_chapter(
         &mut self,
-        epub: &EpubArchive,
+        epub: &dyn Book,
         cfg:  &LayoutConfig,
     ) -> Result<bool, EpubError> {
         if self.chapter_idx == 0 { return Ok(false); }
@@ -172,4 +173,247 @@ impl BookSession {
 
     /// The spine paths in order.
     pub fn spine(&self) -> &[String] { &self.spine }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::book::{HtmlBook, TxtBook};
+    use crate::layout::FontMetrics;
+
+    fn fixed_cfg(char_px: u32, line_h: u32, w: u32, h: u32) -> LayoutConfig {
+        LayoutConfig {
+            screen_width:  w,
+            screen_height: h,
+            margin_x: 0,
+            margin_y: 0,
+            font: FontMetrics {
+                line_height_px: line_h,
+                space_width_px: char_px,
+                measure: Box::new(move |s: &str| s.chars().count() as u32 * char_px),
+            },
+        }
+    }
+
+    // ── ReaderState ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn single_page_text_has_one_page() {
+        let cfg = fixed_cfg(10, 20, 200, 100);
+        let rs = ReaderState::new("hello world".into(), &cfg);
+        assert_eq!(rs.page_count(), 1);
+    }
+
+    #[test]
+    fn long_text_splits_into_multiple_pages() {
+        // 10 px/char, 100 px wide (10 chars/line), 40 px tall (2 lines/page).
+        // 8 single-word lines → 4 pages.
+        let cfg = fixed_cfg(10, 20, 100, 40);
+        let text = "aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff gggggggg hhhhhhhh";
+        let rs = ReaderState::new(text.into(), &cfg);
+        assert!(rs.page_count() >= 2);
+    }
+
+    #[test]
+    fn turn_page_forward_advances() {
+        let cfg = fixed_cfg(10, 20, 100, 40);
+        let text = "aaaaaaaa bbbbbbbb cccccccc dddddddd";
+        let mut rs = ReaderState::new(text.into(), &cfg);
+        assert!(rs.page_count() >= 2);
+        rs.turn_page(true);
+        assert_eq!(rs.current_page, 1);
+    }
+
+    #[test]
+    fn turn_page_backward_goes_back() {
+        let cfg = fixed_cfg(10, 20, 100, 40);
+        let text = "aaaaaaaa bbbbbbbb cccccccc dddddddd";
+        let mut rs = ReaderState::new(text.into(), &cfg);
+        rs.turn_page(true);
+        rs.turn_page(false);
+        assert_eq!(rs.current_page, 0);
+    }
+
+    #[test]
+    fn turn_page_clamps_at_last() {
+        let cfg = fixed_cfg(10, 20, 200, 100);
+        let mut rs = ReaderState::new("hello".into(), &cfg);
+        let last = rs.page_count() - 1;
+        rs.turn_page(true);
+        rs.turn_page(true); // already at last
+        assert_eq!(rs.current_page, last);
+    }
+
+    #[test]
+    fn turn_page_clamps_at_first() {
+        let cfg = fixed_cfg(10, 20, 200, 100);
+        let mut rs = ReaderState::new("hello".into(), &cfg);
+        rs.turn_page(false); // already at first
+        assert_eq!(rs.current_page, 0);
+    }
+
+    #[test]
+    fn current_text_matches_page_slice() {
+        let cfg = fixed_cfg(10, 20, 100, 40);
+        let text = "aaaaaaaa bbbbbbbb cccccccc dddddddd";
+        let mut rs = ReaderState::new(text.to_string(), &cfg);
+        rs.turn_page(true);
+        let page = &rs.layout.pages[rs.current_page];
+        assert_eq!(rs.current_text(), &text[page.start..page.end]);
+    }
+
+    #[test]
+    fn relayout_preserves_anchor_byte() {
+        let cfg = fixed_cfg(10, 20, 100, 40);
+        let text = "aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff";
+        let mut rs = ReaderState::new(text.into(), &cfg);
+        rs.turn_page(true);
+        let saved_anchor = rs.anchor_byte;
+        // Re-layout with a wider screen (fewer pages).
+        let wide_cfg = fixed_cfg(10, 20, 200, 200);
+        rs.relayout(&wide_cfg);
+        // The page should contain the saved anchor byte.
+        let page = &rs.layout.pages[rs.current_page];
+        assert!(page.start <= saved_anchor && saved_anchor <= page.end,
+            "anchor {saved_anchor} not within page {}..{}", page.start, page.end);
+    }
+
+    #[test]
+    fn go_to_page_clamps_to_last() {
+        let cfg = fixed_cfg(10, 20, 200, 100);
+        let mut rs = ReaderState::new("hello".into(), &cfg);
+        rs.go_to_page(999);
+        assert_eq!(rs.current_page, rs.page_count() - 1);
+    }
+
+    // ── BookSession with TxtBook ──────────────────────────────────────────────
+
+    #[test]
+    fn book_session_opens_txt_book() {
+        let cfg = fixed_cfg(10, 20, 200, 100);
+        let book = TxtBook::from_vec(b"hello world".to_vec());
+        let session = BookSession::new(&book, &cfg).unwrap();
+        assert_eq!(session.chapter_count(), 1);
+        assert_eq!(session.chapter_idx, 0);
+    }
+
+    #[test]
+    fn book_session_txt_current_text_contains_content() {
+        let cfg = fixed_cfg(10, 20, 200, 100);
+        let book = TxtBook::from_vec(b"hello world".to_vec());
+        let session = BookSession::new(&book, &cfg).unwrap();
+        assert!(session.reader.current_text().contains("hello"));
+    }
+
+    #[test]
+    fn book_session_next_chapter_false_for_single_chapter() {
+        let cfg = fixed_cfg(10, 20, 200, 100);
+        let mut book_session = {
+            let book = TxtBook::from_vec(b"hello".to_vec());
+            BookSession::new(&book, &cfg).unwrap()
+        };
+        let book = TxtBook::from_vec(b"hello".to_vec());
+        let advanced = book_session.next_chapter(&book, &cfg).unwrap();
+        assert!(!advanced);
+    }
+
+    #[test]
+    fn book_session_prev_chapter_false_at_first() {
+        let cfg = fixed_cfg(10, 20, 200, 100);
+        let book = TxtBook::from_vec(b"hello".to_vec());
+        let mut session = BookSession::new(&book, &cfg).unwrap();
+        let went_back = session.prev_chapter(&book, &cfg).unwrap();
+        assert!(!went_back);
+    }
+
+    // ── BookSession with HtmlBook ─────────────────────────────────────────────
+
+    #[test]
+    fn book_session_opens_html_book() {
+        let cfg = fixed_cfg(10, 20, 200, 100);
+        let book = HtmlBook::from_vec(b"<p>hello world</p>".to_vec());
+        let session = BookSession::new(&book, &cfg).unwrap();
+        assert_eq!(session.chapter_count(), 1);
+        assert!(session.reader.current_text().contains("hello"));
+    }
+
+    // ── BookSession with multi-chapter MockBook ───────────────────────────────
+
+    struct MockBook { chapters: Vec<(&'static str, &'static str)> }
+
+    impl Book for MockBook {
+        fn spine(&self) -> Result<Vec<String>, EpubError> {
+            Ok(self.chapters.iter().map(|(id, _)| id.to_string()).collect())
+        }
+        fn chapter_text(&self, id: &str) -> Result<String, EpubError> {
+            self.chapters.iter()
+                .find(|(ch_id, _)| *ch_id == id)
+                .map(|(_, text)| text.to_string())
+                .ok_or(EpubError::EntryNotFound)
+        }
+    }
+
+    fn two_chapter_book() -> MockBook {
+        MockBook { chapters: vec![("ch1", "Chapter one text."), ("ch2", "Chapter two text.")] }
+    }
+
+    #[test]
+    fn next_chapter_advances_chapter_idx() {
+        let cfg = fixed_cfg(10, 20, 200, 100);
+        let book = two_chapter_book();
+        let mut session = BookSession::new(&book, &cfg).unwrap();
+        let advanced = session.next_chapter(&book, &cfg).unwrap();
+        assert!(advanced);
+        assert_eq!(session.chapter_idx, 1);
+    }
+
+    #[test]
+    fn next_chapter_loads_new_text() {
+        let cfg = fixed_cfg(10, 20, 200, 100);
+        let book = two_chapter_book();
+        let mut session = BookSession::new(&book, &cfg).unwrap();
+        session.next_chapter(&book, &cfg).unwrap();
+        assert!(session.reader.current_text().contains("two"));
+    }
+
+    #[test]
+    fn next_chapter_false_at_last() {
+        let cfg = fixed_cfg(10, 20, 200, 100);
+        let book = two_chapter_book();
+        let mut session = BookSession::new(&book, &cfg).unwrap();
+        session.next_chapter(&book, &cfg).unwrap();
+        let advanced = session.next_chapter(&book, &cfg).unwrap();
+        assert!(!advanced);
+    }
+
+    #[test]
+    fn prev_chapter_goes_back() {
+        let cfg = fixed_cfg(10, 20, 200, 100);
+        let book = two_chapter_book();
+        let mut session = BookSession::new(&book, &cfg).unwrap();
+        session.next_chapter(&book, &cfg).unwrap();
+        let went_back = session.prev_chapter(&book, &cfg).unwrap();
+        assert!(went_back);
+        assert_eq!(session.chapter_idx, 0);
+        assert!(session.reader.current_text().contains("one"));
+    }
+
+    #[test]
+    fn restore_positions_to_correct_page() {
+        let cfg = fixed_cfg(10, 20, 100, 40);
+        let book = MockBook {
+            chapters: vec![("ch1", "aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff")],
+        };
+        // First create a session and advance one page to get an anchor.
+        let mut session = BookSession::new(&book, &cfg).unwrap();
+        session.reader.turn_page(true);
+        let anchor = session.reader.anchor_byte;
+        // Restore to that anchor.
+        let restored = BookSession::restore(&book, &cfg, 0, anchor).unwrap();
+        assert_eq!(restored.chapter_idx, 0);
+        assert_eq!(restored.reader.anchor_byte, anchor);
+        assert!(restored.reader.current_page > 0);
+    }
 }

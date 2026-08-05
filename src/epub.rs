@@ -187,6 +187,15 @@ impl EpubArchive {
     }
 }
 
+impl crate::book::Book for EpubArchive {
+    fn spine(&self) -> Result<Vec<String>, EpubError> {
+        self.spine()
+    }
+    fn chapter_text(&self, id: &str) -> Result<String, EpubError> {
+        self.chapter_text(id)
+    }
+}
+
 // ── XML parsing (container.xml and content.opf) ───────────────────────────────
 
 /// Extract the OPF path from `META-INF/container.xml`.

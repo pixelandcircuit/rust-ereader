@@ -192,12 +192,12 @@ pub trait HardwareAccess {
     /// No-op on simulator.
     fn save_settings(&mut self);
 
-    /// Return bare filenames of `.epub` files available to load.
+    /// Return bare filenames of readable files (`.epub`, `.html`, `.htm`, `.txt`).
     /// Simulator: reads `./library/`. ESP: reads SD card root (empty if no card).
-    fn list_epub_files(&self) -> Vec<String>;
-    /// Read the named epub into memory. `name` is a value from `list_epub_files`.
+    fn list_book_files(&self) -> Vec<String>;
+    /// Read a book file into memory. `name` is a value from `list_book_files`.
     /// Returns `None` if the file cannot be read.
-    fn load_epub_file(&self, name: &str) -> Option<Vec<u8>>;
+    fn load_book_file(&self, name: &str) -> Option<Vec<u8>>;
 }
 
 // ── Simulator implementation ──────────────────────────────────────────────────
@@ -242,17 +242,20 @@ impl HardwareAccess for SimHardware {
     fn save_position(&mut self, _chapter_idx: usize, _anchor_byte: usize) {}
     fn save_settings(&mut self) {}
 
-    fn list_epub_files(&self) -> Vec<String> {
+    fn list_book_files(&self) -> Vec<String> {
         std::fs::read_dir("library")
             .into_iter()
             .flatten()
             .filter_map(|e| e.ok())
             .map(|e| e.file_name().to_string_lossy().into_owned())
-            .filter(|n| n.to_lowercase().ends_with(".epub"))
+            .filter(|n| {
+                let l = n.to_lowercase();
+                l.ends_with(".epub") || l.ends_with(".html") || l.ends_with(".htm") || l.ends_with(".txt")
+            })
             .collect()
     }
 
-    fn load_epub_file(&self, name: &str) -> Option<Vec<u8>> {
+    fn load_book_file(&self, name: &str) -> Option<Vec<u8>> {
         std::fs::read(format!("library/{name}")).ok()
     }
 }
@@ -516,7 +519,7 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
         save(KEY_ORI,  self.orientation.to_index() as u32);
     }
 
-    fn list_epub_files(&self) -> Vec<String> {
+    fn list_book_files(&self) -> Vec<String> {
         use esp_hal::{delay::Delay, gpio::{Level, Output, OutputConfig}, spi::master::{Config as SpiConfig, Spi}};
         use embedded_hal_bus::spi::ExclusiveDevice;
         use embedded_sdmmc::{Error, SdCard, SdCardError, VolumeIdx, VolumeManager};
@@ -542,14 +545,18 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
         let mut files = alloc::vec::Vec::new();
         let _ = root.iterate_dir(|e| {
             if e.attributes.is_lfn() || e.attributes.is_volume() || e.attributes.is_directory() { return; }
-            if e.name.extension().eq_ignore_ascii_case(b"EPU") {
+            let ext = e.name.extension();
+            if ext.eq_ignore_ascii_case(b"EPU")
+                || ext.eq_ignore_ascii_case(b"HTM")
+                || ext.eq_ignore_ascii_case(b"TXT")
+            {
                 files.push(alloc::format!("{}", e.name));
             }
         });
         files
     }
 
-    fn load_epub_file(&self, name: &str) -> Option<alloc::vec::Vec<u8>> {
+    fn load_book_file(&self, name: &str) -> Option<alloc::vec::Vec<u8>> {
         use esp_hal::{delay::Delay, gpio::{Level, Output, OutputConfig}, spi::master::{Config as SpiConfig, Spi}};
         use embedded_hal_bus::spi::ExclusiveDevice;
         use embedded_sdmmc::{Error, Mode, SdCard, SdCardError, VolumeIdx, VolumeManager};
