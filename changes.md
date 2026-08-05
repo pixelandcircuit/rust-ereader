@@ -1,5 +1,12 @@
 # Changes
 
+## 2026-08-05 (5)
+
+Per-book bookmark table: each book remembers its reading position independently.
+
+- `src/hardware.rs`: Replaced single-slot `save_position`/`load_position` with an 8-slot bookmark table keyed by FNV-1a filename hash. `save_bookmark(filename, chapter, anchor)` updates an existing slot, fills an empty one, or evicts slot 0 when the table is full. `load_bookmark(filename)` returns `None` on missing entry or any flash error — never panics. Simulator implementation is a no-op returning `None`. Added `load_cold_boot_position()` free function for the ESP cold-boot path (reads the `"__embedded__"` slot, defaults to (0,0)).
+- `examples/ereader_ui.rs`: Both sim and ESP loops now track `current_filename`. Page-turn and deep-sleep paths call `save_bookmark`. Library switch saves the old book's position then tries `load_bookmark` for the new book, using `BookSession::restore` if a position exists and `BookSession::new` otherwise.
+
 ## 2026-08-05 (4)
 
 Handle non-UTF-8 files and book load failures gracefully.

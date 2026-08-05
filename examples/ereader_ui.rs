@@ -19,7 +19,7 @@ use ereader::font::font_px_for;
 #[cfg(feature = "simulator")]
 use ereader::hardware::SimHardware;
 #[cfg(feature = "esp")]
-use ereader::hardware::{load_position, load_settings, EspHardware};
+use ereader::hardware::{load_cold_boot_position, load_settings, EspHardware};
 use ereader::hardware::{BacklightLevel, FontSize, HardwareAccess, Orientation};
 use ereader::layout::LayoutConfig;
 use ereader::reader::BookSession;
@@ -438,6 +438,7 @@ fn main() {
         Box::new(EpubArchive::new(EPUB_DATA).expect("sherlock_holmes.epub parse failed"));
     let mut cfg = layout_cfg(body_font, hw.font_size(), win_w, win_h);
     let mut session = BookSession::new(book.as_ref(), &cfg).expect("BookSession init failed");
+    let mut current_filename = String::from("__embedded__");
     update_content(&mut scene, &session, font_px_for(hw.font_size()));
 
     scene.mark_layout_dirty();
@@ -556,12 +557,19 @@ fn main() {
                         } else if input.source == ViewId::new("lib_list") {
                             if let Some(OutputAction::Command(ref filename)) = input.action {
                                 if let Some(data) = hw.load_book_file(filename) {
+                                    hw.save_bookmark(&current_filename, session.chapter_idx, session.reader.anchor_byte);
                                     let new_book = book_from_data(filename, data);
                                     cfg = layout_cfg(body_font, hw.font_size(), win_w, win_h);
-                                    if let Ok(new_session) =
-                                        BookSession::new(new_book.as_ref(), &cfg)
-                                    {
-                                        session = new_session;
+                                    let new_session = match hw.load_bookmark(filename) {
+                                        Some((ch, anchor)) => {
+                                            BookSession::restore(new_book.as_ref(), &cfg, ch, anchor)
+                                                .or_else(|_| BookSession::new(new_book.as_ref(), &cfg))
+                                        }
+                                        None => BookSession::new(new_book.as_ref(), &cfg),
+                                    };
+                                    if let Ok(s) = new_session {
+                                        current_filename = filename.clone();
+                                        session = s;
                                         book = new_book;
                                         update_content(
                                             &mut scene,
@@ -913,7 +921,7 @@ async fn main(spawner: Spawner) -> ! {
         (font, bl, ori, chapter, anchor)
     } else {
         let (font, bl, ori) = load_settings();
-        let (chapter, anchor) = load_position();
+        let (chapter, anchor) = load_cold_boot_position();
         (font, bl, ori, chapter, anchor)
     };
 
@@ -950,6 +958,7 @@ async fn main(spawner: Spawner) -> ! {
 
     let mut book: Box<dyn Book> = Box::new(EpubArchive::new(EPUB_DATA).expect("epub parse"));
     let mut cfg = layout_cfg(body_font, hw.font_size(), lw, lh);
+    let mut current_filename = String::from("__embedded__");
     let mut session = if saved_chapter > 0 || saved_anchor > 0 {
         BookSession::restore(book.as_ref(), &cfg, saved_chapter, saved_anchor)
             .unwrap_or_else(|_| BookSession::new(book.as_ref(), &cfg).expect("epub load"))
@@ -1029,14 +1038,14 @@ async fn main(spawner: Spawner) -> ! {
                 EmbassyTimer::after(Duration::from_millis(10)).await;
             }
             nav_prev_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
-            hw.save_position(session.chapter_idx, session.reader.anchor_byte);
+            hw.save_bookmark(&current_filename, session.chapter_idx, session.reader.anchor_byte);
             last_interaction = Instant::now();
         } else if hw.button_next_pressed() {
             while hw.button_next_pressed() {
                 EmbassyTimer::after(Duration::from_millis(10)).await;
             }
             nav_next_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
-            hw.save_position(session.chapter_idx, session.reader.anchor_byte);
+            hw.save_bookmark(&current_filename, session.chapter_idx, session.reader.anchor_byte);
             last_interaction = Instant::now();
         }
 
@@ -1111,11 +1120,11 @@ async fn main(spawner: Spawner) -> ! {
                         // }
                     } else if input.source == ViewId::new("prev_page") {
                         nav_prev_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
-                        hw.save_position(session.chapter_idx, session.reader.anchor_byte);
+                        hw.save_bookmark(&current_filename, session.chapter_idx, session.reader.anchor_byte);
                         last_interaction = Instant::now();
                     } else if input.source == ViewId::new("next_page") {
                         nav_next_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
-                        hw.save_position(session.chapter_idx, session.reader.anchor_byte);
+                        hw.save_bookmark(&current_filename, session.chapter_idx, session.reader.anchor_byte);
                         last_interaction = Instant::now();
                     } else if input.source == ViewId::new("library") {
                         let files = hw.list_book_files();
@@ -1131,12 +1140,20 @@ async fn main(spawner: Spawner) -> ! {
                     } else if input.source == ViewId::new("lib_list") {
                         if let Some(OutputAction::Command(ref filename)) = input.action {
                             if let Some(data) = hw.load_book_file(filename) {
-                                hw.save_position(session.chapter_idx, session.reader.anchor_byte);
+                                hw.save_bookmark(&current_filename, session.chapter_idx, session.reader.anchor_byte);
                                 let new_book = book_from_data(filename, data);
                                 let (cw, ch) = hw.orientation().logical_size();
                                 cfg = layout_cfg(body_font, hw.font_size(), cw, ch);
-                                if let Ok(new_session) = BookSession::new(new_book.as_ref(), &cfg) {
-                                    session = new_session;
+                                let new_session = match hw.load_bookmark(filename) {
+                                    Some((ch_idx, anchor)) => {
+                                        BookSession::restore(new_book.as_ref(), &cfg, ch_idx, anchor)
+                                            .or_else(|_| BookSession::new(new_book.as_ref(), &cfg))
+                                    }
+                                    None => BookSession::new(new_book.as_ref(), &cfg),
+                                };
+                                if let Ok(s) = new_session {
+                                    current_filename = filename.clone();
+                                    session = s;
                                     book = new_book;
                                     update_content(
                                         &mut scene,
@@ -1182,6 +1199,8 @@ async fn main(spawner: Spawner) -> ! {
             }
             bridge.flush();
             bridge.display.power_off();
+            // Ensure the bookmark is current before powering off (flash survives sleep).
+            hw.save_bookmark(&current_filename, session.chapter_idx, session.reader.anchor_byte);
             // On ESP: saves RTC state and enters deep sleep (never returns).
             // On simulator enter_deep_sleep is a no-op; reset the timer so we
             // don't loop immediately back into the sleep check.

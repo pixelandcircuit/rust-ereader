@@ -185,9 +185,13 @@ pub trait HardwareAccess {
     /// On ESP this never returns. On simulator it is a no-op.
     fn enter_deep_sleep(&mut self, chapter_idx: usize, anchor_byte: usize);
 
-    /// Persist the current reading position (chapter + byte offset) to flash.
+    /// Persist per-book reading position identified by `filename`.
+    /// Stores up to 8 books; evicts the oldest when the table is full.
     /// No-op on simulator.
-    fn save_position(&mut self, chapter_idx: usize, anchor_byte: usize);
+    fn save_bookmark(&mut self, filename: &str, chapter_idx: usize, anchor_byte: usize);
+    /// Retrieve the saved position for `filename`. Returns `None` when no
+    /// entry exists or on any flash error — never panics.
+    fn load_bookmark(&self, filename: &str) -> Option<(usize, usize)>;
     /// Persist the current font/backlight/orientation settings to flash.
     /// No-op on simulator.
     fn save_settings(&mut self);
@@ -207,6 +211,7 @@ pub struct SimHardware {
     font_size: FontSize,
     backlight: BacklightLevel,
     orientation: Orientation,
+    bookmarks: std::collections::HashMap<String, (usize, usize)>,
 }
 
 #[cfg(feature = "simulator")]
@@ -216,6 +221,7 @@ impl SimHardware {
             font_size: FontSize::Medium,
             backlight: BacklightLevel::High,
             orientation: Orientation::Portrait,
+            bookmarks: std::collections::HashMap::new(),
         }
     }
 }
@@ -239,7 +245,12 @@ impl HardwareAccess for SimHardware {
     fn button_prev_pressed(&self) -> bool { false }
     fn button_next_pressed(&self) -> bool { false }
     fn enter_deep_sleep(&mut self, _chapter_idx: usize, _anchor_byte: usize) {}
-    fn save_position(&mut self, _chapter_idx: usize, _anchor_byte: usize) {}
+    fn save_bookmark(&mut self, filename: &str, chapter_idx: usize, anchor_byte: usize) {
+        self.bookmarks.insert(String::from(filename), (chapter_idx, anchor_byte));
+    }
+    fn load_bookmark(&self, filename: &str) -> Option<(usize, usize)> {
+        self.bookmarks.get(filename).copied()
+    }
     fn save_settings(&mut self) {}
 
     fn list_book_files(&self) -> Vec<String> {
@@ -270,15 +281,23 @@ use sequential_storage::{cache::NoCache, map};
 #[cfg(feature = "esp")]
 const NVS_RANGE: core::ops::Range<u32> = 0x9000..0xF000;
 #[cfg(feature = "esp")]
-const KEY_FONT:    u8 = 10;
+const KEY_FONT: u8 = 10;
 #[cfg(feature = "esp")]
-const KEY_BL:      u8 = 11;
+const KEY_BL:   u8 = 11;
 #[cfg(feature = "esp")]
-const KEY_ORI:     u8 = 12;
+const KEY_ORI:  u8 = 12;
+
+// Per-book bookmark table: 8 slots, 3 keys each.
+// Slot i: hash at KEY_BM_HASH+i, chapter at KEY_BM_CHAP+i, anchor at KEY_BM_ANCH+i.
+// hash == 0 means the slot is empty.
 #[cfg(feature = "esp")]
-const KEY_CHAPTER: u8 = 13;
+const NUM_BOOKMARKS: usize = 8;
 #[cfg(feature = "esp")]
-const KEY_ANCHOR:  u8 = 14;
+const KEY_BM_HASH: u8 = 20; // 20..27
+#[cfg(feature = "esp")]
+const KEY_BM_CHAP: u8 = 30; // 30..37
+#[cfg(feature = "esp")]
+const KEY_BM_ANCH: u8 = 40; // 40..47
 
 #[cfg(feature = "esp")]
 struct FlashAdapter(FlashStorage);
@@ -347,24 +366,91 @@ pub fn load_settings() -> (usize, usize, usize) {
     (font, bl, ori)
 }
 
-/// Returns (chapter_idx, anchor_byte). Defaults: chapter 0, byte 0.
+// ── Bookmark helpers (ESP only) ───────────────────────────────────────────────
+
+/// Read a single u32 from flash. Returns None on missing key or any error.
 #[cfg(feature = "esp")]
-pub fn load_position() -> (usize, usize) {
+fn flash_load_u32(key: u8) -> Option<u32> {
     let mut flash = FlashAdapter(FlashStorage::new());
     let mut cache = NoCache::new();
     let mut buf = [0u8; 64];
-    let mut load = |key: u8| -> u32 {
-        match block_on(map::fetch_item::<u8, u32, _>(
-            &mut flash, NVS_RANGE, &mut cache, &mut buf, &key,
-        )) {
-            Ok(Some(v)) => v,
-            _ => 0,
+    block_on(map::fetch_item::<u8, u32, _>(
+        &mut flash, NVS_RANGE, &mut cache, &mut buf, &key,
+    ))
+    .ok()
+    .flatten()
+}
+
+/// Write a single u32 to flash. Logs a warning on error, never panics.
+#[cfg(feature = "esp")]
+fn flash_save_u32(key: u8, val: u32) {
+    let mut flash = FlashAdapter(FlashStorage::new());
+    let mut cache = NoCache::new();
+    let mut buf = [0u8; 64];
+    if let Err(e) = block_on(map::store_item::<u8, u32, _>(
+        &mut flash, NVS_RANGE, &mut cache, &mut buf, &key, &val,
+    )) {
+        log::warn!("flash save key {} failed: {:?}", key, e);
+    }
+}
+
+/// FNV-1a 32-bit hash. Zero is reserved for "empty slot" — mapped to 1.
+#[cfg(feature = "esp")]
+fn bookmark_hash(filename: &str) -> u32 {
+    let mut h: u32 = 2166136261;
+    for b in filename.bytes() {
+        h ^= b as u32;
+        h = h.wrapping_mul(16777619);
+    }
+    if h == 0 { 1 } else { h }
+}
+
+/// Look up the bookmark table for `filename`. Returns None if not found or
+/// on any flash error.
+#[cfg(feature = "esp")]
+fn load_bookmark_impl(filename: &str) -> Option<(usize, usize)> {
+    let target = bookmark_hash(filename);
+    for i in 0..NUM_BOOKMARKS {
+        let hash = flash_load_u32(KEY_BM_HASH + i as u8).unwrap_or(0);
+        if hash == target {
+            let chapter = flash_load_u32(KEY_BM_CHAP + i as u8).unwrap_or(0) as usize;
+            let anchor  = flash_load_u32(KEY_BM_ANCH + i as u8).unwrap_or(0) as usize;
+            log::info!("bookmark loaded: {:?} ch={} anchor={}", filename, chapter, anchor);
+            return Some((chapter, anchor));
         }
-    };
-    let chapter = load(KEY_CHAPTER) as usize;
-    let anchor  = load(KEY_ANCHOR)  as usize;
-    log::info!("position loaded: chapter={} anchor={}", chapter, anchor);
-    (chapter, anchor)
+    }
+    None
+}
+
+/// Save a bookmark for `filename`. Finds an existing slot (updates in place),
+/// a free slot (fills it), or evicts slot 0 if the table is full.
+#[cfg(feature = "esp")]
+fn save_bookmark_impl(filename: &str, chapter_idx: usize, anchor_byte: usize) {
+    let target = bookmark_hash(filename);
+    // Scan for matching or empty slot.
+    let mut write_slot: Option<usize> = None;
+    for i in 0..NUM_BOOKMARKS {
+        let hash = flash_load_u32(KEY_BM_HASH + i as u8).unwrap_or(0);
+        if hash == target {
+            write_slot = Some(i);
+            break;
+        }
+        if hash == 0 && write_slot.is_none() {
+            write_slot = Some(i);
+        }
+    }
+    let slot = write_slot.unwrap_or(0); // evict slot 0 when table is full
+    flash_save_u32(KEY_BM_HASH + slot as u8, target);
+    flash_save_u32(KEY_BM_CHAP + slot as u8, chapter_idx as u32);
+    flash_save_u32(KEY_BM_ANCH + slot as u8, anchor_byte as u32);
+    log::info!("bookmark saved: {:?} slot={} ch={} anchor={}", filename, slot, chapter_idx, anchor_byte);
+}
+
+/// Position to restore for the built-in embedded epub on cold boot.
+/// Returns (0, 0) when no bookmark exists yet.
+#[cfg(feature = "esp")]
+pub fn load_cold_boot_position() -> (usize, usize) {
+    load_bookmark_impl("__embedded__").unwrap_or((0, 0))
 }
 
 // ── ESP implementation ────────────────────────────────────────────────────────
@@ -488,19 +574,12 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
         self.rtc.sleep_deep(&[&boot_src]);
     }
 
-    fn save_position(&mut self, chapter_idx: usize, anchor_byte: usize) {
-        let mut flash = FlashAdapter(FlashStorage::new());
-        let mut cache = NoCache::new();
-        let mut buf = [0u8; 64];
-        let mut save = |key: u8, val: u32| {
-            if let Err(e) = block_on(map::store_item::<u8, u32, _>(
-                &mut flash, NVS_RANGE, &mut cache, &mut buf, &key, &val,
-            )) {
-                log::warn!("flash save key {} failed: {:?}", key, e);
-            }
-        };
-        save(KEY_CHAPTER, chapter_idx as u32);
-        save(KEY_ANCHOR,  anchor_byte as u32);
+    fn save_bookmark(&mut self, filename: &str, chapter_idx: usize, anchor_byte: usize) {
+        save_bookmark_impl(filename, chapter_idx, anchor_byte);
+    }
+
+    fn load_bookmark(&self, filename: &str) -> Option<(usize, usize)> {
+        load_bookmark_impl(filename)
     }
 
     fn save_settings(&mut self) {
