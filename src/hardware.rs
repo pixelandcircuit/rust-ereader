@@ -520,18 +520,24 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
     }
 
     fn list_book_files(&self) -> Vec<String> {
-        use esp_hal::{delay::Delay, gpio::{Level, Output, OutputConfig}, spi::master::{Config as SpiConfig, Spi}};
+        use esp_hal::{delay::Delay, gpio::{Level, Output, OutputConfig}, spi::master::{Config as SpiConfig, Spi}, time::Rate};
+        use embedded_hal::spi::SpiBus;
         use embedded_hal_bus::spi::ExclusiveDevice;
         use embedded_sdmmc::{Error, SdCard, SdCardError, VolumeIdx, VolumeManager};
 
+        // SD and LoRa share the SPI bus; deselect both CS lines before touching the bus.
+        let _lora_cs = unsafe { Output::new(esp_hal::gpio::AnyPin::steal(46), Level::High, OutputConfig::default()) };
         let cs = unsafe { Output::new(esp_hal::gpio::AnyPin::steal(12), Level::High, OutputConfig::default()) };
-        let spi = unsafe {
-            Spi::new(esp_hal::peripherals::SPI2::steal(), SpiConfig::default())
+        let mut spi = unsafe {
+            Spi::new(esp_hal::peripherals::SPI2::steal(), SpiConfig::default().with_frequency(Rate::from_khz(400)))
                 .expect("SPI2 init")
                 .with_sck(esp_hal::gpio::AnyPin::steal(14))
                 .with_mosi(esp_hal::gpio::AnyPin::steal(13))
                 .with_miso(esp_hal::gpio::AnyPin::steal(21))
         };
+        // SD cards need ≥74 clock cycles with CS HIGH before CMD0 to enter SPI mode.
+        // ExclusiveDevice asserts CS for every transaction so we must do this on the raw bus.
+        let _ = SpiBus::write(&mut spi, &[0xFF; 10]);
         let Ok(spi_dev) = ExclusiveDevice::new(spi, cs, Delay::new()) else { return alloc::vec::Vec::new() };
         let sdcard = SdCard::new(spi_dev, Delay::new());
         let mgr = VolumeManager::<_, _, 16, 4, 1>::new_with_limits(sdcard, DummyTimesource, 0);
@@ -557,18 +563,21 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
     }
 
     fn load_book_file(&self, name: &str) -> Option<alloc::vec::Vec<u8>> {
-        use esp_hal::{delay::Delay, gpio::{Level, Output, OutputConfig}, spi::master::{Config as SpiConfig, Spi}};
+        use esp_hal::{delay::Delay, gpio::{Level, Output, OutputConfig}, spi::master::{Config as SpiConfig, Spi}, time::Rate};
+        use embedded_hal::spi::SpiBus;
         use embedded_hal_bus::spi::ExclusiveDevice;
         use embedded_sdmmc::{Error, Mode, SdCard, SdCardError, VolumeIdx, VolumeManager};
 
+        let _lora_cs = unsafe { Output::new(esp_hal::gpio::AnyPin::steal(46), Level::High, OutputConfig::default()) };
         let cs = unsafe { Output::new(esp_hal::gpio::AnyPin::steal(12), Level::High, OutputConfig::default()) };
-        let spi = unsafe {
-            Spi::new(esp_hal::peripherals::SPI2::steal(), SpiConfig::default())
+        let mut spi = unsafe {
+            Spi::new(esp_hal::peripherals::SPI2::steal(), SpiConfig::default().with_frequency(Rate::from_khz(400)))
                 .expect("SPI2 init")
                 .with_sck(esp_hal::gpio::AnyPin::steal(14))
                 .with_mosi(esp_hal::gpio::AnyPin::steal(13))
                 .with_miso(esp_hal::gpio::AnyPin::steal(21))
         };
+        let _ = SpiBus::write(&mut spi, &[0xFF; 10]);
         let spi_dev = ExclusiveDevice::new(spi, cs, Delay::new()).ok()?;
         let sdcard = SdCard::new(spi_dev, Delay::new());
         let mgr = VolumeManager::<_, _, 16, 4, 1>::new_with_limits(sdcard, DummyTimesource, 0);

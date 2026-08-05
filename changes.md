@@ -1,5 +1,13 @@
 # Changes
 
+## 2026-08-05 (3)
+
+Fix SD card not detected on ESP hardware.
+
+- `src/hardware.rs`: Deselect LoRa CS (GPIO 46) before initializing the SD SPI bus — SD and LoRa share SPI2, and a floating LoRa CS was driving MISO and preventing the SD card from responding.
+- `src/hardware.rs`: Set SPI clock to 400 kHz (SD init spec max) instead of the default.
+- `src/hardware.rs`: Send 80 clock pulses on the raw `SpiBus` with CS high before creating `ExclusiveDevice`, satisfying the SD card's 74-cycle power-up requirement that `ExclusiveDevice` would otherwise skip.
+
 ## 2026-08-05 (2)
 
 Fix ESP and simulator compile errors in `examples/ereader_ui.rs`.
