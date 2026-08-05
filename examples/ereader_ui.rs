@@ -97,10 +97,10 @@ fn make_spacer(id: &ViewId) -> View {
         layout: Some(|e|{
             if let Some(view) = e.scene.get_view_mut(&e.target) {
                 if view.h_flex == Grow {
-                    // view.bounds.size.w = e.space.w;
+                    view.bounds.size.w = e.space.w;
                 }
                 if view.v_flex == Grow {
-                    // view.bounds.size.h = e.space.h;
+                    view.bounds.size.h = e.space.h;
                 }
             }
         }),
