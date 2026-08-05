@@ -40,6 +40,7 @@ const EPUB_DATA: &[u8] = include_bytes!("sherlock_holmes.epub");
 
 const DIALOG_ID:ViewId = ViewId::new("dialog");
 const LIBRARY_DIALOG_ID:ViewId = ViewId::new("library_dialog");
+const ERROR_DIALOG_ID:ViewId = ViewId::new("error_dialog");
 const ORIENTATION_ID:ViewId = ViewId::new("orientation");
 const BACKLIGHT_ID:ViewId = ViewId::new("backlight");
 const FONT_SIZE_ID:ViewId = ViewId::new("font_size");
@@ -61,6 +62,9 @@ fn handle_click(event: &mut GuiEvent) {
         event.scene.mark_dirty_all();
     } else if event.target == &ViewId::new("library_close") {
         event.scene.hide_view(&LIBRARY_DIALOG_ID);
+        event.scene.mark_dirty_all();
+    } else if event.target == &ViewId::new("error_dismiss") {
+        event.scene.hide_view(&ERROR_DIALOG_ID);
         event.scene.mark_dirty_all();
     }
 }
@@ -107,6 +111,15 @@ fn make_spacer(id: &ViewId) -> View {
         }),
         state: None
     }
+}
+
+fn show_error_dialog(scene: &mut Scene, filename: &str) {
+    if let Some(v) = scene.get_view_mut(&ViewId::new("err_msg")) {
+        v.title = String::from(filename);
+    }
+    scene.show_view(&ERROR_DIALOG_ID);
+    scene.mark_layout_dirty();
+    scene.mark_dirty_all();
 }
 
 fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
@@ -256,6 +269,24 @@ fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
             &LIBRARY_DIALOG_ID,
         );
         scene.add_view_to_root(lib_panel);
+    }
+
+    // ── Error dialog (hidden, shown when a book fails to load) ───────────────
+    {
+        let err_panel = make_panel(&ERROR_DIALOG_ID)
+            .with_layout(Some(layout_vbox))
+            .with_h_flex(Flex::Grow)
+            .with_v_flex(Flex::Grow)
+            .with_visible(false)
+            .with_state(Some(Box::new(PanelState {
+                border_visible: true,
+                gap: 10,
+                padding: Insets::new_same(10),
+            })));
+        scene.add_view_to_parent(make_label(&ViewId::new("err_title"), "Cannot open file"), &ERROR_DIALOG_ID);
+        scene.add_view_to_parent(make_label(&ViewId::new("err_msg"), ""), &ERROR_DIALOG_ID);
+        scene.add_view_to_parent(make_button(&ViewId::new("error_dismiss"), "Dismiss"), &ERROR_DIALOG_ID);
+        scene.add_view_to_root(err_panel);
     }
 
     scene
@@ -428,11 +459,16 @@ fn main() {
                                 if let Some(data) = hw.load_book_file(filename) {
                                     let new_book = book_from_data(filename, data);
                                     cfg = layout_cfg(body_font, hw.font_size(), win_w, win_h);
-                                    session = BookSession::new(new_book.as_ref(), &cfg).expect("book load");
-                                    book = new_book;
-                                    update_content(&mut scene, &session, font_px_for(hw.font_size()));
-                                    if let Some(v) = scene.get_view_mut(&ViewId::new("booktitle")) {
-                                        v.title = filename.clone();
+                                    if let Ok(new_session) = BookSession::new(new_book.as_ref(), &cfg) {
+                                        session = new_session;
+                                        book = new_book;
+                                        update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                                        if let Some(v) = scene.get_view_mut(&ViewId::new("booktitle")) {
+                                            v.title = filename.clone();
+                                        }
+                                    } else {
+                                        scene.hide_view(&LIBRARY_DIALOG_ID);
+                                        show_error_dialog(&mut scene, filename);
                                     }
                                     scene.hide_view(&LIBRARY_DIALOG_ID);
                                     scene.mark_dirty_all();
@@ -952,11 +988,16 @@ async fn main(spawner: Spawner) -> ! {
                                 let new_book = book_from_data(filename, data);
                                 let (cw, ch) = hw.orientation().logical_size();
                                 cfg = layout_cfg(body_font, hw.font_size(), cw, ch);
-                                session = BookSession::new(new_book.as_ref(), &cfg).expect("book load");
-                                book = new_book;
-                                update_content(&mut scene, &session, font_px_for(hw.font_size()));
-                                if let Some(v) = scene.get_view_mut(&ViewId::new("booktitle")) {
-                                    v.title = filename.clone();
+                                if let Ok(new_session) = BookSession::new(new_book.as_ref(), &cfg) {
+                                    session = new_session;
+                                    book = new_book;
+                                    update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                                    if let Some(v) = scene.get_view_mut(&ViewId::new("booktitle")) {
+                                        v.title = filename.clone();
+                                    }
+                                } else {
+                                    scene.hide_view(&LIBRARY_DIALOG_ID);
+                                    show_error_dialog(&mut scene, filename);
                                 }
                                 scene.hide_view(&LIBRARY_DIALOG_ID);
                                 scene.mark_dirty_all();

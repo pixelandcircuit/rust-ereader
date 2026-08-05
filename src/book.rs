@@ -40,9 +40,7 @@ impl Book for TxtBook {
     }
 
     fn chapter_text(&self, _id: &str) -> Result<String, EpubError> {
-        core::str::from_utf8(&self.data)
-            .map(String::from)
-            .map_err(|_| EpubError::Utf8Error)
+        Ok(decode_lossy(&self.data))
     }
 }
 
@@ -66,8 +64,19 @@ impl Book for HtmlBook {
     }
 
     fn chapter_text(&self, _id: &str) -> Result<String, EpubError> {
-        let html = core::str::from_utf8(&self.data).map_err(|_| EpubError::Utf8Error)?;
-        Ok(html_to_text(html))
+        Ok(html_to_text(&decode_lossy(&self.data)))
+    }
+}
+
+// ── UTF-8 lossy decode ────────────────────────────────────────────────────────
+
+/// Decode bytes as UTF-8; if invalid, fall back to Latin-1 (ISO-8859-1) by
+/// treating each byte as its Unicode code point.  Avoids panicking on files
+/// saved with Windows-1252 or other 8-bit encodings.
+fn decode_lossy(bytes: &[u8]) -> String {
+    match core::str::from_utf8(bytes) {
+        Ok(s) => String::from(s),
+        Err(_) => bytes.iter().map(|&b| char::from(b)).collect(),
     }
 }
 
@@ -291,9 +300,12 @@ mod tests {
     }
 
     #[test]
-    fn txt_invalid_utf8_returns_error() {
-        let book = TxtBook::from_vec(vec![0xFF, 0xFE]);
-        assert!(matches!(book.chapter_text("Document"), Err(EpubError::Utf8Error)));
+    fn txt_invalid_utf8_decoded_lossily() {
+        // Non-UTF-8 bytes are decoded as Latin-1 (each byte → its Unicode code point).
+        let book = TxtBook::from_vec(vec![b'h', b'i', 0xFF]);
+        let text = book.chapter_text("Document").unwrap();
+        assert!(text.starts_with("hi"), "got: {text:?}");
+        assert!(text.contains('\u{00FF}'), "got: {text:?}");
     }
 
     // ── HtmlBook ──────────────────────────────────────────────────────────────

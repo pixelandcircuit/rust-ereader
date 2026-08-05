@@ -1,5 +1,12 @@
 # Changes
 
+## 2026-08-05 (4)
+
+Handle non-UTF-8 files and book load failures gracefully.
+
+- `src/book.rs`: Added `decode_lossy` — tries UTF-8, falls back to Latin-1 (ISO-8859-1) so Windows-1252 encoded HTML/TXT files display instead of crashing. `TxtBook` and `HtmlBook` both use it.
+- `examples/ereader_ui.rs`: Added error dialog (`ERROR_DIALOG_ID`) with a Dismiss button. `show_error_dialog` sets the filename as the message. Both book-load failure sites (sim and ESP loops) now show the dialog instead of panicking or silently warning.
+
 ## 2026-08-05 (3)
 
 Fix SD card not detected on ESP hardware.
