@@ -1,5 +1,12 @@
 # Changes
 
+## 2026-08-04 17:00
+
+Consolidate dialog ViewId string literals to constants; rename library Cancel button.
+
+- `examples/ereader_ui.rs`: Replace inline `ViewId::new("dialog")` and `ViewId::new("library_dialog")` with the existing `DIALOG_ID` and `LIBRARY_DIALOG_ID` constants throughout `handle_click` and both event loops.
+- Rename library dialog "Close" button label to "Cancel".
+
 ## 2026-08-04 16:30
 
 Fix crashes in library dialog list view.

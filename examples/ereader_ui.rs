@@ -49,17 +49,17 @@ const UI_FONT_SIZE_LARGE: f32 = 24.0;
 
 fn handle_click(event: &mut GuiEvent) {
     if event.target == &ViewId::new("settings") {
-        event.scene.show_view(&ViewId::new("dialog"));
+        event.scene.show_view(&DIALOG_ID);
         event.scene.mark_dirty_all();
     } else if event.target == &ViewId::new("dialog_close") {
-        event.scene.hide_view(&ViewId::new("dialog"));
+        event.scene.hide_view(&DIALOG_ID);
         event.scene.mark_dirty_all();
     } else if event.target == &ViewId::new("library") {
-        event.scene.show_view(&ViewId::new("library_dialog"));
+        event.scene.show_view(&LIBRARY_DIALOG_ID);
         event.scene.mark_layout_dirty();
         event.scene.mark_dirty_all();
     } else if event.target == &ViewId::new("library_close") {
-        event.scene.hide_view(&ViewId::new("library_dialog"));
+        event.scene.hide_view(&LIBRARY_DIALOG_ID);
         event.scene.mark_dirty_all();
     }
 }
@@ -251,7 +251,7 @@ fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
             &LIBRARY_DIALOG_ID,
         );
         scene.add_view_to_parent(
-            make_button(&ViewId::new("library_close"), "Close"),
+            make_button(&ViewId::new("library_close"), "Cancel"),
             &LIBRARY_DIALOG_ID,
         );
         scene.add_view_to_root(lib_panel);
@@ -408,7 +408,6 @@ fn main() {
                             if let Some(view) = scene.get_view_mut(&ViewId::new("time")) {
                                 view.title = format_time_utc(t);
                             }
-                            scene.mark_layout_dirty();
                         } else if input.source == ViewId::new("prev_page") {
                             nav_prev_page(&mut hw, &mut scene, &epub, &mut cfg, &mut session);
                         } else if input.source == ViewId::new("next_page") {
@@ -435,7 +434,7 @@ fn main() {
                                             if let Some(v) = scene.get_view_mut(&ViewId::new("booktitle")) {
                                                 v.title = filename.clone();
                                             }
-                                            scene.hide_view(&ViewId::new("library_dialog"));
+                                            scene.hide_view(&LIBRARY_DIALOG_ID);
                                             scene.mark_dirty_all();
                                         }
                                         Err(e) => log::warn!("failed to load epub {:?}: {:?}", filename, e),
@@ -946,7 +945,7 @@ async fn main(spawner: Spawner) -> ! {
                                         if let Some(v) = scene.get_view_mut(&ViewId::new("booktitle")) {
                                             v.title = filename.clone();
                                         }
-                                        scene.hide_view(&ViewId::new("library_dialog"));
+                                        scene.hide_view(&LIBRARY_DIALOG_ID);
                                         scene.mark_dirty_all();
                                     }
                                     Err(e) => log::warn!("failed to load epub: {:?}", e),
