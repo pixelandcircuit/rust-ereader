@@ -11,16 +11,15 @@
 extern crate alloc;
 #[cfg(feature = "esp")]
 use alloc::{boxed::Box, string::String, vec::Vec};
-use Align::Center;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::RgbColor;
 use ereader::book::{Book, HtmlBook, TxtBook};
 use ereader::epub::EpubArchive;
 use ereader::font::font_px_for;
-#[cfg(feature = "esp")]
-use ereader::hardware::{EspHardware, load_position, load_settings};
 #[cfg(feature = "simulator")]
 use ereader::hardware::SimHardware;
+#[cfg(feature = "esp")]
+use ereader::hardware::{load_position, load_settings, EspHardware};
 use ereader::hardware::{BacklightLevel, FontSize, HardwareAccess, Orientation};
 use ereader::layout::LayoutConfig;
 use ereader::reader::BookSession;
@@ -29,21 +28,22 @@ use iris_ui::device::EmbeddedDrawingContext;
 use iris_ui::geom::{Bounds, Insets, Point as GPoint};
 use iris_ui::label::make_label;
 use iris_ui::layouts::{layout_hbox, layout_vbox};
-use iris_ui::scene::{click_at, draw_scene, layout_scene, Scene};
 use iris_ui::list_view::{make_list_view, ListState};
+use iris_ui::scene::{click_at, draw_scene, layout_scene, Scene};
 use iris_ui::toggle_group::{make_toggle_group, SelectOneOfState};
 use iris_ui::view::{Align, Flex, View, ViewId};
 use iris_ui::{Callback, FontKind, GuiEvent, LayoutEvent, Theme, ViewStyle};
+use Align::Center;
 
 
 const EPUB_DATA: &[u8] = include_bytes!("sherlock_holmes.epub");
 
-const DIALOG_ID:ViewId = ViewId::new("dialog");
-const LIBRARY_DIALOG_ID:ViewId = ViewId::new("library_dialog");
-const ERROR_DIALOG_ID:ViewId = ViewId::new("error_dialog");
-const ORIENTATION_ID:ViewId = ViewId::new("orientation");
-const BACKLIGHT_ID:ViewId = ViewId::new("backlight");
-const FONT_SIZE_ID:ViewId = ViewId::new("font_size");
+const DIALOG_ID: ViewId = ViewId::new("dialog");
+const LIBRARY_DIALOG_ID: ViewId = ViewId::new("library_dialog");
+const ERROR_DIALOG_ID: ViewId = ViewId::new("error_dialog");
+const ORIENTATION_ID: ViewId = ViewId::new("orientation");
+const BACKLIGHT_ID: ViewId = ViewId::new("backlight");
+const FONT_SIZE_ID: ViewId = ViewId::new("font_size");
 
 const UI_FONT_SIZE_SMALL: f32 = 16.0;
 const UI_FONT_SIZE_MEDIUM: f32 = 20.0;
@@ -73,9 +73,9 @@ fn handle_click(event: &mut GuiEvent) {
 /// make_scene() hardcodes default selections; call this after loading persisted values.
 fn sync_settings_ui(scene: &mut Scene, font_idx: usize, bl_idx: usize, ori_idx: usize) {
     for (id, idx) in [
-        (FONT_SIZE_ID.clone(),           font_idx),
-        (BACKLIGHT_ID,       bl_idx),
-        (ORIENTATION_ID,     ori_idx),
+        (FONT_SIZE_ID.clone(), font_idx),
+        (BACKLIGHT_ID, bl_idx),
+        (ORIENTATION_ID, ori_idx),
     ] {
         if let Some(v) = scene.get_view_mut(&id) {
             if let Some(s) = v.get_state::<SelectOneOfState>() {
@@ -92,14 +92,14 @@ fn make_spacer(id: &ViewId) -> View {
         h_align: Center,
         v_flex: Shrink,
         v_align: Center,
-        bounds: Bounds::new(0,0,10,10),
-        visible:true,
+        bounds: Bounds::new(0, 0, 10, 10),
+        visible: true,
         title: "spacer".into(),
-        draw:Some(|e| {
+        draw: Some(|e| {
             e.ctx.stroke_rect(&e.view.bounds, &e.theme.panel.text);
         }),
-        input:None,
-        layout: Some(|e|{
+        input: None,
+        layout: Some(|e| {
             if let Some(view) = e.scene.get_view_mut(&e.target) {
                 if view.h_flex == Grow {
                     view.bounds.size.w = e.space.w;
@@ -109,7 +109,7 @@ fn make_spacer(id: &ViewId) -> View {
                 }
             }
         }),
-        state: None
+        state: None,
     }
 }
 
@@ -138,12 +138,19 @@ fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
     // ── Top bar ──────────────────────────────────────────────────────────────
     {
         let topbar_id = ViewId::new("topbar");
-        let settings_button = make_full_button(&ViewId::new("settings"), "Settings", "settings", false);
+        let settings_button =
+            make_full_button(&ViewId::new("settings"), "Settings", "settings", false);
         scene.add_view_to_parent(settings_button, &topbar_id);
         scene.add_view_to_parent(make_label(&ViewId::new("time"), "--:-- --"), &topbar_id);
         scene.add_view_to_parent(make_label(&ViewId::new("battery"), "85%"), &topbar_id);
-        scene.add_view_to_parent(make_spacer(&ViewId::new("spacer2")).with_h_flex(Grow), &topbar_id);
-        scene.add_view_to_parent(make_label(&ViewId::new("booktitle"), "Sherlock Holmes"), &topbar_id);
+        scene.add_view_to_parent(
+            make_spacer(&ViewId::new("spacer2")).with_h_flex(Grow),
+            &topbar_id,
+        );
+        scene.add_view_to_parent(
+            make_label(&ViewId::new("booktitle"), "Sherlock Holmes"),
+            &topbar_id,
+        );
         scene.add_view_to_parent(make_button(&ViewId::new("library"), "Library"), &topbar_id);
         let topbar = make_panel(&topbar_id)
             .with_layout(Some(layout_hbox))
@@ -155,7 +162,6 @@ fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
             })));
         scene.add_view_to_parent(topbar, &main_id);
     }
-
 
     // content — plain View with BookState; draw_book_content renders TTF text
     {
@@ -176,24 +182,34 @@ fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
             })),
             ..Default::default()
         }
-            .with_layout(Some(fill_all_space))
-            .with_v_flex(Flex::Grow)
-            .with_h_flex(Flex::Grow)
-            .with_v_align(Center)
-            .with_h_align(Center);
+        .with_layout(Some(fill_all_space))
+        .with_v_flex(Flex::Grow)
+        .with_h_flex(Flex::Grow)
+        .with_v_align(Center)
+        .with_h_align(Center);
         scene.add_view_to_parent(content, &main_id);
     }
-
 
     // ── Bottom bar ───────────────────────────────────────────────────────────
     {
         let bottombar_id = ViewId::new("bottombar");
-        scene.add_view_to_parent(make_button(&ViewId::new("prev_page"), "< Prev"), &bottombar_id);
-        scene.add_view_to_parent(make_label(&ViewId::new("chapter"), "Loading..."), &bottombar_id);
+        scene.add_view_to_parent(
+            make_button(&ViewId::new("prev_page"), "< Prev"),
+            &bottombar_id,
+        );
+        scene.add_view_to_parent(
+            make_label(&ViewId::new("chapter"), "Loading..."),
+            &bottombar_id,
+        );
         scene.add_view_to_parent(make_label(&ViewId::new("page"), ""), &bottombar_id);
-        scene.add_view_to_parent(make_spacer(&ViewId::new("spacer3")).with_h_flex(Grow),
-                                 &bottombar_id);
-        scene.add_view_to_parent(make_button(&ViewId::new("next_page"), "Next >"), &bottombar_id);
+        scene.add_view_to_parent(
+            make_spacer(&ViewId::new("spacer3")).with_h_flex(Grow),
+            &bottombar_id,
+        );
+        scene.add_view_to_parent(
+            make_button(&ViewId::new("next_page"), "Next >"),
+            &bottombar_id,
+        );
         let bottombar = make_panel(&bottombar_id)
             .with_layout(Some(layout_hbox))
             .with_h_flex(Flex::Grow)
@@ -221,29 +237,46 @@ fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
                 padding: Insets::new_same(10),
             })));
         // ── Settings dialog (hidden, drawn last so it appears on top) ────────────
-        scene.add_view_to_parent(make_label(&ViewId::new("dlg_title"), "Settings"), &DIALOG_ID);
-        scene.add_view_to_parent(make_label(&ViewId::new("dlg_font_lbl"), "Font Size"), &DIALOG_ID);
+        scene.add_view_to_parent(
+            make_label(&ViewId::new("dlg_title"), "Settings"),
+            &DIALOG_ID,
+        );
+        scene.add_view_to_parent(
+            make_label(&ViewId::new("dlg_font_lbl"), "Font Size"),
+            &DIALOG_ID,
+        );
         scene.add_view_to_parent(
             make_toggle_group(&FONT_SIZE_ID, vec!["Small", "Medium", "Large"], 1),
             &DIALOG_ID,
         );
-        scene.add_view_to_parent(make_label(&ViewId::new("dlg_bl_lbl"), "Backlight"), &DIALOG_ID);
+        scene.add_view_to_parent(
+            make_label(&ViewId::new("dlg_bl_lbl"), "Backlight"),
+            &DIALOG_ID,
+        );
         scene.add_view_to_parent(
             make_toggle_group(&BACKLIGHT_ID, vec!["Off", "Low", "High"], 2),
             &DIALOG_ID,
         );
-        scene.add_view_to_parent(make_label(&ViewId::new("dlg_orient_lbl"), "Orientation"), &DIALOG_ID);
         scene.add_view_to_parent(
-            make_toggle_group(
-                &ORIENTATION_ID,
-                vec!["Port", "Land", "R.Port", "R.Land"],
-                0,
-            ),
+            make_label(&ViewId::new("dlg_orient_lbl"), "Orientation"),
             &DIALOG_ID,
         );
-        scene.add_view_to_parent(make_button(&ViewId::new("sync_time"), "Sync Time"), &DIALOG_ID);
-        scene.add_view_to_parent(make_label(&ViewId::new("dlg_battery"), "Battery: 85%  (Charging)"), &DIALOG_ID);
-        scene.add_view_to_parent(make_button(&ViewId::new("dialog_close"), "Close"), &DIALOG_ID);
+        scene.add_view_to_parent(
+            make_toggle_group(&ORIENTATION_ID, vec!["Port", "Land", "R.Port", "R.Land"], 0),
+            &DIALOG_ID,
+        );
+        scene.add_view_to_parent(
+            make_button(&ViewId::new("sync_time"), "Sync Time"),
+            &DIALOG_ID,
+        );
+        scene.add_view_to_parent(
+            make_label(&ViewId::new("dlg_battery"), "Battery: 85%  (Charging)"),
+            &DIALOG_ID,
+        );
+        scene.add_view_to_parent(
+            make_button(&ViewId::new("dialog_close"), "Close"),
+            &DIALOG_ID,
+        );
         scene.add_view_to_root(dialog_panel);
     }
 
@@ -259,13 +292,19 @@ fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
                 gap: 10,
                 padding: Insets::new_same(10),
             })));
-        scene.add_view_to_parent(make_label(&ViewId::new("lib_title"), "Library"), &LIBRARY_DIALOG_ID);
         scene.add_view_to_parent(
-            make_list_view(&ViewId::new("lib_list"), vec![], 0),
+            make_label(&ViewId::new("lib_title"), "Library"),
             &LIBRARY_DIALOG_ID,
         );
         scene.add_view_to_parent(
-            make_button(&ViewId::new("library_close"), "Cancel"),
+            make_list_view(&ViewId::new("lib_list"), vec![], 0)
+                .with_h_flex(Flex::Grow)
+                .with_h_align(Align::Start)
+            ,
+            &LIBRARY_DIALOG_ID,
+        );
+        scene.add_view_to_parent(
+            make_button(&ViewId::new("library_close"), "Cancel").with_h_align(Align::End),
             &LIBRARY_DIALOG_ID,
         );
         scene.add_view_to_root(lib_panel);
@@ -283,9 +322,15 @@ fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
                 gap: 10,
                 padding: Insets::new_same(10),
             })));
-        scene.add_view_to_parent(make_label(&ViewId::new("err_title"), "Cannot open file"), &ERROR_DIALOG_ID);
+        scene.add_view_to_parent(
+            make_label(&ViewId::new("err_title"), "Cannot open file"),
+            &ERROR_DIALOG_ID,
+        );
         scene.add_view_to_parent(make_label(&ViewId::new("err_msg"), ""), &ERROR_DIALOG_ID);
-        scene.add_view_to_parent(make_button(&ViewId::new("error_dismiss"), "Dismiss"), &ERROR_DIALOG_ID);
+        scene.add_view_to_parent(
+            make_button(&ViewId::new("error_dismiss"), "Dismiss"),
+            &ERROR_DIALOG_ID,
+        );
         scene.add_view_to_root(err_panel);
     }
 
@@ -331,23 +376,38 @@ fn load_fonts() -> (&'static Font, &'static Font, &'static Font) {
 
 fn make_theme(font: &'static Font, bold_font: &'static Font) -> Theme {
     Theme {
-        standard: ViewStyle { fill: Rgb565::WHITE, text: Rgb565::BLACK },
-        accented: ViewStyle { fill: Rgb565::WHITE, text: Rgb565::BLACK },
-        selected: ViewStyle { fill: Rgb565::BLACK, text: Rgb565::WHITE },
-        panel:    ViewStyle { fill: Rgb565::WHITE, text: Rgb565::BLACK },
-        font:      FontKind::TrueType { size: UI_FONT_SIZE_MEDIUM, font },
-        bold_font: FontKind::TrueType { size: UI_FONT_SIZE_MEDIUM, font: bold_font },
+        standard: ViewStyle {
+            fill: Rgb565::WHITE,
+            text: Rgb565::BLACK,
+        },
+        accented: ViewStyle {
+            fill: Rgb565::WHITE,
+            text: Rgb565::BLACK,
+        },
+        selected: ViewStyle {
+            fill: Rgb565::BLACK,
+            text: Rgb565::WHITE,
+        },
+        panel: ViewStyle {
+            fill: Rgb565::WHITE,
+            text: Rgb565::BLACK,
+        },
+        font: FontKind::TrueType {
+            size: UI_FONT_SIZE_MEDIUM,
+            font,
+        },
+        bold_font: FontKind::TrueType {
+            size: UI_FONT_SIZE_MEDIUM,
+            font: bold_font,
+        },
     }
 }
 
 fn set_ui_font_size(theme: &mut Theme, font: &'static Font, bold_font: &'static Font, size: f32) {
-    theme.font = FontKind::TrueType {
-        font,
-        size,
-    };
+    theme.font = FontKind::TrueType { font, size };
     theme.bold_font = FontKind::TrueType {
-        font:bold_font,
-        size
+        font: bold_font,
+        size,
     }
 }
 
@@ -374,14 +434,15 @@ fn main() {
     set_ui_font_size(&mut theme, font, bold_font, UI_FONT_SIZE_MEDIUM);
     let handlers: Vec<Callback> = vec![handle_click];
 
-    let mut book: Box<dyn Book> = Box::new(EpubArchive::new(EPUB_DATA).expect("sherlock_holmes.epub parse failed"));
+    let mut book: Box<dyn Book> =
+        Box::new(EpubArchive::new(EPUB_DATA).expect("sherlock_holmes.epub parse failed"));
     let mut cfg = layout_cfg(body_font, hw.font_size(), win_w, win_h);
     let mut session = BookSession::new(book.as_ref(), &cfg).expect("BookSession init failed");
     update_content(&mut scene, &session, font_px_for(hw.font_size()));
 
     scene.mark_layout_dirty();
     'running: loop {
-        if(!scene.dirty_rect.is_empty()) {
+        if (!scene.dirty_rect.is_empty()) {
             info!("clip rect {}", scene.dirty_rect);
             let dirty = scene.dirty_rect.clone();
             let mut ctx = EmbeddedDrawingContext::new(&mut display);
@@ -396,12 +457,28 @@ fn main() {
             match event {
                 SimulatorEvent::Quit => break 'running,
                 // Keyboard shortcuts: arrow keys / Space simulate physical buttons.
-                SimulatorEvent::KeyDown { keycode: Keycode::Left, repeat: false, .. }
-                | SimulatorEvent::KeyDown { keycode: Keycode::Backspace, repeat: false, .. } => {
+                SimulatorEvent::KeyDown {
+                    keycode: Keycode::Left,
+                    repeat: false,
+                    ..
+                }
+                | SimulatorEvent::KeyDown {
+                    keycode: Keycode::Backspace,
+                    repeat: false,
+                    ..
+                } => {
                     nav_prev_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
                 }
-                SimulatorEvent::KeyDown { keycode: Keycode::Right, repeat: false, .. }
-                | SimulatorEvent::KeyDown { keycode: Keycode::Space, repeat: false, .. } => {
+                SimulatorEvent::KeyDown {
+                    keycode: Keycode::Right,
+                    repeat: false,
+                    ..
+                }
+                | SimulatorEvent::KeyDown {
+                    keycode: Keycode::Space,
+                    repeat: false,
+                    ..
+                } => {
                     nav_next_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
                 }
                 SimulatorEvent::MouseButtonUp { point, .. } => {
@@ -416,17 +493,27 @@ fn main() {
                                     win_w = new_w;
                                     win_h = new_h;
                                     scene.resize(Bounds::new(0, 0, win_w, win_h));
-                                    display = SimulatorDisplay::new(
-                                        Size::new(win_w as u32, win_h as u32),
-                                    );
+                                    display = SimulatorDisplay::new(Size::new(
+                                        win_w as u32,
+                                        win_h as u32,
+                                    ));
                                     window = Window::new("ereader_ui", &settings);
                                     cfg = layout_cfg(body_font, hw.font_size(), win_w, win_h);
                                     session.reader.relayout(&cfg);
-                                    update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                                    update_content(
+                                        &mut scene,
+                                        &session,
+                                        font_px_for(hw.font_size()),
+                                    );
                                 }
                             } else if input.source == FONT_SIZE_ID {
                                 hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
-                                set_ui_font_size(&mut theme, font, bold_font, calc_font_size(hw.font_size()));
+                                set_ui_font_size(
+                                    &mut theme,
+                                    font,
+                                    bold_font,
+                                    calc_font_size(hw.font_size()),
+                                );
                                 cfg = layout_cfg(body_font, hw.font_size(), win_w, win_h);
                                 session.reader.relayout(&cfg);
                                 scene.mark_layout_dirty();
@@ -441,9 +528,21 @@ fn main() {
                                 view.title = format_time_utc(t);
                             }
                         } else if input.source == ViewId::new("prev_page") {
-                            nav_prev_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
+                            nav_prev_page(
+                                &mut hw,
+                                &mut scene,
+                                book.as_ref(),
+                                &mut cfg,
+                                &mut session,
+                            );
                         } else if input.source == ViewId::new("next_page") {
-                            nav_next_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
+                            nav_next_page(
+                                &mut hw,
+                                &mut scene,
+                                book.as_ref(),
+                                &mut cfg,
+                                &mut session,
+                            );
                         } else if input.source == ViewId::new("library") {
                             let files = hw.list_book_files();
                             if let Some(v) = scene.get_view_mut(&ViewId::new("lib_list")) {
@@ -459,11 +558,19 @@ fn main() {
                                 if let Some(data) = hw.load_book_file(filename) {
                                     let new_book = book_from_data(filename, data);
                                     cfg = layout_cfg(body_font, hw.font_size(), win_w, win_h);
-                                    if let Ok(new_session) = BookSession::new(new_book.as_ref(), &cfg) {
+                                    if let Ok(new_session) =
+                                        BookSession::new(new_book.as_ref(), &cfg)
+                                    {
                                         session = new_session;
                                         book = new_book;
-                                        update_content(&mut scene, &session, font_px_for(hw.font_size()));
-                                        if let Some(v) = scene.get_view_mut(&ViewId::new("booktitle")) {
+                                        update_content(
+                                            &mut scene,
+                                            &session,
+                                            font_px_for(hw.font_size()),
+                                        );
+                                        if let Some(v) =
+                                            scene.get_view_mut(&ViewId::new("booktitle"))
+                                        {
                                             v.title = filename.clone();
                                         }
                                     } else {
@@ -508,11 +615,13 @@ fn calc_font_size(font_size: FontSize) -> f32 {
     }
 }
 
-fn nav_next_page(hw: &mut dyn HardwareAccess,
-                 scene: &mut Scene,
-                 epub: &dyn Book,
-                 cfg: &mut LayoutConfig,
-                 session: &mut BookSession) {
+fn nav_next_page(
+    hw: &mut dyn HardwareAccess,
+    scene: &mut Scene,
+    epub: &dyn Book,
+    cfg: &mut LayoutConfig,
+    session: &mut BookSession,
+) {
     if session.reader.current_page + 1 >= session.reader.page_count() {
         session.next_chapter(epub, cfg).ok();
     } else {
@@ -521,11 +630,13 @@ fn nav_next_page(hw: &mut dyn HardwareAccess,
     update_content(scene, &session, font_px_for(hw.font_size()));
 }
 
-fn nav_prev_page(hw: &mut dyn HardwareAccess,
-                 scene: &mut Scene,
-                 epub: &dyn Book,
-                 cfg: &mut LayoutConfig,
-                 session: &mut BookSession) {
+fn nav_prev_page(
+    hw: &mut dyn HardwareAccess,
+    scene: &mut Scene,
+    epub: &dyn Book,
+    cfg: &mut LayoutConfig,
+    session: &mut BookSession,
+) {
     if session.reader.current_page == 0 {
         session.prev_chapter(epub, cfg).ok();
     } else {
@@ -557,14 +668,17 @@ const SLEEP_AFTER_SECS: u64 = 60;
 /// the logical coordinate space matches what the user sees.
 #[cfg(feature = "esp")]
 struct Rgb565ToGray4<'a> {
-    display:     Display<'a>,
+    display: Display<'a>,
     orientation: Orientation,
 }
 
 #[cfg(feature = "esp")]
 impl<'a> Rgb565ToGray4<'a> {
     fn new(display: Display<'a>, orientation: Orientation) -> Self {
-        Self { display, orientation }
+        Self {
+            display,
+            orientation,
+        }
     }
     fn flush(&mut self) {
         self.display.flush(DrawMode::BlackOnWhite).unwrap();
@@ -589,9 +703,9 @@ impl<'a> embedded_graphics::draw_target::DrawTarget for Rgb565ToGray4<'a> {
             let b8 = (b << 3) | (b >> 2);
             let luma8 = (77 * r8 + 150 * g8 + 29 * b8) >> 8;
             let gray4 = (luma8 >> 4) as u8;
-            let (px, py) = self.orientation.logical_to_phys(
-                pix.0.x as u16, pix.0.y as u16,
-            );
+            let (px, py) = self
+                .orientation
+                .logical_to_phys(pix.0.x as u16, pix.0.y as u16);
             let _ = self.display.set_pixel(px, py, gray4);
         }
         Ok(())
@@ -610,9 +724,12 @@ impl<'a> embedded_graphics::geometry::OriginDimensions for Rgb565ToGray4<'a> {
 use embassy_executor::Spawner;
 #[cfg(feature = "esp")]
 use embassy_net::{
-    udp::{PacketMetadata, UdpSocket}, IpAddress, IpEndpoint, Ipv4Address, Runner, StackResources};
+    udp::{PacketMetadata, UdpSocket},
+    IpAddress, IpEndpoint, Ipv4Address, Runner, StackResources,
+};
 #[cfg(feature = "esp")]
 use embassy_time::{with_timeout, Duration, Instant, Timer as EmbassyTimer};
+use ereader::bookview::{draw_book_content, layout_cfg, update_content, BookState, CONTENT_ID};
 #[cfg(feature = "esp")]
 use ereader::hardware::rtc_store_read;
 #[cfg(feature = "esp")]
@@ -631,7 +748,6 @@ use esp_hal::{
 };
 #[cfg(feature = "esp")]
 use esp_radio::wifi::{sta::StationConfig, Config, ControllerConfig, Interface};
-use Flex::Shrink;
 use fontdue::Font;
 use iris_ui::input::OutputAction;
 use iris_ui::panel::{make_panel, PanelState};
@@ -639,21 +755,27 @@ use iris_ui::view::Flex::Grow;
 use log::info;
 #[cfg(feature = "esp")]
 use static_cell::StaticCell;
-use ereader::bookview::{draw_book_content, layout_cfg, update_content, BookState, CONTENT_ID};
+use Flex::Shrink;
 
 // WiFi credentials — set WIFI_SSID and WIFI_PASS at build time.
 #[cfg(feature = "esp")]
-const SSID:     &str = match option_env!("WIFI_SSID") { Some(s) => s, None => "SSID" };
+const SSID: &str = match option_env!("WIFI_SSID") {
+    Some(s) => s,
+    None => "SSID",
+};
 #[cfg(feature = "esp")]
-const PASSWORD: &str = match option_env!("WIFI_PASS") { Some(s) => s, None => "PASSWORD" };
+const PASSWORD: &str = match option_env!("WIFI_PASS") {
+    Some(s) => s,
+    None => "PASSWORD",
+};
 // Set to false to skip WiFi init and NTP sync entirely (e.g. when no network is available).
 #[cfg(feature = "esp")]
 const ENABLE_WIFI_NTP: bool = false;
 
 #[cfg(feature = "esp")]
-const NTP_ADDR:        [u8; 4] = [216, 239, 35, 0]; // time.google.com
+const NTP_ADDR: [u8; 4] = [216, 239, 35, 0]; // time.google.com
 #[cfg(feature = "esp")]
-const NTP_UNIX_OFFSET: u64     = 2_208_988_800;     // NTP epoch → Unix epoch
+const NTP_UNIX_OFFSET: u64 = 2_208_988_800; // NTP epoch → Unix epoch
 
 #[cfg(feature = "esp")]
 macro_rules! mk_static {
@@ -673,10 +795,10 @@ async fn net_task(mut runner: Runner<'static, Interface<'static>>) {
 #[cfg(feature = "esp")]
 async fn query_ntp(stack: embassy_net::Stack<'static>) -> Option<u64> {
     let mut rx_meta = [PacketMetadata::EMPTY; 4];
-    let mut rx_buf  = [0u8; 512];
+    let mut rx_buf = [0u8; 512];
     let mut tx_meta = [PacketMetadata::EMPTY; 4];
-    let mut tx_buf  = [0u8; 256];
-    let mut socket  = UdpSocket::new(stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
+    let mut tx_buf = [0u8; 256];
+    let mut socket = UdpSocket::new(stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
     socket.bind(12345).ok()?;
 
     let endpoint = IpEndpoint::new(IpAddress::Ipv4(Ipv4Address::from_octets(NTP_ADDR)), 123);
@@ -685,10 +807,14 @@ async fn query_ntp(stack: embassy_net::Stack<'static>) -> Option<u64> {
     socket.send_to(&pkt, endpoint).await.ok()?;
 
     let (n, _) = socket.recv_from(&mut pkt).await.ok()?;
-    if n < 48 { return None; }
+    if n < 48 {
+        return None;
+    }
 
     let ntp_secs = u32::from_be_bytes([pkt[40], pkt[41], pkt[42], pkt[43]]) as u64;
-    if ntp_secs <= NTP_UNIX_OFFSET { return None; }
+    if ntp_secs <= NTP_UNIX_OFFSET {
+        return None;
+    }
     Some(ntp_secs - NTP_UNIX_OFFSET)
 }
 
@@ -699,8 +825,7 @@ async fn main(spawner: Spawner) -> ! {
 
     esp_println::logger::init_logger(log::LevelFilter::Info);
 
-    let config = esp_hal::Config::default()
-        .with_cpu_clock(esp_hal::clock::CpuClock::_240MHz);
+    let config = esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::_240MHz);
     let peripherals = esp_hal::init(config);
 
     esp_alloc::psram_allocator!(
@@ -715,7 +840,7 @@ async fn main(spawner: Spawner) -> ! {
     esp_alloc::heap_allocator!(size: 72 * 1024);
 
     // Must run before any EmbassyTimer use and before esp_radio::wifi::new.
-    let timg0  = TimerGroup::new(peripherals.TIMG0);
+    let timg0 = TimerGroup::new(peripherals.TIMG0);
     let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
 
@@ -750,30 +875,41 @@ async fn main(spawner: Spawner) -> ! {
     let mut ledc = Ledc::new(peripherals.LEDC);
     ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
     let mut lstimer0 = ledc.timer::<LowSpeed>(timer::Number::Timer0);
-    lstimer0.configure(timer::config::Config {
-        duty:         timer::config::Duty::Duty8Bit,
-        clock_source: timer::LSClockSource::APBClk,
-        frequency:    Rate::from_khz(1),
-    }).unwrap();
+    lstimer0
+        .configure(timer::config::Config {
+            duty: timer::config::Duty::Duty8Bit,
+            clock_source: timer::LSClockSource::APBClk,
+            frequency: Rate::from_khz(1),
+        })
+        .unwrap();
     let mut bl_ch = ledc.channel(channel::Number::Channel0, peripherals.GPIO11);
-    bl_ch.configure(channel::config::Config {
-        timer:      &lstimer0,
-        duty_pct:   100,
-        drive_mode: esp_hal::gpio::DriveMode::PushPull,
-    }).unwrap();
+    bl_ch
+        .configure(channel::config::Config {
+            timer: &lstimer0,
+            duty_pct: 100,
+            drive_mode: esp_hal::gpio::DriveMode::PushPull,
+        })
+        .unwrap();
     // Detect whether we woke from deep sleep or did a cold boot.
     let is_sleep_wakeup = reset_reason(Cpu::ProCpu) == Some(SocResetReason::CoreDeepSleep);
 
     // On wakeup restore from RTC fast memory (fast, no flash wear); on first
     // boot read persisted settings from NVS flash.
     let (font_idx, bl_idx, ori_idx, saved_chapter, saved_anchor) = if is_sleep_wakeup {
-        let anchor  = rtc_store_read(0) as usize;
-        let packed  = rtc_store_read(5);
-        let font    = (packed & 0xF) as usize;
-        let bl      = ((packed >> 4) & 0xF) as usize;
-        let ori     = ((packed >> 8) & 0xF) as usize;
+        let anchor = rtc_store_read(0) as usize;
+        let packed = rtc_store_read(5);
+        let font = (packed & 0xF) as usize;
+        let bl = ((packed >> 4) & 0xF) as usize;
+        let ori = ((packed >> 8) & 0xF) as usize;
         let chapter = rtc_store_read(6) as usize;
-        log::info!("woke from deep sleep: ch={} anchor={} font={} bl={} ori={}", chapter, anchor, font, bl, ori);
+        log::info!(
+            "woke from deep sleep: ch={} anchor={} font={} bl={} ori={}",
+            chapter,
+            anchor,
+            font,
+            bl,
+            ori
+        );
         (font, bl, ori, chapter, anchor)
     } else {
         let (font, bl, ori) = load_settings();
@@ -782,8 +918,14 @@ async fn main(spawner: Spawner) -> ! {
     };
 
     // Physical buttons: BOOT (GPIO0, active-low) = prev page; GPIO38 = next page.
-    let btn_prev = Input::new(peripherals.GPIO0,  InputConfig::default().with_pull(Pull::Up));
-    let btn_next = Input::new(peripherals.GPIO38, InputConfig::default().with_pull(Pull::Up));
+    let btn_prev = Input::new(
+        peripherals.GPIO0,
+        InputConfig::default().with_pull(Pull::Up),
+    );
+    let btn_next = Input::new(
+        peripherals.GPIO38,
+        InputConfig::default().with_pull(Pull::Up),
+    );
 
     // Capture seed before rtc is moved into hw.
     let seed = rtc.current_time_us();
@@ -830,7 +972,8 @@ async fn main(spawner: Spawner) -> ! {
         let (mut controller, interfaces) = esp_radio::wifi::new(
             peripherals.WIFI,
             ControllerConfig::default().with_initial_config(station_config),
-        ).expect("wifi init");
+        )
+        .expect("wifi init");
 
         if !is_sleep_wakeup {
             let (stack, runner) = embassy_net::new(
@@ -851,7 +994,8 @@ async fn main(spawner: Spawner) -> ! {
                 stack.wait_config_up().await;
                 log::info!("NTP: DHCP obtained, querying time.google.com...");
                 query_ntp(stack).await
-            }).await;
+            })
+            .await;
 
             match ntp_result {
                 Ok(Some(unix_secs)) => {
@@ -864,7 +1008,7 @@ async fn main(spawner: Spawner) -> ! {
                     log::info!("NTP synced: {}", time_str);
                 }
                 Ok(None) => log::warn!("NTP: query failed (no response or bad packet)"),
-                Err(_)   => log::warn!("NTP: timed out after 20 s (SSID: '{}')", SSID),
+                Err(_) => log::warn!("NTP: timed out after 20 s (SSID: '{}')", SSID),
             }
 
             controller.disconnect_async().await.ok();
@@ -921,13 +1065,16 @@ async fn main(spawner: Spawner) -> ! {
         if let Some((tx, ty)) = bridge.display.read_touch(&mut gt911) {
             if !was_touching {
                 let (lx, ly) = hw.orientation().phys_to_logical(tx, ty);
-                if let Some(input) =
-                    click_at(&mut scene, &handlers, GPoint::new(lx, ly))
-                {
+                if let Some(input) = click_at(&mut scene, &handlers, GPoint::new(lx, ly)) {
                     if let Some(OutputAction::Command(ref cmd)) = input.action {
                         if input.source == FONT_SIZE_ID {
                             hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
-                            set_ui_font_size(&mut theme, font, bold_font, calc_font_size(hw.font_size()));
+                            set_ui_font_size(
+                                &mut theme,
+                                font,
+                                bold_font,
+                                calc_font_size(hw.font_size()),
+                            );
                             let (cur_w, cur_h) = hw.orientation().logical_size();
                             cfg = layout_cfg(body_font, hw.font_size(), cur_w, cur_h);
                             session.reader.relayout(&cfg);
@@ -991,7 +1138,11 @@ async fn main(spawner: Spawner) -> ! {
                                 if let Ok(new_session) = BookSession::new(new_book.as_ref(), &cfg) {
                                     session = new_session;
                                     book = new_book;
-                                    update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                                    update_content(
+                                        &mut scene,
+                                        &session,
+                                        font_px_for(hw.font_size()),
+                                    );
                                     if let Some(v) = scene.get_view_mut(&ViewId::new("booktitle")) {
                                         v.title = filename.clone();
                                     }
