@@ -1,5 +1,11 @@
 # Changes
 
+## 2026-08-06 (2)
+
+Fast page-scroll overlay: hold Up/Down (simulator) or Prev/Next buttons (ESP) for >1 s.
+
+- `examples/ereader_ui.rs`: Added `FAST_SCROLL_PANEL_ID` constant, `layout_fast_scroll_panel` (centers a 300×80 panel), and `update_fast_scroll_label` helper. A small centered panel appears after a 1-second hold showing "Ch N/Total · Pg N/Total"; the counter advances every 200 ms. At chapter boundaries the session loads the adjacent chapter so the scroll continues across chapters. Only the panel area is re-rendered during the hold (partial refresh). On release the book jumps to the target chapter/page and the panel hides. Short press still does a normal single-page turn (ESP). Simulator uses Up/Down arrow keys; ESP restructures the button polling loop to detect hold duration.
+
 ## 2026-08-06
 
 Library dialog now requires an explicit "Read" button tap to open a book.

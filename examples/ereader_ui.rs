@@ -40,6 +40,9 @@ const EPUB_DATA: &[u8] = include_bytes!("sherlock_holmes.epub");
 const DIALOG_ID: ViewId = ViewId::new("dialog");
 const LIBRARY_DIALOG_ID: ViewId = ViewId::new("library_dialog");
 const ERROR_DIALOG_ID: ViewId = ViewId::new("error_dialog");
+const FAST_SCROLL_PANEL_ID: ViewId = ViewId::new("fast_scroll_panel");
+const FAST_SCROLL_W: i32 = 300;
+const FAST_SCROLL_H: i32 = 80;
 const ORIENTATION_ID: ViewId = ViewId::new("orientation");
 const BACKLIGHT_ID: ViewId = ViewId::new("backlight");
 const FONT_SIZE_ID: ViewId = ViewId::new("font_size");
@@ -119,6 +122,36 @@ fn show_error_dialog(scene: &mut Scene, filename: &str) {
     scene.show_view(&ERROR_DIALOG_ID);
     scene.mark_layout_dirty();
     scene.mark_dirty_all();
+}
+
+fn layout_fast_scroll_panel(e: &mut LayoutEvent) {
+    if let Some(v) = e.scene.get_view_mut(&e.target) {
+        v.bounds = Bounds::new(
+            (e.space.w - FAST_SCROLL_W) / 2,
+            (e.space.h - FAST_SCROLL_H) / 2,
+            FAST_SCROLL_W,
+            FAST_SCROLL_H,
+        );
+    }
+}
+
+fn update_fast_scroll_label(
+    scene: &mut Scene,
+    chapter: usize,
+    chapter_count: usize,
+    page: usize,
+    page_count: usize,
+) {
+    if let Some(v) = scene.get_view_mut(&ViewId::new("fast_scroll_label")) {
+        v.title = format!(
+            "Ch {}/{} · Pg {}/{}",
+            chapter + 1,
+            chapter_count,
+            page + 1,
+            page_count
+        );
+    }
+    scene.mark_dirty_view(&FAST_SCROLL_PANEL_ID);
 }
 
 fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
@@ -347,6 +380,23 @@ fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
         scene.add_view_to_root(err_panel);
     }
 
+    // ── Fast-scroll overlay (hidden; shows page indicator while button held) ──
+    {
+        let fs_panel = make_panel(&FAST_SCROLL_PANEL_ID)
+            .with_layout(Some(layout_fast_scroll_panel))
+            .with_visible(false)
+            .with_state(Some(Box::new(PanelState {
+                border_visible: true,
+                gap: 0,
+                padding: Insets::new_same(10),
+            })));
+        scene.add_view_to_parent(
+            make_label(&ViewId::new("fast_scroll_label"), "Page 0 / 0"),
+            &FAST_SCROLL_PANEL_ID,
+        );
+        scene.add_view_to_root(fs_panel);
+    }
+
     scene
 }
 
@@ -430,6 +480,7 @@ fn main() {
     use embedded_graphics_simulator::{
         sdl2::Keycode, OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
     };
+    use std::time::Instant;
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
@@ -454,8 +505,64 @@ fn main() {
     let mut current_filename = String::from("__embedded__");
     update_content(&mut scene, &session, font_px_for(hw.font_size()));
 
+    // Fast-scroll hold state (Up/Down arrow keys).
+    let mut fs_forward = false;
+    let mut fs_pressed_at: Option<Instant> = None;
+    let mut fs_active = false;
+    let mut fs_target: usize = 0;
+    let mut fs_last_step = Instant::now();
+
     scene.mark_layout_dirty();
     'running: loop {
+        // Advance fast-scroll page counter while a direction key is held.
+        if let Some(pressed_at) = fs_pressed_at {
+            if !fs_active && pressed_at.elapsed().as_millis() >= 1000 {
+                fs_active = true;
+                fs_target = session.reader.current_page;
+                fs_last_step = Instant::now();
+                update_fast_scroll_label(
+                    &mut scene,
+                    session.chapter_idx,
+                    session.chapter_count(),
+                    fs_target,
+                    session.reader.page_count(),
+                );
+                scene.show_view(&FAST_SCROLL_PANEL_ID);
+                scene.mark_layout_dirty();
+            }
+            if fs_active && fs_last_step.elapsed().as_millis() >= 200 {
+                if fs_forward {
+                    if fs_target + 1 >= session.reader.page_count() {
+                        if session.chapter_idx + 1 < session.chapter_count() {
+                            session
+                                .go_to_chapter(session.chapter_idx + 1, book.as_ref(), &cfg)
+                                .ok();
+                            fs_target = 0;
+                        }
+                    } else {
+                        fs_target += 1;
+                    }
+                } else if fs_target == 0 {
+                    if session.chapter_idx > 0 {
+                        session
+                            .go_to_chapter(session.chapter_idx - 1, book.as_ref(), &cfg)
+                            .ok();
+                        fs_target = session.reader.page_count().saturating_sub(1);
+                    }
+                } else {
+                    fs_target -= 1;
+                }
+                fs_last_step = Instant::now();
+                update_fast_scroll_label(
+                    &mut scene,
+                    session.chapter_idx,
+                    session.chapter_count(),
+                    fs_target,
+                    session.reader.page_count(),
+                );
+            }
+        }
+
         if (!scene.dirty_rect.is_empty()) {
             info!("clip rect {}", scene.dirty_rect);
             let dirty = scene.dirty_rect.clone();
@@ -494,6 +601,44 @@ fn main() {
                     ..
                 } => {
                     nav_next_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
+                }
+                // Fast-scroll: hold Up or Down for >1 s to scan pages without rendering content.
+                SimulatorEvent::KeyDown {
+                    keycode: Keycode::Down,
+                    repeat: false,
+                    ..
+                } => {
+                    if fs_pressed_at.is_none() {
+                        fs_forward = true;
+                        fs_pressed_at = Some(Instant::now());
+                    }
+                }
+                SimulatorEvent::KeyDown {
+                    keycode: Keycode::Up,
+                    repeat: false,
+                    ..
+                } => {
+                    if fs_pressed_at.is_none() {
+                        fs_forward = false;
+                        fs_pressed_at = Some(Instant::now());
+                    }
+                }
+                SimulatorEvent::KeyUp {
+                    keycode: Keycode::Up,
+                    ..
+                }
+                | SimulatorEvent::KeyUp {
+                    keycode: Keycode::Down,
+                    ..
+                } => {
+                    if fs_active {
+                        session.reader.go_to_page(fs_target);
+                        update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                        scene.hide_view(&FAST_SCROLL_PANEL_ID);
+                        scene.mark_dirty_all();
+                    }
+                    fs_pressed_at = None;
+                    fs_active = false;
                 }
                 SimulatorEvent::MouseButtonUp { point, .. } => {
                     if let Some(input) =
@@ -1058,28 +1203,111 @@ async fn main(spawner: Spawner) -> ! {
 
     'running: loop {
         // Physical button handling: BOOT (GPIO0) = prev, GPIO38 = next.
-        // Debounce by waiting for release before acting.
-        if hw.button_prev_pressed() {
-            while hw.button_prev_pressed() {
-                EmbassyTimer::after(Duration::from_millis(10)).await;
-            }
-            nav_prev_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
-            hw.save_bookmark(
-                &current_filename,
-                session.chapter_idx,
-                session.reader.anchor_byte,
-            );
-            last_interaction = Instant::now();
+        // Short press → single page turn. Hold > 1 s → fast-scroll mode: a
+        // small overlay shows the target page number, incrementing every 200 ms.
+        // The book content only re-renders on release.
+        let btn_pressed = if hw.button_prev_pressed() {
+            Some(false)
         } else if hw.button_next_pressed() {
-            while hw.button_next_pressed() {
+            Some(true)
+        } else {
+            None
+        };
+        if let Some(forward) = btn_pressed {
+            let pressed_at = Instant::now();
+            let mut fs_active = false;
+            let mut fs_target = 0usize;
+            let mut fs_last_step = Instant::now();
+
+            loop {
+                let still_held = if forward {
+                    hw.button_next_pressed()
+                } else {
+                    hw.button_prev_pressed()
+                };
+                if !still_held {
+                    break;
+                }
+
+                if !fs_active && pressed_at.elapsed().as_millis() >= 1000 {
+                    fs_active = true;
+                    fs_target = session.reader.current_page;
+                    fs_last_step = Instant::now();
+                    update_fast_scroll_label(
+                        &mut scene,
+                        session.chapter_idx,
+                        session.chapter_count(),
+                        fs_target,
+                        session.reader.page_count(),
+                    );
+                    scene.show_view(&FAST_SCROLL_PANEL_ID);
+                    scene.mark_layout_dirty();
+                }
+
+                if fs_active && fs_last_step.elapsed().as_millis() >= 200 {
+                    if forward {
+                        if fs_target + 1 >= session.reader.page_count() {
+                            if session.chapter_idx + 1 < session.chapter_count() {
+                                session
+                                    .go_to_chapter(session.chapter_idx + 1, book.as_ref(), &cfg)
+                                    .ok();
+                                fs_target = 0;
+                            }
+                        } else {
+                            fs_target += 1;
+                        }
+                    } else if fs_target == 0 {
+                        if session.chapter_idx > 0 {
+                            session
+                                .go_to_chapter(session.chapter_idx - 1, book.as_ref(), &cfg)
+                                .ok();
+                            fs_target = session.reader.page_count().saturating_sub(1);
+                        }
+                    } else {
+                        fs_target -= 1;
+                    }
+                    fs_last_step = Instant::now();
+                    update_fast_scroll_label(
+                        &mut scene,
+                        session.chapter_idx,
+                        session.chapter_count(),
+                        fs_target,
+                        session.reader.page_count(),
+                    );
+                }
+
+                // Redraw only the panel while held (partial refresh).
+                let dirty_rect = scene.dirty_rect.clone();
+                if !dirty_rect.is_empty() {
+                    let (sw, sh) = hw.orientation().logical_size();
+                    let needs_full = dirty_rect.size.w >= sw && dirty_rect.size.h >= sh;
+                    if needs_full {
+                        bridge.display.fill(0x0F).unwrap();
+                        bridge.display.flush(DrawMode::WhiteOnBlack).unwrap();
+                    }
+                    {
+                        let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
+                        ctx.clip = dirty_rect;
+                        layout_scene(&mut scene, &theme);
+                        draw_scene(&mut scene, &mut ctx, &theme);
+                    }
+                    bridge.flush();
+                }
+
                 EmbassyTimer::after(Duration::from_millis(10)).await;
             }
-            nav_next_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
-            hw.save_bookmark(
-                &current_filename,
-                session.chapter_idx,
-                session.reader.anchor_byte,
-            );
+
+            if fs_active {
+                scene.hide_view(&FAST_SCROLL_PANEL_ID);
+                session.reader.go_to_page(fs_target);
+                update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                scene.mark_dirty_all();
+            } else if forward {
+                nav_next_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
+            } else {
+                nav_prev_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
+            }
+            hw.save_bookmark(&current_filename, session.chapter_idx, session.reader.anchor_byte);
             last_interaction = Instant::now();
         }
 
