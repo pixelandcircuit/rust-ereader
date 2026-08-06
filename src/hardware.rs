@@ -602,7 +602,7 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
         use esp_hal::{delay::Delay, gpio::{Level, Output, OutputConfig}, spi::master::{Config as SpiConfig, Spi}, time::Rate};
         use embedded_hal::spi::SpiBus;
         use embedded_hal_bus::spi::ExclusiveDevice;
-        use embedded_sdmmc::{Error, SdCard, SdCardError, VolumeIdx, VolumeManager};
+        use embedded_sdmmc::{Error, LfnBuffer, SdCard, SdCardError, VolumeIdx, VolumeManager};
 
         // SD and LoRa share the SPI bus; deselect both CS lines before touching the bus.
         let _lora_cs = unsafe { Output::new(esp_hal::gpio::AnyPin::steal(46), Level::High, OutputConfig::default()) };
@@ -628,14 +628,28 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
         let Ok(root) = vol.open_root_dir() else { return alloc::vec::Vec::new() };
 
         let mut files = alloc::vec::Vec::new();
-        let _ = root.iterate_dir(|e| {
-            if e.attributes.is_lfn() || e.attributes.is_volume() || e.attributes.is_directory() { return; }
+        let mut lfn_storage = [0u8; 256];
+        let mut lfn_buf = LfnBuffer::new(&mut lfn_storage);
+        let _ = root.iterate_dir_lfn(&mut lfn_buf, |e, lfn| {
+            if e.attributes.is_volume() || e.attributes.is_directory() { return; }
+            // Skip Apple Double files (macOS metadata):
+            // - with LFN they begin with "._"
+            // - without LFN their SFN begins with '_' (8.3 mangling of "._")
+            let is_apple_double = match lfn {
+                Some(s) => s.starts_with("._"),
+                None => alloc::format!("{}", e.name).starts_with('_'),
+            };
+            if is_apple_double { return; }
             let ext = e.name.extension();
             if ext.eq_ignore_ascii_case(b"EPU")
                 || ext.eq_ignore_ascii_case(b"HTM")
                 || ext.eq_ignore_ascii_case(b"TXT")
             {
-                files.push(alloc::format!("{}", e.name));
+                let name = match lfn {
+                    Some(s) => String::from(s),
+                    None => alloc::format!("{}", e.name),
+                };
+                files.push(name);
             }
         });
         files
@@ -645,7 +659,7 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
         use esp_hal::{delay::Delay, gpio::{Level, Output, OutputConfig}, spi::master::{Config as SpiConfig, Spi}, time::Rate};
         use embedded_hal::spi::SpiBus;
         use embedded_hal_bus::spi::ExclusiveDevice;
-        use embedded_sdmmc::{Error, Mode, SdCard, SdCardError, VolumeIdx, VolumeManager};
+        use embedded_sdmmc::{Error, LfnBuffer, Mode, SdCard, SdCardError, VolumeIdx, VolumeManager};
 
         let _lora_cs = unsafe { Output::new(esp_hal::gpio::AnyPin::steal(46), Level::High, OutputConfig::default()) };
         let cs = unsafe { Output::new(esp_hal::gpio::AnyPin::steal(12), Level::High, OutputConfig::default()) };
@@ -667,10 +681,17 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
         };
         let root = vol.open_root_dir().ok()?;
 
-        // Find the ShortFileName matching the given display name, then read the file.
+        // Find the SFN entry whose LFN (or SFN fallback) matches the given display name.
         let mut sfn: Option<embedded_sdmmc::ShortFileName> = None;
-        let _ = root.iterate_dir(|e| {
-            if sfn.is_none() && alloc::format!("{}", e.name) == name {
+        let mut lfn_storage = [0u8; 256];
+        let mut lfn_buf = LfnBuffer::new(&mut lfn_storage);
+        let _ = root.iterate_dir_lfn(&mut lfn_buf, |e, lfn| {
+            if sfn.is_some() { return; }
+            let display = match lfn {
+                Some(s) => String::from(s),
+                None => alloc::format!("{}", e.name),
+            };
+            if display == name {
                 sfn = Some(e.name.clone());
             }
         });

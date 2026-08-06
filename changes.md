@@ -1,5 +1,11 @@
 # Changes
 
+## 2026-08-05 (6)
+
+Show LFN (long file names) on SD card; filter Apple Double files.
+
+- `src/hardware.rs`: `list_book_files` and `load_book_file` now use `iterate_dir_lfn` with a 256-byte `LfnBuffer` so the full long filename is shown instead of the 8.3 mangled SFN. Apple Double files (macOS metadata) are filtered: with LFN they start with `._`, without LFN their SFN starts with `_` after 8.3 mangling.
+
 ## 2026-08-05 (5)
 
 Per-book bookmark table: each book remembers its reading position independently.
