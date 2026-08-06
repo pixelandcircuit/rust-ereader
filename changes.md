@@ -1,5 +1,11 @@
 # Changes
 
+## 2026-08-06
+
+Library dialog now requires an explicit "Read" button tap to open a book.
+
+- `examples/ereader_ui.rs`: Added a "Read" button alongside "Cancel" in the library dialog footer row. Tapping a list item now only highlights it; tapping "Read" loads the selected book. Updated both the simulator and hardware event loops.
+
 ## 2026-08-05 (6)
 
 Show LFN (long file names) on SD card; filter Apple Double files.

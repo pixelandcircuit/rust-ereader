@@ -298,13 +298,28 @@ fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
         scene.add_view_to_parent(
             make_list_view(&ViewId::new("lib_list"), vec![], 0)
                 .with_h_flex(Flex::Grow)
+                .with_v_flex(Flex::Grow)
                 .with_h_align(Align::Start),
             &LIBRARY_DIALOG_ID,
         );
+        let lib_btn_row_id = ViewId::new("lib_btn_row");
         scene.add_view_to_parent(
-            make_button(&ViewId::new("library_close"), "Cancel").with_h_align(Align::End),
-            &LIBRARY_DIALOG_ID,
+            make_button(&ViewId::new("library_close"), "Cancel"),
+            &lib_btn_row_id,
         );
+        scene.add_view_to_parent(
+            make_button(&ViewId::new("library_read"), "Read"),
+            &lib_btn_row_id,
+        );
+        let lib_btn_row = make_panel(&lib_btn_row_id)
+            .with_layout(Some(layout_hbox))
+            .with_h_flex(Flex::Grow)
+            .with_state(Some(Box::new(PanelState {
+                border_visible: false,
+                gap: 5,
+                padding: Insets::new_same(0),
+            })));
+        scene.add_view_to_parent(lib_btn_row, &LIBRARY_DIALOG_ID);
         scene.add_view_to_root(lib_panel);
     }
 
@@ -553,16 +568,22 @@ fn main() {
                             scene.mark_layout_dirty();
                             scene.mark_dirty_all();
                         } else if input.source == ViewId::new("lib_list") {
-                            if let Some(OutputAction::Command(ref filename)) = input.action {
-                                if let Some(data) = hw.load_book_file(filename) {
+                            scene.mark_dirty_all();
+                        } else if input.source == ViewId::new("library_read") {
+                            let filename = scene
+                                .get_view_mut(&ViewId::new("lib_list"))
+                                .and_then(|v| v.get_state::<ListState>())
+                                .and_then(|s| s.items.get(s.selected).cloned());
+                            if let Some(filename) = filename {
+                                if let Some(data) = hw.load_book_file(&filename) {
                                     hw.save_bookmark(
                                         &current_filename,
                                         session.chapter_idx,
                                         session.reader.anchor_byte,
                                     );
-                                    let new_book = book_from_data(filename, data);
+                                    let new_book = book_from_data(&filename, data);
                                     cfg = layout_cfg(body_font, hw.font_size(), win_w, win_h);
-                                    let new_session = match hw.load_bookmark(filename) {
+                                    let new_session = match hw.load_bookmark(&filename) {
                                         Some((ch, anchor)) => BookSession::restore(
                                             new_book.as_ref(),
                                             &cfg,
@@ -588,7 +609,7 @@ fn main() {
                                         }
                                     } else {
                                         scene.hide_view(&LIBRARY_DIALOG_ID);
-                                        show_error_dialog(&mut scene, filename);
+                                        show_error_dialog(&mut scene, &filename);
                                     }
                                     scene.hide_view(&LIBRARY_DIALOG_ID);
                                     scene.mark_dirty_all();
@@ -1159,17 +1180,24 @@ async fn main(spawner: Spawner) -> ! {
                         scene.mark_dirty_all();
                         last_interaction = Instant::now();
                     } else if input.source == ViewId::new("lib_list") {
-                        if let Some(OutputAction::Command(ref filename)) = input.action {
-                            if let Some(data) = hw.load_book_file(filename) {
+                        scene.mark_dirty_all();
+                        last_interaction = Instant::now();
+                    } else if input.source == ViewId::new("library_read") {
+                        let filename = scene
+                            .get_view_mut(&ViewId::new("lib_list"))
+                            .and_then(|v| v.get_state::<ListState>())
+                            .and_then(|s| s.items.get(s.selected).cloned());
+                        if let Some(filename) = filename {
+                            if let Some(data) = hw.load_book_file(&filename) {
                                 hw.save_bookmark(
                                     &current_filename,
                                     session.chapter_idx,
                                     session.reader.anchor_byte,
                                 );
-                                let new_book = book_from_data(filename, data);
+                                let new_book = book_from_data(&filename, data);
                                 let (cw, ch) = hw.orientation().logical_size();
                                 cfg = layout_cfg(body_font, hw.font_size(), cw, ch);
-                                let new_session = match hw.load_bookmark(filename) {
+                                let new_session = match hw.load_bookmark(&filename) {
                                     Some((ch_idx, anchor)) => BookSession::restore(
                                         new_book.as_ref(),
                                         &cfg,
@@ -1193,7 +1221,7 @@ async fn main(spawner: Spawner) -> ! {
                                     }
                                 } else {
                                     scene.hide_view(&LIBRARY_DIALOG_ID);
-                                    show_error_dialog(&mut scene, filename);
+                                    show_error_dialog(&mut scene, &filename);
                                 }
                                 scene.hide_view(&LIBRARY_DIALOG_ID);
                                 scene.mark_dirty_all();
