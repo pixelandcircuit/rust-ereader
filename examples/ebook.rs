@@ -43,8 +43,8 @@ enum Orientation {
 impl Orientation {
     fn next(self) -> Self {
         match self {
-            Self::Deg0   => Self::Deg90,
-            Self::Deg90  => Self::Deg180,
+            Self::Deg0 => Self::Deg90,
+            Self::Deg90 => Self::Deg180,
             Self::Deg180 => Self::Deg270,
             Self::Deg270 => Self::Deg0,
         }
@@ -56,8 +56,8 @@ impl Orientation {
 
     fn label(self) -> &'static str {
         match self {
-            Self::Deg0   => "landscape 0°",
-            Self::Deg90  => "portrait 90°",
+            Self::Deg0 => "landscape 0°",
+            Self::Deg90 => "portrait 90°",
             Self::Deg180 => "landscape 180°",
             Self::Deg270 => "portrait 270°",
         }
@@ -88,18 +88,19 @@ impl<'d, 'hw> DrawTarget for RotatedDisplay<'d, 'hw> {
     where
         I: IntoIterator<Item = Pixel<Self::Color>>,
     {
-        const W: i32 = Display::WIDTH as i32;  // 960
+        const W: i32 = Display::WIDTH as i32; // 960
         const H: i32 = Display::HEIGHT as i32; // 540
         let orientation = self.orientation;
-        self.inner.draw_iter(pixels.into_iter().map(|Pixel(Point { x, y }, c)| {
-            let p = match orientation {
-                Orientation::Deg0   => Point::new(x,       y      ),
-                Orientation::Deg90  => Point::new(W-1-y,   x      ),
-                Orientation::Deg180 => Point::new(W-1-x,   H-1-y  ),
-                Orientation::Deg270 => Point::new(y,       H-1-x  ),
-            };
-            Pixel(p, c)
-        }))
+        self.inner
+            .draw_iter(pixels.into_iter().map(|Pixel(Point { x, y }, c)| {
+                let p = match orientation {
+                    Orientation::Deg0 => Point::new(x, y),
+                    Orientation::Deg90 => Point::new(W - 1 - y, x),
+                    Orientation::Deg180 => Point::new(W - 1 - x, H - 1 - y),
+                    Orientation::Deg270 => Point::new(y, H - 1 - x),
+                };
+                Pixel(p, c)
+            }))
     }
 }
 
@@ -195,14 +196,18 @@ where
         (&FONT_10X20, 50, 27)
     };
 
-    let style  = MonoTextStyle::new(font, Gray4::BLACK);
+    let style = MonoTextStyle::new(font, Gray4::BLACK);
     let border = PrimitiveStyle::with_stroke(Gray4::BLACK, 2);
-    let rule   = PrimitiveStyle::with_stroke(Gray4::BLACK, 1);
+    let rule = PrimitiveStyle::with_stroke(Gray4::BLACK, 1);
 
     // Border
-    Rectangle::new(Point::new(16, 16), Size::new((w - 32) as u32, (h - 32) as u32))
-        .into_styled(border)
-        .draw(target).unwrap();
+    Rectangle::new(
+        Point::new(16, 16),
+        Size::new((w - 32) as u32, (h - 32) as u32),
+    )
+    .into_styled(border)
+    .draw(target)
+    .unwrap();
 
     // Page indicator dots at the bottom
     let dots_y = h - 10;
@@ -219,7 +224,8 @@ where
             Size::new(r * 2, r * 2),
         )
         .into_styled(dot_style)
-        .draw(target).unwrap();
+        .draw(target)
+        .unwrap();
     }
 
     // Text lines
@@ -229,7 +235,8 @@ where
             Point::new(margin_x, 60 + i as i32 * line_height),
             style,
         )
-        .draw(target).unwrap();
+        .draw(target)
+        .unwrap();
 
         // Underline separator after the title
         if i == 0 {
@@ -238,14 +245,19 @@ where
                 Point::new(w - margin_x, 66 + line_height),
             )
             .into_styled(rule)
-            .draw(target).unwrap();
+            .draw(target)
+            .unwrap();
         }
     }
 }
 
 // ── Input ─────────────────────────────────────────────────────────────────────
 
-enum Action { PrevPage, NextPage, ToggleOrientation }
+enum Action {
+    PrevPage,
+    NextPage,
+    ToggleOrientation,
+}
 
 // Long press threshold for the next button (in ms).
 const LONG_PRESS_MS: u32 = 500;
@@ -281,8 +293,7 @@ fn wait_for_action(boot: &Input, next: &Input, delay: &Delay) -> Action {
 fn main() -> ! {
     esp_println::logger::init_logger_from_env();
 
-    let config = esp_hal::Config::default()
-        .with_cpu_clock(esp_hal::clock::CpuClock::_240MHz);
+    let config = esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::_240MHz);
     let peripherals = esp_hal::init(config);
 
     let psram_config = esp_hal::psram::PsramConfig {
@@ -330,7 +341,10 @@ fn main() -> ! {
         {
             // RotatedDisplay is dropped at the end of this block,
             // releasing the borrow on `display` before the flush below.
-            let mut rot = RotatedDisplay { inner: &mut display, orientation };
+            let mut rot = RotatedDisplay {
+                inner: &mut display,
+                orientation,
+            };
             draw_page(&mut rot, page, orientation);
         }
 

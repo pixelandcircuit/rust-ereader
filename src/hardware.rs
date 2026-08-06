@@ -98,18 +98,18 @@ pub enum Orientation {
 impl Orientation {
     pub fn from_cmd(cmd: &str) -> Self {
         match cmd {
-            "Land"   => Self::Landscape,
+            "Land" => Self::Landscape,
             "R.Port" => Self::ReversePortrait,
             "R.Land" => Self::ReverseLandscape,
-            _        => Self::Portrait,
+            _ => Self::Portrait,
         }
     }
 
     pub fn to_index(self) -> usize {
         match self {
-            Self::Portrait         => 0,
-            Self::Landscape        => 1,
-            Self::ReversePortrait  => 2,
+            Self::Portrait => 0,
+            Self::Landscape => 1,
+            Self::ReversePortrait => 2,
             Self::ReverseLandscape => 3,
         }
     }
@@ -142,10 +142,10 @@ impl Orientation {
         let w = PANEL_W as i32;
         let h = PANEL_H as i32;
         match self {
-            Self::Portrait         => (h - 1 - ty, tx          ),
-            Self::Landscape        => (tx,          ty          ),
-            Self::ReversePortrait  => (ty,           w - 1 - tx ),
-            Self::ReverseLandscape => (w - 1 - tx,  h - 1 - ty ),
+            Self::Portrait => (h - 1 - ty, tx),
+            Self::Landscape => (tx, ty),
+            Self::ReversePortrait => (ty, w - 1 - tx),
+            Self::ReverseLandscape => (w - 1 - tx, h - 1 - ty),
         }
     }
 
@@ -154,10 +154,10 @@ impl Orientation {
         let w = PANEL_W;
         let h = PANEL_H;
         match self {
-            Self::Portrait         => (ly,          h - 1 - lx ),
-            Self::Landscape        => (lx,          ly          ),
-            Self::ReversePortrait  => (w - 1 - ly,  lx         ),
-            Self::ReverseLandscape => (w - 1 - lx,  h - 1 - ly ),
+            Self::Portrait => (ly, h - 1 - lx),
+            Self::Landscape => (lx, ly),
+            Self::ReversePortrait => (w - 1 - ly, lx),
+            Self::ReverseLandscape => (w - 1 - lx, h - 1 - ly),
         }
     }
 }
@@ -228,25 +228,45 @@ impl SimHardware {
 
 #[cfg(feature = "simulator")]
 impl HardwareAccess for SimHardware {
-    fn font_size(&self) -> FontSize { self.font_size }
-    fn backlight_level(&self) -> BacklightLevel { self.backlight }
-    fn orientation(&self) -> Orientation { self.orientation }
+    fn font_size(&self) -> FontSize {
+        self.font_size
+    }
+    fn backlight_level(&self) -> BacklightLevel {
+        self.backlight
+    }
+    fn orientation(&self) -> Orientation {
+        self.orientation
+    }
 
     fn current_time_secs(&self) -> u64 {
         use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
     }
 
-    fn set_font_size(&mut self, size: FontSize) { self.font_size = size; }
-    fn set_backlight_level(&mut self, level: BacklightLevel) { self.backlight = level; }
-    fn set_orientation(&mut self, orientation: Orientation) { self.orientation = orientation; }
+    fn set_font_size(&mut self, size: FontSize) {
+        self.font_size = size;
+    }
+    fn set_backlight_level(&mut self, level: BacklightLevel) {
+        self.backlight = level;
+    }
+    fn set_orientation(&mut self, orientation: Orientation) {
+        self.orientation = orientation;
+    }
     fn set_current_time_secs(&mut self, _secs: u64) {} // simulator reads from system clock
 
-    fn button_prev_pressed(&self) -> bool { false }
-    fn button_next_pressed(&self) -> bool { false }
+    fn button_prev_pressed(&self) -> bool {
+        false
+    }
+    fn button_next_pressed(&self) -> bool {
+        false
+    }
     fn enter_deep_sleep(&mut self, _chapter_idx: usize, _anchor_byte: usize) {}
     fn save_bookmark(&mut self, filename: &str, chapter_idx: usize, anchor_byte: usize) {
-        self.bookmarks.insert(String::from(filename), (chapter_idx, anchor_byte));
+        self.bookmarks
+            .insert(String::from(filename), (chapter_idx, anchor_byte));
     }
     fn load_bookmark(&self, filename: &str) -> Option<(usize, usize)> {
         self.bookmarks.get(filename).copied()
@@ -261,7 +281,10 @@ impl HardwareAccess for SimHardware {
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .filter(|n| {
                 let l = n.to_lowercase();
-                l.ends_with(".epub") || l.ends_with(".html") || l.ends_with(".htm") || l.ends_with(".txt")
+                l.ends_with(".epub")
+                    || l.ends_with(".html")
+                    || l.ends_with(".htm")
+                    || l.ends_with(".txt")
             })
             .collect()
     }
@@ -283,9 +306,9 @@ const NVS_RANGE: core::ops::Range<u32> = 0x9000..0xF000;
 #[cfg(feature = "esp")]
 const KEY_FONT: u8 = 10;
 #[cfg(feature = "esp")]
-const KEY_BL:   u8 = 11;
+const KEY_BL: u8 = 11;
 #[cfg(feature = "esp")]
-const KEY_ORI:  u8 = 12;
+const KEY_ORI: u8 = 12;
 
 // Per-book bookmark table: 8 slots, 3 keys each.
 // Slot i: hash at KEY_BM_HASH+i, chapter at KEY_BM_CHAP+i, anchor at KEY_BM_ANCH+i.
@@ -332,7 +355,10 @@ impl embedded_storage_async::nor_flash::NorFlash for FlashAdapter {
 
 #[cfg(feature = "esp")]
 fn block_on<F: core::future::Future>(mut f: F) -> F::Output {
-    use core::{pin::Pin, task::{Context, Poll, RawWaker, RawWakerVTable, Waker}};
+    use core::{
+        pin::Pin,
+        task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
+    };
     static VTABLE: RawWakerVTable =
         RawWakerVTable::new(|p| RawWaker::new(p, &VTABLE), |_| {}, |_| {}, |_| {});
     let waker = unsafe { Waker::from_raw(RawWaker::new(core::ptr::null(), &VTABLE)) };
@@ -360,8 +386,8 @@ pub fn load_settings() -> (usize, usize, usize) {
         }
     };
     let font = load(KEY_FONT, 1) as usize;
-    let bl   = load(KEY_BL,   2) as usize;
-    let ori  = load(KEY_ORI,  0) as usize;
+    let bl = load(KEY_BL, 2) as usize;
+    let ori = load(KEY_ORI, 0) as usize;
     log::info!("settings loaded: font={} bl={} ori={}", font, bl, ori);
     (font, bl, ori)
 }
@@ -402,7 +428,11 @@ fn bookmark_hash(filename: &str) -> u32 {
         h ^= b as u32;
         h = h.wrapping_mul(16777619);
     }
-    if h == 0 { 1 } else { h }
+    if h == 0 {
+        1
+    } else {
+        h
+    }
 }
 
 /// Look up the bookmark table for `filename`. Returns None if not found or
@@ -414,8 +444,13 @@ fn load_bookmark_impl(filename: &str) -> Option<(usize, usize)> {
         let hash = flash_load_u32(KEY_BM_HASH + i as u8).unwrap_or(0);
         if hash == target {
             let chapter = flash_load_u32(KEY_BM_CHAP + i as u8).unwrap_or(0) as usize;
-            let anchor  = flash_load_u32(KEY_BM_ANCH + i as u8).unwrap_or(0) as usize;
-            log::info!("bookmark loaded: {:?} ch={} anchor={}", filename, chapter, anchor);
+            let anchor = flash_load_u32(KEY_BM_ANCH + i as u8).unwrap_or(0) as usize;
+            log::info!(
+                "bookmark loaded: {:?} ch={} anchor={}",
+                filename,
+                chapter,
+                anchor
+            );
             return Some((chapter, anchor));
         }
     }
@@ -443,7 +478,13 @@ fn save_bookmark_impl(filename: &str, chapter_idx: usize, anchor_byte: usize) {
     flash_save_u32(KEY_BM_HASH + slot as u8, target);
     flash_save_u32(KEY_BM_CHAP + slot as u8, chapter_idx as u32);
     flash_save_u32(KEY_BM_ANCH + slot as u8, anchor_byte as u32);
-    log::info!("bookmark saved: {:?} slot={} ch={} anchor={}", filename, slot, chapter_idx, anchor_byte);
+    log::info!(
+        "bookmark saved: {:?} slot={} ch={} anchor={}",
+        filename,
+        slot,
+        chapter_idx,
+        anchor_byte
+    );
 }
 
 /// Position to restore for the built-in embedded epub on cold boot.
@@ -459,7 +500,10 @@ pub fn load_cold_boot_position() -> (usize, usize) {
 use esp_hal::{
     gpio::Input,
     ledc::{channel::ChannelIFace, LowSpeed},
-    rtc_cntl::{sleep::{Ext0WakeupSource, WakeupLevel}, Rtc},
+    rtc_cntl::{
+        sleep::{Ext0WakeupSource, WakeupLevel},
+        Rtc,
+    },
 };
 
 #[cfg(feature = "esp")]
@@ -484,9 +528,15 @@ pub fn rtc_store_read(idx: u8) -> u32 {
 pub fn rtc_store_write(idx: u8, val: u32) {
     let r = esp_hal::peripherals::LPWR::regs();
     match idx {
-        0 => { r.store0().write(|w| unsafe { w.data().bits(val) }); }
-        5 => { r.store5().write(|w| unsafe { w.data().bits(val) }); }
-        6 => { r.store6().write(|w| unsafe { w.data().bits(val) }); }
+        0 => {
+            r.store0().write(|w| unsafe { w.data().bits(val) });
+        }
+        5 => {
+            r.store5().write(|w| unsafe { w.data().bits(val) });
+        }
+        6 => {
+            r.store6().write(|w| unsafe { w.data().bits(val) });
+        }
         _ => {}
     }
 }
@@ -516,15 +566,29 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> EspHardware<'d, C> {
         orientation: Orientation,
     ) -> Self {
         bl_ch.set_duty(BL_DUTY[backlight as usize]).unwrap();
-        Self { font_size, backlight, orientation, bl_ch, rtc, btn_prev, btn_next }
+        Self {
+            font_size,
+            backlight,
+            orientation,
+            bl_ch,
+            rtc,
+            btn_prev,
+            btn_next,
+        }
     }
 }
 
 #[cfg(feature = "esp")]
 impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
-    fn font_size(&self) -> FontSize { self.font_size }
-    fn backlight_level(&self) -> BacklightLevel { self.backlight }
-    fn orientation(&self) -> Orientation { self.orientation }
+    fn font_size(&self) -> FontSize {
+        self.font_size
+    }
+    fn backlight_level(&self) -> BacklightLevel {
+        self.backlight
+    }
+    fn orientation(&self) -> Orientation {
+        self.orientation
+    }
 
     fn current_time_secs(&self) -> u64 {
         self.rtc.current_time_us() / 1_000_000
@@ -560,10 +624,11 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
     fn enter_deep_sleep(&mut self, chapter_idx: usize, anchor_byte: usize) {
         // Pack settings: font (4 bits) | backlight (4 bits, offset 4) | orientation (4 bits, offset 8)
         rtc_store_write(0, anchor_byte as u32);
-        rtc_store_write(5,
+        rtc_store_write(
+            5,
             self.font_size.to_index() as u32
-            | ((self.backlight.to_index() as u32) << 4)
-            | ((self.orientation.to_index() as u32) << 8),
+                | ((self.backlight.to_index() as u32) << 4)
+                | ((self.orientation.to_index() as u32) << 8),
         );
         rtc_store_write(6, chapter_idx as u32);
         // Turn off backlight PWM
@@ -594,44 +659,76 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
             }
         };
         save(KEY_FONT, self.font_size.to_index() as u32);
-        save(KEY_BL,   self.backlight.to_index()  as u32);
-        save(KEY_ORI,  self.orientation.to_index() as u32);
+        save(KEY_BL, self.backlight.to_index() as u32);
+        save(KEY_ORI, self.orientation.to_index() as u32);
     }
 
     fn list_book_files(&self) -> Vec<String> {
-        use esp_hal::{delay::Delay, gpio::{Level, Output, OutputConfig}, spi::master::{Config as SpiConfig, Spi}, time::Rate};
         use embedded_hal::spi::SpiBus;
         use embedded_hal_bus::spi::ExclusiveDevice;
         use embedded_sdmmc::{Error, LfnBuffer, SdCard, SdCardError, VolumeIdx, VolumeManager};
+        use esp_hal::{
+            delay::Delay,
+            gpio::{Level, Output, OutputConfig},
+            spi::master::{Config as SpiConfig, Spi},
+            time::Rate,
+        };
 
         // SD and LoRa share the SPI bus; deselect both CS lines before touching the bus.
-        let _lora_cs = unsafe { Output::new(esp_hal::gpio::AnyPin::steal(46), Level::High, OutputConfig::default()) };
-        let cs = unsafe { Output::new(esp_hal::gpio::AnyPin::steal(12), Level::High, OutputConfig::default()) };
+        let _lora_cs = unsafe {
+            Output::new(
+                esp_hal::gpio::AnyPin::steal(46),
+                Level::High,
+                OutputConfig::default(),
+            )
+        };
+        let cs = unsafe {
+            Output::new(
+                esp_hal::gpio::AnyPin::steal(12),
+                Level::High,
+                OutputConfig::default(),
+            )
+        };
         let mut spi = unsafe {
-            Spi::new(esp_hal::peripherals::SPI2::steal(), SpiConfig::default().with_frequency(Rate::from_khz(400)))
-                .expect("SPI2 init")
-                .with_sck(esp_hal::gpio::AnyPin::steal(14))
-                .with_mosi(esp_hal::gpio::AnyPin::steal(13))
-                .with_miso(esp_hal::gpio::AnyPin::steal(21))
+            Spi::new(
+                esp_hal::peripherals::SPI2::steal(),
+                SpiConfig::default().with_frequency(Rate::from_khz(400)),
+            )
+            .expect("SPI2 init")
+            .with_sck(esp_hal::gpio::AnyPin::steal(14))
+            .with_mosi(esp_hal::gpio::AnyPin::steal(13))
+            .with_miso(esp_hal::gpio::AnyPin::steal(21))
         };
         // SD cards need ≥74 clock cycles with CS HIGH before CMD0 to enter SPI mode.
         // ExclusiveDevice asserts CS for every transaction so we must do this on the raw bus.
         let _ = SpiBus::write(&mut spi, &[0xFF; 10]);
-        let Ok(spi_dev) = ExclusiveDevice::new(spi, cs, Delay::new()) else { return alloc::vec::Vec::new() };
+        let Ok(spi_dev) = ExclusiveDevice::new(spi, cs, Delay::new()) else {
+            return alloc::vec::Vec::new();
+        };
         let sdcard = SdCard::new(spi_dev, Delay::new());
         let mgr = VolumeManager::<_, _, 16, 4, 1>::new_with_limits(sdcard, DummyTimesource, 0);
         let vol = match mgr.open_volume(VolumeIdx(0)) {
             Ok(v) => v,
-            Err(Error::DeviceError(SdCardError::CardNotFound)) => { log::info!("SD: no card"); return alloc::vec::Vec::new(); }
-            Err(e) => { log::warn!("SD error: {:?}", e); return alloc::vec::Vec::new(); }
+            Err(Error::DeviceError(SdCardError::CardNotFound)) => {
+                log::info!("SD: no card");
+                return alloc::vec::Vec::new();
+            }
+            Err(e) => {
+                log::warn!("SD error: {:?}", e);
+                return alloc::vec::Vec::new();
+            }
         };
-        let Ok(root) = vol.open_root_dir() else { return alloc::vec::Vec::new() };
+        let Ok(root) = vol.open_root_dir() else {
+            return alloc::vec::Vec::new();
+        };
 
         let mut files = alloc::vec::Vec::new();
         let mut lfn_storage = [0u8; 256];
         let mut lfn_buf = LfnBuffer::new(&mut lfn_storage);
         let _ = root.iterate_dir_lfn(&mut lfn_buf, |e, lfn| {
-            if e.attributes.is_volume() || e.attributes.is_directory() { return; }
+            if e.attributes.is_volume() || e.attributes.is_directory() {
+                return;
+            }
             // Skip Apple Double files (macOS metadata):
             // - with LFN they begin with "._"
             // - without LFN their SFN begins with '_' (8.3 mangling of "._")
@@ -639,7 +736,9 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
                 Some(s) => s.starts_with("._"),
                 None => alloc::format!("{}", e.name).starts_with('_'),
             };
-            if is_apple_double { return; }
+            if is_apple_double {
+                return;
+            }
             let ext = e.name.extension();
             if ext.eq_ignore_ascii_case(b"EPU")
                 || ext.eq_ignore_ascii_case(b"HTM")
@@ -656,19 +755,41 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
     }
 
     fn load_book_file(&self, name: &str) -> Option<alloc::vec::Vec<u8>> {
-        use esp_hal::{delay::Delay, gpio::{Level, Output, OutputConfig}, spi::master::{Config as SpiConfig, Spi}, time::Rate};
         use embedded_hal::spi::SpiBus;
         use embedded_hal_bus::spi::ExclusiveDevice;
-        use embedded_sdmmc::{Error, LfnBuffer, Mode, SdCard, SdCardError, VolumeIdx, VolumeManager};
+        use embedded_sdmmc::{
+            Error, LfnBuffer, Mode, SdCard, SdCardError, VolumeIdx, VolumeManager,
+        };
+        use esp_hal::{
+            delay::Delay,
+            gpio::{Level, Output, OutputConfig},
+            spi::master::{Config as SpiConfig, Spi},
+            time::Rate,
+        };
 
-        let _lora_cs = unsafe { Output::new(esp_hal::gpio::AnyPin::steal(46), Level::High, OutputConfig::default()) };
-        let cs = unsafe { Output::new(esp_hal::gpio::AnyPin::steal(12), Level::High, OutputConfig::default()) };
+        let _lora_cs = unsafe {
+            Output::new(
+                esp_hal::gpio::AnyPin::steal(46),
+                Level::High,
+                OutputConfig::default(),
+            )
+        };
+        let cs = unsafe {
+            Output::new(
+                esp_hal::gpio::AnyPin::steal(12),
+                Level::High,
+                OutputConfig::default(),
+            )
+        };
         let mut spi = unsafe {
-            Spi::new(esp_hal::peripherals::SPI2::steal(), SpiConfig::default().with_frequency(Rate::from_khz(400)))
-                .expect("SPI2 init")
-                .with_sck(esp_hal::gpio::AnyPin::steal(14))
-                .with_mosi(esp_hal::gpio::AnyPin::steal(13))
-                .with_miso(esp_hal::gpio::AnyPin::steal(21))
+            Spi::new(
+                esp_hal::peripherals::SPI2::steal(),
+                SpiConfig::default().with_frequency(Rate::from_khz(400)),
+            )
+            .expect("SPI2 init")
+            .with_sck(esp_hal::gpio::AnyPin::steal(14))
+            .with_mosi(esp_hal::gpio::AnyPin::steal(13))
+            .with_miso(esp_hal::gpio::AnyPin::steal(21))
         };
         let _ = SpiBus::write(&mut spi, &[0xFF; 10]);
         let spi_dev = ExclusiveDevice::new(spi, cs, Delay::new()).ok()?;
@@ -676,8 +797,14 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
         let mgr = VolumeManager::<_, _, 16, 4, 1>::new_with_limits(sdcard, DummyTimesource, 0);
         let vol = match mgr.open_volume(VolumeIdx(0)) {
             Ok(v) => v,
-            Err(Error::DeviceError(SdCardError::CardNotFound)) => { log::info!("SD: no card"); return None; }
-            Err(e) => { log::warn!("SD error: {:?}", e); return None; }
+            Err(Error::DeviceError(SdCardError::CardNotFound)) => {
+                log::info!("SD: no card");
+                return None;
+            }
+            Err(e) => {
+                log::warn!("SD error: {:?}", e);
+                return None;
+            }
         };
         let root = vol.open_root_dir().ok()?;
 
@@ -686,7 +813,9 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
         let mut lfn_storage = [0u8; 256];
         let mut lfn_buf = LfnBuffer::new(&mut lfn_storage);
         let _ = root.iterate_dir_lfn(&mut lfn_buf, |e, lfn| {
-            if sfn.is_some() { return; }
+            if sfn.is_some() {
+                return;
+            }
             let display = match lfn {
                 Some(s) => String::from(s),
                 None => alloc::format!("{}", e.name),
@@ -711,8 +840,12 @@ struct DummyTimesource;
 impl embedded_sdmmc::TimeSource for DummyTimesource {
     fn get_timestamp(&self) -> embedded_sdmmc::Timestamp {
         embedded_sdmmc::Timestamp {
-            year_since_1970: 0, zero_indexed_month: 0, zero_indexed_day: 0,
-            hours: 0, minutes: 0, seconds: 0,
+            year_since_1970: 0,
+            zero_indexed_month: 0,
+            zero_indexed_day: 0,
+            hours: 0,
+            minutes: 0,
+            seconds: 0,
         }
     }
 }

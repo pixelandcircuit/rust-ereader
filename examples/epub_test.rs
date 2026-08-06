@@ -41,7 +41,9 @@ fn run_tests() {
     }
 
     // ── 2. Extract and strip chapter 1 ──────────────────────────────────────
-    let text = archive.chapter_text(&spine[0]).expect("chapter_text failed");
+    let text = archive
+        .chapter_text(&spine[0])
+        .expect("chapter_text failed");
     println!("\nChapter 1 plain text ({} bytes):", text.len());
     let preview_end = text
         .char_indices()
@@ -55,10 +57,10 @@ fn run_tests() {
 
     // ── 3. Lay out chapter 1 with fixed-width metrics ────────────────────────
     let cfg = LayoutConfig {
-        screen_width:  960,
+        screen_width: 960,
         screen_height: 540,
-        margin_x:      40,
-        margin_y:      30,
+        margin_x: 40,
+        margin_y: 30,
         font: FontMetrics {
             line_height_px: 28,
             space_width_px: 10,
@@ -85,10 +87,10 @@ fn run_tests() {
 
     // ── 5. Simulate a font-size change via relayout ──────────────────────────
     let larger_cfg = LayoutConfig {
-        screen_width:  960,
+        screen_width: 960,
         screen_height: 540,
-        margin_x:      40,
-        margin_y:      30,
+        margin_x: 40,
+        margin_y: 30,
         font: FontMetrics {
             line_height_px: 36,
             space_width_px: 13,
@@ -96,7 +98,9 @@ fn run_tests() {
         },
     };
     reader.go_to_page(0);
-    reader.anchor_byte = reader.layout.pages
+    reader.anchor_byte = reader
+        .layout
+        .pages
         .get(1)
         .map(|p| p.start)
         .unwrap_or_else(|| (reader.chapter_text.len() / 2).min(200));

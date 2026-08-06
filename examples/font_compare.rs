@@ -25,51 +25,59 @@ use esp_hal::{
 use esp_println::println;
 
 use embedded_graphics::{
-    mono_font::{ascii::{FONT_7X13, FONT_10X20}, MonoTextStyle},
+    mono_font::{
+        ascii::{FONT_10X20, FONT_7X13},
+        MonoTextStyle,
+    },
     pixelcolor::Gray4,
     prelude::*,
     text::{Alignment, Text},
 };
 
-use ereader::driver::{Display, DrawMode};
 use ereader::driver::display::DisplayRotation;
+use ereader::driver::{Display, DrawMode};
 use ereader::font::TextRenderer;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
 // ── Embedded font data (subsetted to 62 glyphs) ───────────────────────────────
-static LITERATA_REG:  &[u8] = include_bytes!("../fonts/Literata-Regular.ttf");
+static LITERATA_REG: &[u8] = include_bytes!("../fonts/Literata-Regular.ttf");
 static LITERATA_BOLD: &[u8] = include_bytes!("../fonts/Literata-Bold.ttf");
-static LITERATA_IT:   &[u8] = include_bytes!("../fonts/Literata-Italic.ttf");
-static VOLLKORN_REG:  &[u8] = include_bytes!("../fonts/Vollkorn-Regular.ttf");
+static LITERATA_IT: &[u8] = include_bytes!("../fonts/Literata-Italic.ttf");
+static VOLLKORN_REG: &[u8] = include_bytes!("../fonts/Vollkorn-Regular.ttf");
 static VOLLKORN_BOLD: &[u8] = include_bytes!("../fonts/Vollkorn-Bold.ttf");
-static VOLLKORN_IT:   &[u8] = include_bytes!("../fonts/Vollkorn-Italic.ttf");
-static NOTICIA_REG:   &[u8] = include_bytes!("../fonts/NoticiaText-Regular.ttf");
-static NOTICIA_BOLD:  &[u8] = include_bytes!("../fonts/NoticiaText-Bold.ttf");
-static NOTICIA_IT:    &[u8] = include_bytes!("../fonts/NoticiaText-Italic.ttf");
-static CRIMSON_REG:   &[u8] = include_bytes!("../fonts/CrimsonPro-Regular.ttf");
-static CRIMSON_BOLD:  &[u8] = include_bytes!("../fonts/CrimsonPro-Bold.ttf");
-static CRIMSON_IT:    &[u8] = include_bytes!("../fonts/CrimsonPro-Italic.ttf");
-static ATKINSON_REG:  &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Regular.ttf");
+static VOLLKORN_IT: &[u8] = include_bytes!("../fonts/Vollkorn-Italic.ttf");
+static NOTICIA_REG: &[u8] = include_bytes!("../fonts/NoticiaText-Regular.ttf");
+static NOTICIA_BOLD: &[u8] = include_bytes!("../fonts/NoticiaText-Bold.ttf");
+static NOTICIA_IT: &[u8] = include_bytes!("../fonts/NoticiaText-Italic.ttf");
+static CRIMSON_REG: &[u8] = include_bytes!("../fonts/CrimsonPro-Regular.ttf");
+static CRIMSON_BOLD: &[u8] = include_bytes!("../fonts/CrimsonPro-Bold.ttf");
+static CRIMSON_IT: &[u8] = include_bytes!("../fonts/CrimsonPro-Italic.ttf");
+static ATKINSON_REG: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Regular.ttf");
 static ATKINSON_BOLD: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Bold.ttf");
-static ATKINSON_IT:   &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Italic.ttf");
-static ALEGREYA_REG:  &[u8] = include_bytes!("../fonts/Alegreya-Regular.ttf");
+static ATKINSON_IT: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Italic.ttf");
+static ALEGREYA_REG: &[u8] = include_bytes!("../fonts/Alegreya-Regular.ttf");
 static ALEGREYA_BOLD: &[u8] = include_bytes!("../fonts/Alegreya-Bold.ttf");
-static ALEGREYA_IT:   &[u8] = include_bytes!("../fonts/Alegreya-Italic.ttf");
+static ALEGREYA_IT: &[u8] = include_bytes!("../fonts/Alegreya-Italic.ttf");
 
 // ── Sample text ───────────────────────────────────────────────────────────────
-const TEXT_REG:  &str = "The five boxing wizards jump quickly. 0123";
+const TEXT_REG: &str = "The five boxing wizards jump quickly. 0123";
 const TEXT_BOLD: &str = "Bold \u{2014} Aa Bb Gg Qq Yy; Pack my box!";
 const TEXT_ITAL: &str = "Italic \u{2014} Sphinx of black quartz.";
 
 // ── Font table ────────────────────────────────────────────────────────────────
 const FONTS: [(&str, &[u8], &[u8], &[u8]); 6] = [
-    ("Literata",              LITERATA_REG, LITERATA_BOLD, LITERATA_IT),
-    ("Vollkorn",              VOLLKORN_REG, VOLLKORN_BOLD, VOLLKORN_IT),
-    ("Noticia Text",          NOTICIA_REG,  NOTICIA_BOLD,  NOTICIA_IT),
-    ("Crimson Pro",           CRIMSON_REG,  CRIMSON_BOLD,  CRIMSON_IT),
-    ("Atkinson Hyperlegible", ATKINSON_REG, ATKINSON_BOLD, ATKINSON_IT),
-    ("Alegreya",              ALEGREYA_REG, ALEGREYA_BOLD, ALEGREYA_IT),
+    ("Literata", LITERATA_REG, LITERATA_BOLD, LITERATA_IT),
+    ("Vollkorn", VOLLKORN_REG, VOLLKORN_BOLD, VOLLKORN_IT),
+    ("Noticia Text", NOTICIA_REG, NOTICIA_BOLD, NOTICIA_IT),
+    ("Crimson Pro", CRIMSON_REG, CRIMSON_BOLD, CRIMSON_IT),
+    (
+        "Atkinson Hyperlegible",
+        ATKINSON_REG,
+        ATKINSON_BOLD,
+        ATKINSON_IT,
+    ),
+    ("Alegreya", ALEGREYA_REG, ALEGREYA_BOLD, ALEGREYA_IT),
 ];
 
 // ── Font sizes ────────────────────────────────────────────────────────────────
@@ -77,7 +85,7 @@ const SIZES: [f32; 5] = [15.0, 18.0, 22.0, 26.0, 32.0];
 
 // ── Portrait logical canvas (display rotated 90°) ─────────────────────────────
 const W: i32 = Display::HEIGHT as i32; // 540  logical width
-const H: i32 = Display::WIDTH  as i32; // 960  logical height
+const H: i32 = Display::WIDTH as i32; // 960  logical height
 
 const MARGIN_X: i32 = 20;
 const HEADER_H: i32 = 34;
@@ -86,7 +94,9 @@ const GROUP_GAP: i32 = 6;
 // ── Pixel helper: logical portrait → physical framebuffer (Rotate90) ──────────
 #[inline(always)]
 fn put_pixel(display: &mut Display<'_>, lx: i32, ly: i32, g4: u8) {
-    if lx < 0 || lx >= W || ly < 0 || ly >= H { return; }
+    if lx < 0 || lx >= W || ly < 0 || ly >= H {
+        return;
+    }
     let px = (Display::WIDTH as i32 - 1 - ly) as u16;
     let py = lx as u16;
     let _ = display.set_pixel(px, py, g4);
@@ -112,7 +122,9 @@ fn draw_line(
 
 // ── Horizontal rule ───────────────────────────────────────────────────────────
 fn hline(display: &mut Display<'_>, y: i32, gray4: u8) {
-    for x in 0..W { put_pixel(display, x, y, gray4); }
+    for x in 0..W {
+        put_pixel(display, x, y, gray4);
+    }
 }
 
 // ── Bitmap font label (FONT_7X13) above a group of text lines ─────────────────
@@ -123,7 +135,9 @@ fn draw_label(display: &mut Display<'_>, text: &str, x: i32, y: i32, font_px: f3
         Point::new(x, y + 10), // y+10 ≈ FONT_7X13 ascent, so glyphs start at y
         MonoTextStyle::new(&FONT_7X13, Gray4::BLACK),
         Alignment::Left,
-    ).draw(display).unwrap();
+    )
+    .draw(display)
+    .unwrap();
     // Advance far enough that the next TTF line's ascenders (≈ font_px * 0.75)
     // start below the label's descender line (y + 13), leaving a 3 px gap.
     13 + 3 + font_px as i32 * 3 / 4
@@ -136,7 +150,9 @@ fn draw_header(display: &mut Display<'_>, text: &str) {
         Point::new(MARGIN_X, HEADER_H - 4),
         MonoTextStyle::new(&FONT_10X20, Gray4::BLACK),
         Alignment::Left,
-    ).draw(display).unwrap();
+    )
+    .draw(display)
+    .unwrap();
     hline(display, HEADER_H, 0);
 }
 
@@ -154,7 +170,9 @@ fn show_loading(display: &mut Display<'_>, text: &str) {
         Point::new(W / 2, H / 2),
         MonoTextStyle::new(&FONT_10X20, Gray4::BLACK),
         Alignment::Center,
-    ).draw(display).unwrap();
+    )
+    .draw(display)
+    .unwrap();
     display.flush(DrawMode::BlackOnWhite).unwrap();
 }
 
@@ -172,7 +190,10 @@ fn render_all_fonts(display: &mut Display<'_>, size_idx: usize) {
     taint_all(display);
     let font_px = SIZES[size_idx];
 
-    let hdr = format!("Font compare  |  {}px  |  NEXT = single face", font_px as u32);
+    let hdr = format!(
+        "Font compare  |  {}px  |  NEXT = single face",
+        font_px as u32
+    );
     draw_header(display, &hdr);
 
     let mut y = HEADER_H + GROUP_GAP;
@@ -180,17 +201,31 @@ fn render_all_fonts(display: &mut Display<'_>, size_idx: usize) {
     for (name, reg, bold, italic) in FONTS {
         let adv = draw_label(display, name, MARGIN_X, y, font_px);
         y += adv;
-        if y >= H { break; }
+        if y >= H {
+            break;
+        }
 
-        let lh = draw_line(display, reg,    TEXT_REG,  MARGIN_X, y, font_px); y += lh + 2;
-        if y >= H { break; }
-        let lh = draw_line(display, bold,   TEXT_BOLD, MARGIN_X, y, font_px); y += lh + 2;
-        if y >= H { break; }
-        let lh = draw_line(display, italic, TEXT_ITAL, MARGIN_X, y, font_px); y += lh;
-        if y >= H { break; }
+        let lh = draw_line(display, reg, TEXT_REG, MARGIN_X, y, font_px);
+        y += lh + 2;
+        if y >= H {
+            break;
+        }
+        let lh = draw_line(display, bold, TEXT_BOLD, MARGIN_X, y, font_px);
+        y += lh + 2;
+        if y >= H {
+            break;
+        }
+        let lh = draw_line(display, italic, TEXT_ITAL, MARGIN_X, y, font_px);
+        y += lh;
+        if y >= H {
+            break;
+        }
 
         y += GROUP_GAP;
-        if y < H { hline(display, y, 10); y += GROUP_GAP; }
+        if y < H {
+            hline(display, y, 10);
+            y += GROUP_GAP;
+        }
     }
 }
 
@@ -205,47 +240,62 @@ fn render_single_font(display: &mut Display<'_>, face_idx: usize) {
     let mut y = HEADER_H + GROUP_GAP;
 
     let groups = [
-        ("Regular", reg,    TEXT_REG),
-        ("Bold",    bold,   TEXT_BOLD),
-        ("Italic",  italic, TEXT_ITAL),
+        ("Regular", reg, TEXT_REG),
+        ("Bold", bold, TEXT_BOLD),
+        ("Italic", italic, TEXT_ITAL),
     ];
 
     for (weight_name, font_data, text) in groups {
         // Weight label — advance uses smallest size so ascenders clear the label
         let adv = draw_label(display, weight_name, MARGIN_X, y, SIZES[0]);
         y += adv;
-        if y >= H { break; }
+        if y >= H {
+            break;
+        }
 
         // All four sizes, smallest to largest
         for (i, &font_px) in SIZES.iter().enumerate() {
             let lh = draw_line(display, font_data, text, MARGIN_X, y, font_px);
             let gap = if i + 1 < SIZES.len() { 2 } else { 0 };
             y += lh + gap;
-            if y >= H { break; }
+            if y >= H {
+                break;
+            }
         }
-        if y >= H { break; }
+        if y >= H {
+            break;
+        }
 
         y += GROUP_GAP;
-        if y < H { hline(display, y, 10); y += GROUP_GAP; }
+        if y < H {
+            hline(display, y, 10);
+            y += GROUP_GAP;
+        }
     }
 }
 
 #[main]
 fn main() -> ! {
-    let config = esp_hal::Config::default()
-        .with_cpu_clock(esp_hal::clock::CpuClock::_240MHz);
+    let config = esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::_240MHz);
     let peripherals = esp_hal::init(config);
 
     esp_alloc::heap_allocator!(size: 256 * 1024);
     esp_alloc::psram_allocator!(
-        peripherals.PSRAM, esp_hal::psram,
-        esp_hal::psram::PsramConfig { mode: esp_hal::psram::PsramMode::OctalSpi, ..Default::default() }
+        peripherals.PSRAM,
+        esp_hal::psram,
+        esp_hal::psram::PsramConfig {
+            mode: esp_hal::psram::PsramMode::OctalSpi,
+            ..Default::default()
+        }
     );
 
-    let mut gpio0  = peripherals.GPIO0;
+    let mut gpio0 = peripherals.GPIO0;
     let mut gpio38 = peripherals.GPIO38;
-    let boot_btn = Input::new(gpio0.reborrow(),  InputConfig::default().with_pull(Pull::Up));
-    let next_btn = Input::new(gpio38.reborrow(), InputConfig::default().with_pull(Pull::Up));
+    let boot_btn = Input::new(gpio0.reborrow(), InputConfig::default().with_pull(Pull::Up));
+    let next_btn = Input::new(
+        gpio38.reborrow(),
+        InputConfig::default().with_pull(Pull::Up),
+    );
     let delay = Delay::new();
 
     println!("font_compare: init display");
@@ -255,7 +305,8 @@ fn main() -> ! {
         peripherals.LCD_CAM,
         peripherals.RMT,
         peripherals.I2C0,
-    ).expect("display init");
+    )
+    .expect("display init");
 
     display.set_rotation(DisplayRotation::Rotate90);
     delay.delay_millis(100);
@@ -263,9 +314,9 @@ fn main() -> ! {
     delay.delay_millis(10);
 
     // ── State ─────────────────────────────────────────────────────────────────
-    let mut size_idx: usize = 1;   // default: 18 px
-    let mut face_idx: usize = 0;   // which font in single-font view
-    let mut single_mode = false;   // false = all-fonts view, true = single-font view
+    let mut size_idx: usize = 1; // default: 18 px
+    let mut face_idx: usize = 0; // which font in single-font view
+    let mut single_mode = false; // false = all-fonts view, true = single-font view
 
     // ── Initial render ────────────────────────────────────────────────────────
     display.clear().unwrap();

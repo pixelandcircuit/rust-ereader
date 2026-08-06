@@ -1,6 +1,6 @@
+use crate::hardware::FontSize;
 #[cfg(feature = "esp")]
 use alloc::boxed::Box;
-use crate::hardware::FontSize;
 
 /// Draw `text` with its baseline at (start_x, baseline_y).
 /// `bg` is the background Gray4 value (15 = white). Returns the x position after the last glyph.
@@ -61,13 +61,11 @@ fn blend_gray4(coverage: u8, fg_g4: u8, bg_g4: u8) -> u8 {
     ((fg_g4 as u16 * a + bg_g4 as u16 * (255 - a)) / 255) as u8
 }
 
-
 /// TTF font size in pixels for each FontSize option.
 pub fn font_px_for(size: FontSize) -> f32 {
     match size {
-        FontSize::Small  => 16.0,
+        FontSize::Small => 16.0,
         FontSize::Medium => 22.0,
-        FontSize::Large  => 28.0,
+        FontSize::Large => 28.0,
     }
 }
-

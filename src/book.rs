@@ -96,7 +96,9 @@ fn html_to_text(html: &str) -> String {
             while i < n && bytes[i] != b'>' {
                 i += 1;
             }
-            let tag = core::str::from_utf8(&bytes[tag_start..i]).unwrap_or("").trim();
+            let tag = core::str::from_utf8(&bytes[tag_start..i])
+                .unwrap_or("")
+                .trim();
             process_tag(tag, &mut out, &mut skip);
             if i < n {
                 i += 1; // consume '>'
@@ -373,7 +375,10 @@ mod tests {
     fn heading_surrounded_by_blank_lines() {
         // Content before the heading, heading, content after.
         let out = html_to_text("<p>intro</p><h1>Title</h1><p>body</p>");
-        assert!(out.contains("\n\nTitle\n\n"), "heading must be surrounded by blank lines; got: {out:?}");
+        assert!(
+            out.contains("\n\nTitle\n\n"),
+            "heading must be surrounded by blank lines; got: {out:?}"
+        );
     }
 
     #[test]
@@ -392,7 +397,10 @@ mod tests {
     #[test]
     fn div_close_inserts_newline() {
         let out = html_to_text("<div>a</div><div>b</div>");
-        assert!(out.contains("a\nb") || out.contains("a\n\nb"), "got: {out:?}");
+        assert!(
+            out.contains("a\nb") || out.contains("a\n\nb"),
+            "got: {out:?}"
+        );
     }
 
     // ── html_to_text: entities ────────────────────────────────────────────────

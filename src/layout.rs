@@ -12,7 +12,7 @@ use std::vec::Vec;
 #[derive(Debug, Clone, Copy)]
 pub struct Page {
     pub start: usize,
-    pub end:   usize,
+    pub end: usize,
 }
 
 /// The result of laying out one chapter: an ordered list of pages.
@@ -32,11 +32,11 @@ pub struct FontMetrics {
 
 /// Configuration for the layout engine.
 pub struct LayoutConfig {
-    pub screen_width:  u32,  // physical display width  (e.g. 960)
-    pub screen_height: u32,  // physical display height (e.g. 540)
-    pub margin_x:      u32,  // horizontal margin on each side
-    pub margin_y:      u32,  // vertical margin on each side
-    pub font:          FontMetrics,
+    pub screen_width: u32,  // physical display width  (e.g. 960)
+    pub screen_height: u32, // physical display height (e.g. 540)
+    pub margin_x: u32,      // horizontal margin on each side
+    pub margin_y: u32,      // vertical margin on each side
+    pub font: FontMetrics,
 }
 
 // ── Core layout function ──────────────────────────────────────────────────────
@@ -54,15 +54,22 @@ pub struct LayoutConfig {
 pub fn layout_chapter(text: &str, cfg: &LayoutConfig) -> Layout {
     let content_w = cfg.screen_width.saturating_sub(2 * cfg.margin_x);
     let content_h = cfg.screen_height.saturating_sub(2 * cfg.margin_y);
-    let line_h    = cfg.font.line_height_px;
-    let para_gap  = line_h / 2;
+    let line_h = cfg.font.line_height_px;
+    let para_gap = line_h / 2;
 
     // Degenerate / zero-sized config: one page for everything.
     if content_w == 0 || content_h == 0 || line_h == 0 {
         let pages = if text.is_empty() {
             Vec::new()
         } else {
-            { let mut v = Vec::new(); v.push(Page { start: 0, end: text.len() }); v }
+            {
+                let mut v = Vec::new();
+                v.push(Page {
+                    start: 0,
+                    end: text.len(),
+                });
+                v
+            }
         };
         return Layout { pages };
     }
@@ -87,12 +94,12 @@ pub fn layout_chapter(text: &str, cfg: &LayoutConfig) -> Layout {
     let bytes = text.as_bytes();
     let total = bytes.len();
 
-    let mut pages         = Vec::new();
-    let mut page_start    = 0usize;
-    let mut line_y        = 0u32;   // top of current line, relative to page top
-    let mut line_px       = 0u32;   // pixel width consumed so far on this line
-    let mut pos           = 0usize;
-    let mut pending_space = false;  // space token seen before the next word
+    let mut pages = Vec::new();
+    let mut page_start = 0usize;
+    let mut line_y = 0u32; // top of current line, relative to page top
+    let mut line_px = 0u32; // pixel width consumed so far on this line
+    let mut pos = 0usize;
+    let mut pending_space = false; // space token seen before the next word
 
     // Advance to the next line.  `extra` adds paragraph spacing.  `at` is the
     // byte offset that will become page_start if a page boundary is crossed.
@@ -101,7 +108,10 @@ pub fn layout_chapter(text: &str, cfg: &LayoutConfig) -> Layout {
         ($extra:expr, $at:expr) => {{
             line_y += line_h + $extra;
             if line_y + line_h > content_h {
-                pages.push(Page { start: page_start, end: $at });
+                pages.push(Page {
+                    start: page_start,
+                    end: $at,
+                });
                 page_start = $at;
                 line_y = 0;
             }
@@ -114,8 +124,8 @@ pub fn layout_chapter(text: &str, cfg: &LayoutConfig) -> Layout {
         // ── Newlines ──────────────────────────────────────────────────────────
         if b == b'\n' {
             let double = pos + 1 < total && bytes[pos + 1] == b'\n';
-            let skip   = if double { 2 } else { 1 };
-            let extra  = if double { para_gap } else { 0 };
+            let skip = if double { 2 } else { 1 };
+            let extra = if double { para_gap } else { 0 };
             next_line!(extra, pos + skip);
             line_px = 0;
             pending_space = false;
@@ -127,8 +137,12 @@ pub fn layout_chapter(text: &str, cfg: &LayoutConfig) -> Layout {
         if b == b' ' {
             // Consume all consecutive spaces; only set pending_space when we're
             // mid-line so that lines never start with whitespace.
-            if line_px > 0 { pending_space = true; }
-            while pos < total && bytes[pos] == b' ' { pos += 1; }
+            if line_px > 0 {
+                pending_space = true;
+            }
+            while pos < total && bytes[pos] == b' ' {
+                pos += 1;
+            }
             continue;
         }
 
@@ -147,32 +161,44 @@ pub fn layout_chapter(text: &str, cfg: &LayoutConfig) -> Layout {
                 // then measure the whole character as a string.
                 let cs = pos;
                 pos += 1;
-                while pos < total && (bytes[pos] & 0xC0) == 0x80 { pos += 1; }
+                while pos < total && (bytes[pos] & 0xC0) == 0x80 {
+                    pos += 1;
+                }
                 word_px += (cfg.font.measure)(&text[cs..pos]);
             }
         }
 
-        if word_start == pos { pos += 1; continue; } // safety skip for unexpected bytes
+        if word_start == pos {
+            pos += 1;
+            continue;
+        } // safety skip for unexpected bytes
 
         // How much horizontal space does this word need?
-        let gap          = if pending_space && line_px > 0 { space_w } else { 0 };
-        let needed       = line_px + gap + word_px;
+        let gap = if pending_space && line_px > 0 {
+            space_w
+        } else {
+            0
+        };
+        let needed = line_px + gap + word_px;
 
         if needed > content_w && line_px > 0 {
             // Word doesn't fit on the current line: wrap, then place at line start.
             next_line!(0, word_start);
-            line_px       = word_px;
+            line_px = word_px;
             pending_space = false;
         } else {
             // Fits (or is alone on an empty line — overflowing is unavoidable).
-            line_px       = needed;
+            line_px = needed;
             pending_space = false;
         }
     }
 
     // Emit the final (possibly partial) page.
     if page_start < total || pages.is_empty() {
-        pages.push(Page { start: page_start, end: total });
+        pages.push(Page {
+            start: page_start,
+            end: total,
+        });
     }
 
     Layout { pages }
@@ -187,7 +213,7 @@ mod tests {
     /// Fixed-width metrics: every character is `px` wide, space included.
     fn fixed_cfg(char_px: u32, line_h: u32, w: u32, h: u32) -> LayoutConfig {
         LayoutConfig {
-            screen_width:  w,
+            screen_width: w,
             screen_height: h,
             margin_x: 0,
             margin_y: 0,
@@ -259,7 +285,10 @@ mod tests {
         let cfg = fixed_cfg(10, 20, 100, 30);
         let text = "first\n\nsecond";
         let layout = layout_chapter(text, &cfg);
-        assert!(layout.pages.len() >= 2, "double newline should push second para to new page");
+        assert!(
+            layout.pages.len() >= 2,
+            "double newline should push second para to new page"
+        );
         // First page starts at 0.
         assert_eq!(layout.pages[0].start, 0);
         // Second page contains "second".
@@ -275,7 +304,8 @@ mod tests {
         // Feed 9 words of 8 chars each → 9 lines → should span 3 pages.
         let cfg = fixed_cfg(10, 20, 100, 60);
         // Each "wordXXXX" is 8 chars; they each fit on their own line (80 px < 100).
-        let text = "aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff gggggggg hhhhhhhh iiiiiiii";
+        let text =
+            "aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff gggggggg hhhhhhhh iiiiiiii";
         let layout = layout_chapter(text, &cfg);
         assert!(layout.pages.len() >= 3, "9 lines at 3 lines/page = 3 pages");
     }
