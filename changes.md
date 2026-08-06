@@ -1,5 +1,25 @@
 # Changes
 
+## 2026-08-06 (5)
+
+Add `PARA_GAP_LINES` constant to control paragraph spacing. Set to `2` (two line-heights of extra space between paragraphs).
+
+- `src/layout.rs`: new `pub const PARA_GAP_LINES: u32 = 2` used as the multiplier for the paragraph gap in `layout_chapter`.
+- `src/bookview.rs`: `render_ttf_text` uses the same constant so layout and render stay in sync.
+
+## 2026-08-06 (4)
+
+Fix page rendering clipping caused by double-newline paragraph break mismatch.
+
+- `src/bookview.rs`: `render_ttf_text` now handles `\n\n` consistently with `layout_chapter`. Previously each `\n` caused a full `line_h` baseline advance (totalling 2×`line_h` for `\n\n`), while `layout_chapter` uses `line_h + para_gap = 1.5×line_h`. Each paragraph break consumed an extra 0.5×`line_h` in the renderer, causing the last lines of a page to be clipped. Fix: when the rest-of-text after a line starts with `\n`, consume it and advance only `para_gap = line_h/2` instead of `line_h`.
+
+## 2026-08-06 (3)
+
+Fix content layout height bug: text was being clipped because `layout_cfg` used hardcoded bar-height estimates instead of actual content view dimensions.
+
+- `src/bookview.rs`: `layout_cfg` now accepts `content_w`/`content_h` (actual content view pixel dimensions) and subtracts only the renderer's fixed padding (32 px horizontal, 24 px vertical). Removed the old hardcoded chrome/bar height estimation.
+- `examples/ereader_ui.rs`: Added `cfg_from_scene` helper that runs `layout_scene` to get real content view bounds before calling `layout_cfg`. All call sites (simulator and ESP paths) updated to use `cfg_from_scene`. Two regression tests added and now pass: `layout_cfg_height_matches_content_view` and `page_line_count_fits_in_content_view`.
+
 ## 2026-08-06 (2)
 
 Fast page-scroll overlay: hold Up/Down (simulator) or Prev/Next buttons (ESP) for >1 s.

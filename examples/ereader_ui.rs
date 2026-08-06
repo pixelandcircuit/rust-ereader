@@ -135,6 +135,21 @@ fn layout_fast_scroll_panel(e: &mut LayoutEvent) {
     }
 }
 
+/// Run a layout pass and build a LayoutConfig from the real content view bounds.
+/// Must be called whenever the scene size or UI font changes.
+fn cfg_from_scene(
+    scene: &mut Scene,
+    theme: &Theme,
+    body_font: &'static Font,
+    font_size: FontSize,
+) -> LayoutConfig {
+    layout_scene(scene, theme);
+    let bounds = scene
+        .get_view_bounds(&CONTENT_ID)
+        .expect("content view not in scene");
+    layout_cfg(body_font, font_size, bounds.size.w, bounds.size.h)
+}
+
 fn update_fast_scroll_label(
     scene: &mut Scene,
     chapter: usize,
@@ -500,7 +515,7 @@ fn main() {
 
     let mut book: Box<dyn Book> =
         Box::new(EpubArchive::new(EPUB_DATA).expect("sherlock_holmes.epub parse failed"));
-    let mut cfg = layout_cfg(body_font, hw.font_size(), win_w, win_h);
+    let mut cfg = cfg_from_scene(&mut scene, &theme, body_font, hw.font_size());
     let mut session = BookSession::new(book.as_ref(), &cfg).expect("BookSession init failed");
     let mut current_filename = String::from("__embedded__");
     update_content(&mut scene, &session, font_px_for(hw.font_size()));
@@ -657,7 +672,7 @@ fn main() {
                                         win_h as u32,
                                     ));
                                     window = Window::new("ereader_ui", &settings);
-                                    cfg = layout_cfg(body_font, hw.font_size(), win_w, win_h);
+                                    cfg = cfg_from_scene(&mut scene, &theme, body_font, hw.font_size());
                                     session.reader.relayout(&cfg);
                                     update_content(
                                         &mut scene,
@@ -673,9 +688,8 @@ fn main() {
                                     bold_font,
                                     calc_font_size(hw.font_size()),
                                 );
-                                cfg = layout_cfg(body_font, hw.font_size(), win_w, win_h);
+                                cfg = cfg_from_scene(&mut scene, &theme, body_font, hw.font_size());
                                 session.reader.relayout(&cfg);
-                                scene.mark_layout_dirty();
                                 update_content(&mut scene, &session, font_px_for(hw.font_size()));
                             } else if input.source == BACKLIGHT_ID {
                                 hw.set_backlight_level(BacklightLevel::from_cmd(cmd.as_str()));
@@ -727,7 +741,7 @@ fn main() {
                                         session.reader.anchor_byte,
                                     );
                                     let new_book = book_from_data(&filename, data);
-                                    cfg = layout_cfg(body_font, hw.font_size(), win_w, win_h);
+                                    cfg = cfg_from_scene(&mut scene, &theme, body_font, hw.font_size());
                                     let new_session = match hw.load_bookmark(&filename) {
                                         Some((ch, anchor)) => BookSession::restore(
                                             new_book.as_ref(),
@@ -1128,7 +1142,7 @@ async fn main(spawner: Spawner) -> ! {
     let mut was_touching = false;
 
     let mut book: Box<dyn Book> = Box::new(EpubArchive::new(EPUB_DATA).expect("epub parse"));
-    let mut cfg = layout_cfg(body_font, hw.font_size(), lw, lh);
+    let mut cfg = cfg_from_scene(&mut scene, &theme, body_font, hw.font_size());
     let mut current_filename = String::from("__embedded__");
     let mut session = if saved_chapter > 0 || saved_anchor > 0 {
         BookSession::restore(book.as_ref(), &cfg, saved_chapter, saved_anchor)
@@ -1346,8 +1360,7 @@ async fn main(spawner: Spawner) -> ! {
                                 bold_font,
                                 calc_font_size(hw.font_size()),
                             );
-                            let (cur_w, cur_h) = hw.orientation().logical_size();
-                            cfg = layout_cfg(body_font, hw.font_size(), cur_w, cur_h);
+                            cfg = cfg_from_scene(&mut scene, &theme, body_font, hw.font_size());
                             session.reader.relayout(&cfg);
                             scene.mark_layout_dirty();
                             update_content(&mut scene, &session, font_px_for(hw.font_size()));
@@ -1361,7 +1374,7 @@ async fn main(spawner: Spawner) -> ! {
                             bridge.orientation = hw.orientation();
                             let (new_w, new_h) = hw.orientation().logical_size();
                             scene.resize(Bounds::new(0, 0, new_w, new_h));
-                            cfg = layout_cfg(body_font, hw.font_size(), new_w, new_h);
+                            cfg = cfg_from_scene(&mut scene, &theme, body_font, hw.font_size());
                             session.reader.relayout(&cfg);
                             scene.mark_layout_dirty();
                             update_content(&mut scene, &session, font_px_for(hw.font_size()));
@@ -1423,8 +1436,7 @@ async fn main(spawner: Spawner) -> ! {
                                     session.reader.anchor_byte,
                                 );
                                 let new_book = book_from_data(&filename, data);
-                                let (cw, ch) = hw.orientation().logical_size();
-                                cfg = layout_cfg(body_font, hw.font_size(), cw, ch);
+                                cfg = cfg_from_scene(&mut scene, &theme, body_font, hw.font_size());
                                 let new_session = match hw.load_bookmark(&filename) {
                                     Some((ch_idx, anchor)) => BookSession::restore(
                                         new_book.as_ref(),
@@ -1499,4 +1511,102 @@ async fn main(spawner: Spawner) -> ! {
 
         EmbassyTimer::after(Duration::from_millis(50)).await;
     }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(all(test, feature = "simulator"))]
+mod tests {
+    use super::*;
+    use ereader::bookview::{layout_cfg, CONTENT_ID};
+    use ereader::hardware::FontSize;
+    use ereader::font::line_height;
+    use iris_ui::scene::layout_scene;
+
+    fn make_test_fonts() -> (&'static Font, &'static Font, &'static Font) {
+        load_fonts()
+    }
+
+    /// The text layout engine (layout_chapter) breaks pages using cfg.screen_height.
+    /// The renderer (render_ttf_text) draws lines while baseline < view.h - 12 px,
+    /// where the first baseline is at view.h offset + 12 px — consuming 24 px total
+    /// for top and bottom padding.  The two agree only when:
+    ///
+    ///   cfg.screen_height == content_view.h - 24
+    ///
+    /// This test builds the real scene, runs a layout pass to obtain the true content
+    /// view bounds, then checks that invariant for every FontSize.
+    #[test]
+    fn layout_cfg_height_matches_content_view() {
+        let (ui_font, bold_font, body_font) = make_test_fonts();
+        let w = 960i32;
+        let h = 540i32;
+
+        let mut scene = make_scene(body_font, w, h);
+        let mut theme = make_theme(ui_font, bold_font);
+        set_ui_font_size(&mut theme, ui_font, bold_font, UI_FONT_SIZE_MEDIUM);
+        layout_scene(&mut scene, &theme);
+
+        let content_bounds = scene
+            .get_view_bounds(&CONTENT_ID)
+            .expect("content view not in scene");
+        let content_w = content_bounds.size.w;
+        let content_h = content_bounds.size.h as u32;
+
+        for font_size in [FontSize::Small, FontSize::Medium, FontSize::Large] {
+            let cfg = layout_cfg(body_font, font_size, content_w, content_h as i32);
+            let render_pad_total = 24u32; // pad_y (12) top + pad_y (12) bottom
+            let expected = content_h.saturating_sub(render_pad_total);
+            assert_eq!(
+                cfg.screen_height,
+                expected,
+                "FontSize::{:?}: layout uses {} px but render has {} px available ({} - {})",
+                font_size,
+                cfg.screen_height,
+                expected,
+                content_h,
+                render_pad_total,
+            );
+        }
+    }
+
+    /// Each page's worth of lines as counted by the layout engine should all
+    /// fit within the content view without clipping.
+    #[test]
+    fn page_line_count_fits_in_content_view() {
+        let (ui_font, bold_font, body_font) = make_test_fonts();
+        let w = 960i32;
+        let h = 540i32;
+
+        let mut scene = make_scene(body_font, w, h);
+        let mut theme = make_theme(ui_font, bold_font);
+        set_ui_font_size(&mut theme, ui_font, bold_font, UI_FONT_SIZE_MEDIUM);
+        layout_scene(&mut scene, &theme);
+
+        let content_bounds = scene
+            .get_view_bounds(&CONTENT_ID)
+            .expect("content view not in scene");
+        let content_w = content_bounds.size.w;
+        let content_h = content_bounds.size.h as u32;
+        let render_usable = content_h.saturating_sub(24); // top+bottom pad_y
+
+        for font_size in [FontSize::Small, FontSize::Medium, FontSize::Large] {
+            let cfg = layout_cfg(body_font, font_size, content_w, content_h as i32);
+            let font_px = ereader::font::font_px_for(font_size);
+            let line_h = line_height(body_font, font_px) as u32 + 4; // matches render_ttf_text
+            let layout_lines = cfg.screen_height / line_h;
+            let render_lines = render_usable / line_h;
+            assert!(
+                layout_lines <= render_lines,
+                "FontSize::{:?}: layout fits {} lines per page but render only shows {} \
+                 (layout_h={}, render_usable={})",
+                font_size,
+                layout_lines,
+                render_lines,
+                cfg.screen_height,
+                render_usable,
+            );
+        }
+    }
+
 }

@@ -78,28 +78,29 @@ pub fn update_content(scene: &mut Scene, session: &BookSession, font_px: f32) {
 /// Build a LayoutConfig for Noticia Text at the given font size using real TTF
 /// metrics so that layout and rendering agree on where line breaks fall and how
 /// many lines fit per page.
-pub fn layout_cfg(font: &'static Font, font_size: FontSize, w: i32, h: i32) -> LayoutConfig {
+///
+/// `content_w` / `content_h` are the **actual pixel dimensions of the content
+/// view** as reported by the UI layout engine.  Pass `scene.get_view_bounds(&CONTENT_ID)`
+/// rather than the raw screen size — the function subtracts the renderer's
+/// internal padding (16 px each side horizontally, 12 px each side vertically)
+/// so layout and render agree on how many characters/lines fit.
+pub fn layout_cfg(
+    font: &'static Font,
+    font_size: FontSize,
+    content_w: i32,
+    content_h: i32,
+) -> LayoutConfig {
     let font_px = font_px_for(font_size);
-
-    // Real line height to match render_ttf_text (+4 px leading matches the renderer).
     let line_h = (line_height(font, font_px) as u32).saturating_add(4);
-    // Real space width; 0 would let the layout engine measure it via the gcache.
     let space_w = char_advance(font, ' ', font_px) as u32;
 
-    // Chrome bars use the bitmap font whose height tracks FontSize.
-    let chrome_char_h: u32 = match font_size {
-        FontSize::Small => 10,
-        FontSize::Medium => 15,
-        FontSize::Large => 20,
-    };
-    // bar_h = top-pad(4) + font-height + bottom-pad(4) + topbar padding(4+4)
-    let bar_h = chrome_char_h + 16;
-    let content_w = (w as u32).saturating_sub(32); // pad_x = 16 each side
-    let content_h = (h as u32).saturating_sub(2 * bar_h + 24); // pad_y = 12 each side
+    // render_ttf_text uses pad_x=16 on each side and pad_y=12 on each side.
+    let text_w = (content_w as u32).saturating_sub(32);
+    let text_h = (content_h as u32).saturating_sub(24);
 
     LayoutConfig {
-        screen_width: content_w,
-        screen_height: content_h,
+        screen_width: text_w,
+        screen_height: text_h,
         margin_x: 0,
         margin_y: 0,
         font: FontMetrics {
@@ -182,6 +183,17 @@ fn render_ttf_text(
             );
         }
         remaining = rest;
-        baseline += line_h;
+        // After a line ending with '\n', if 'remaining' also starts with '\n',
+        // this is a double-newline paragraph break.  Consume the second '\n' and
+        // advance only by para_gap (line_h / 2), matching layout_chapter which
+        // advances line_h + para_gap = 1.5 × line_h for '\n\n'.  Without this,
+        // each paragraph break consumes 2 × line_h here vs 1.5 × line_h in the
+        // layout, causing the renderer to clip the last lines of a page.
+        if remaining.starts_with('\n') {
+            remaining = &remaining[1..];
+            baseline += line_h * crate::layout::PARA_GAP_LINES as i32;
+        } else {
+            baseline += line_h;
+        }
     }
 }

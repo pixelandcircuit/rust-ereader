@@ -6,6 +6,11 @@ use alloc::{boxed::Box, vec::Vec};
 #[cfg(not(feature = "esp"))]
 use std::vec::Vec;
 
+/// Extra vertical space added between paragraphs (after a blank line in the
+/// source text), expressed as a multiple of `line_height_px`.  Set to 1 for
+/// one full extra line of breathing room, 0 to disable, 2 for double, etc.
+pub const PARA_GAP_LINES: u32 = 2;
+
 // ── Public types ──────────────────────────────────────────────────────────────
 
 /// A half-open byte range [start, end) into the chapter text string.
@@ -47,15 +52,15 @@ pub struct LayoutConfig {
 /// - Words are runs of non-whitespace characters.
 /// - A word that does not fit on the current line wraps to the next.
 /// - A word wider than `content_width` is placed alone on its line (no infinite loop).
-/// - `'\n'` is a forced line break; `'\n\n'` is a paragraph break (adds `line_h / 2`
-///   of extra vertical space between paragraphs).
+/// - `'\n'` is a forced line break; `'\n\n'` is a paragraph break (adds
+///   `PARA_GAP_LINES × line_h` of extra vertical space between paragraphs).
 /// - Leading spaces at the start of a line are silently dropped.
 /// - `Page.start` / `Page.end` are byte offsets into `text` (UTF-8 safe).
 pub fn layout_chapter(text: &str, cfg: &LayoutConfig) -> Layout {
     let content_w = cfg.screen_width.saturating_sub(2 * cfg.margin_x);
     let content_h = cfg.screen_height.saturating_sub(2 * cfg.margin_y);
     let line_h = cfg.font.line_height_px;
-    let para_gap = line_h / 2;
+    let para_gap = line_h * PARA_GAP_LINES;
 
     // Degenerate / zero-sized config: one page for everything.
     if content_w == 0 || content_h == 0 || line_h == 0 {
