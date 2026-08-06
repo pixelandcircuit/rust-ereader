@@ -123,7 +123,7 @@ fn make_truncating_label(name: &ViewId, title: &str) -> View {
                     truncated.push(c);
                     used += cw;
                 }
-                truncated.push_str("...");
+                truncated.push_str("…");
                 e.ctx.fill_text(&e.view.bounds, &truncated, &style);
             }
         }),
@@ -131,10 +131,10 @@ fn make_truncating_label(name: &ViewId, title: &str) -> View {
     }
 }
 
-fn make_spacer(id: &ViewId) -> View {
+fn make_h_spacer(id: &ViewId) -> View {
     View {
         name: id.clone(),
-        h_flex: Shrink,
+        h_flex: Grow,
         h_align: Center,
         v_flex: Shrink,
         v_align: Center,
@@ -142,7 +142,7 @@ fn make_spacer(id: &ViewId) -> View {
         visible: true,
         title: "spacer".into(),
         draw: Some(|e| {
-            e.ctx.stroke_rect(&e.view.bounds, &e.theme.panel.text);
+            // e.ctx.stroke_rect(&e.view.bounds, &e.theme.panel.text);
         }),
         input: None,
         layout: Some(|e| {
@@ -229,16 +229,12 @@ fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
     // ── Top bar ──────────────────────────────────────────────────────────────
     {
         let topbar_id = ViewId::new("topbar");
-        let settings_button =
-            make_full_button(&ViewId::new("settings"), "Settings", "settings", false);
-        scene.add_view_to_parent(settings_button, &topbar_id);
+        scene.add_view_to_parent(make_button(&ViewId::new("library"), "Library"), &topbar_id);
+        scene.add_view_to_parent(make_h_spacer(&ViewId::new("spacer1")), &topbar_id);
         scene.add_view_to_parent(make_label(&ViewId::new("time"), "--:-- --"), &topbar_id);
         scene.add_view_to_parent(make_label(&ViewId::new("battery"), "85%"), &topbar_id);
-        scene.add_view_to_parent(
-            make_truncating_label(&ViewId::new("booktitle"), "Sherlock Holmes"),
-            &topbar_id,
-        );
-        scene.add_view_to_parent(make_button(&ViewId::new("library"), "Library"), &topbar_id);
+        scene.add_view_to_parent(make_full_button(&ViewId::new("settings"), "Settings",
+                                                  "settings", false),&topbar_id);
         let topbar = make_panel(&topbar_id)
             .with_layout(Some(layout_hbox))
             .with_h_flex(Flex::Grow)
@@ -285,14 +281,15 @@ fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
             &bottombar_id,
         );
         scene.add_view_to_parent(
+            make_truncating_label(&ViewId::new("booktitle"), "Sherlock Holmes"),
+            &bottombar_id,
+        );
+
+        scene.add_view_to_parent(
             make_label(&ViewId::new("chapter"), "Loading..."),
             &bottombar_id,
         );
         scene.add_view_to_parent(make_label(&ViewId::new("page"), ""), &bottombar_id);
-        scene.add_view_to_parent(
-            make_spacer(&ViewId::new("spacer3")).with_h_flex(Grow),
-            &bottombar_id,
-        );
         scene.add_view_to_parent(
             make_button(&ViewId::new("next_page"), "Next >"),
             &bottombar_id,
@@ -521,14 +518,6 @@ fn make_theme(font: &'static Font, bold_font: &'static Font) -> Theme {
     }
 }
 
-fn set_ui_font_size(theme: &mut Theme, font: &'static Font, bold_font: &'static Font, size: f32) {
-    theme.font = FontKind::TrueType { font, size };
-    theme.bold_font = FontKind::TrueType {
-        font: bold_font,
-        size,
-    }
-}
-
 #[cfg(feature = "simulator")]
 fn main() {
     use embedded_graphics::geometry::Size;
@@ -550,7 +539,6 @@ fn main() {
     let (font, bold_font, body_font) = load_fonts();
     let mut scene = make_scene(body_font, win_w, win_h);
     let mut theme = make_theme(font, bold_font);
-    set_ui_font_size(&mut theme, font, bold_font, UI_FONT_SIZE_MEDIUM);
     let handlers: Vec<Callback> = vec![handle_click];
 
     let mut book: Box<dyn Book> =
@@ -722,12 +710,6 @@ fn main() {
                                 }
                             } else if input.source == FONT_SIZE_ID {
                                 hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
-                                set_ui_font_size(
-                                    &mut theme,
-                                    font,
-                                    bold_font,
-                                    calc_font_size(hw.font_size()),
-                                );
                                 cfg = cfg_from_scene(&mut scene, &theme, body_font, hw.font_size());
                                 session.reader.relayout(&cfg);
                                 update_content(&mut scene, &session, font_px_for(hw.font_size()));
@@ -1177,7 +1159,6 @@ async fn main(spawner: Spawner) -> ! {
     let mut scene = make_scene(body_font, lw, lh);
     sync_settings_ui(&mut scene, font_idx, bl_idx, ori_idx);
     let mut theme = make_theme(font, bold_font);
-    set_ui_font_size(&mut theme, font, bold_font, calc_font_size(hw.font_size()));
     let handlers = vec![handle_click as Callback];
     let mut was_touching = false;
 
@@ -1394,12 +1375,6 @@ async fn main(spawner: Spawner) -> ! {
                     if let Some(OutputAction::Command(ref cmd)) = input.action {
                         if input.source == FONT_SIZE_ID {
                             hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
-                            set_ui_font_size(
-                                &mut theme,
-                                font,
-                                bold_font,
-                                calc_font_size(hw.font_size()),
-                            );
                             cfg = cfg_from_scene(&mut scene, &theme, body_font, hw.font_size());
                             session.reader.relayout(&cfg);
                             scene.mark_layout_dirty();
@@ -1584,7 +1559,6 @@ mod tests {
 
         let mut scene = make_scene(body_font, w, h);
         let mut theme = make_theme(ui_font, bold_font);
-        set_ui_font_size(&mut theme, ui_font, bold_font, UI_FONT_SIZE_MEDIUM);
         layout_scene(&mut scene, &theme);
 
         let content_bounds = scene
@@ -1620,7 +1594,6 @@ mod tests {
 
         let mut scene = make_scene(body_font, w, h);
         let mut theme = make_theme(ui_font, bold_font);
-        set_ui_font_size(&mut theme, ui_font, bold_font, UI_FONT_SIZE_MEDIUM);
         layout_scene(&mut scene, &theme);
 
         let content_bounds = scene
