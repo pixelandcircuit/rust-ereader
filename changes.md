@@ -1,5 +1,11 @@
 # Changes
 
+## 2026-08-06 (6)
+
+Add truncating book-title label to the top bar.
+
+- `examples/ereader_ui.rs`: Added `make_truncating_label` helper function. It uses `h_flex: Grow` so the hbox allocates it a fixed share of remaining space. The draw closure measures the title against available width; if it fits, draws it normally; if not, walks characters until the text plus "..." fits and draws the truncated form. The "booktitle" label in the top bar now uses this variant.
+
 ## 2026-08-06 (5)
 
 Add `PARA_GAP_LINES` constant to control paragraph spacing. Set to `2` (two line-heights of extra space between paragraphs).
