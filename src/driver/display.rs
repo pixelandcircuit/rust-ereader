@@ -165,6 +165,19 @@ impl<'a> Display<'a> {
         self.clear_area(Self::BOUNDING_BOX)
     }
 
+    /// Multiple alternating black/white full-refresh passes to discharge residual
+    /// charge imbalance that builds up as faint lines during repeated partial refreshes.
+    pub fn deep_clean(&mut self, cycles: u8) -> Result<()> {
+        debug!("display deep_clean cycles={}", cycles);
+        for _ in 0..cycles {
+            self.fill(0x00)?;
+            self.flush(DrawMode::BlackOnWhite)?;
+            self.fill(0x0F)?;
+            self.flush(DrawMode::WhiteOnBlack)?;
+        }
+        Ok(())
+    }
+
     /// Poll the GT911 touch controller for the first active touch point.
     /// Returns `Some((x, y))` when a finger is down, `None` otherwise.
     pub fn read_touch(&mut self, gt911: &mut crate::driver::gt911::Gt911) -> Option<(u16, u16)> {

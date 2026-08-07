@@ -1,5 +1,12 @@
 # Changes
 
+## 2026-08-07 (4)
+
+Add `deep_clean()` to `Display` and a "Clean Screen" button in the settings dialog.
+
+- `src/driver/display.rs`: Added `deep_clean(cycles: u8)` — runs `cycles` alternating fill-black + `BlackOnWhite` flush + fill-white + `WhiteOnBlack` flush passes to discharge residual gate-line charge imbalance that builds up as faint lines over repeated partial refreshes.
+- `examples/ereader_ui.rs`: Added `DEEP_CLEAN_ID` constant and a "Clean Screen" button to the settings dialog. In the ESP handler it calls `display.deep_clean(3)` and resets `partial_refresh_count`. Simulator handler is a no-op.
+
 ## 2026-08-07 (3)
 
 Periodic full refresh to prevent gradual darkening of white areas outside the dirty rect.

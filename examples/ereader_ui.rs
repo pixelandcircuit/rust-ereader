@@ -46,6 +46,7 @@ const FAST_SCROLL_H: i32 = 80;
 const ORIENTATION_ID: ViewId = ViewId::new("orientation");
 const BACKLIGHT_ID: ViewId = ViewId::new("backlight");
 const FONT_SIZE_ID: ViewId = ViewId::new("font_size");
+const DEEP_CLEAN_ID: ViewId = ViewId::new("deep_clean");
 
 const UI_FONT_SIZE_SMALL: f32 = 16.0;
 const UI_FONT_SIZE_MEDIUM: f32 = 20.0;
@@ -351,6 +352,10 @@ fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
         );
         scene.add_view_to_parent(
             make_button(&ViewId::new("sync_time"), "Sync Time"),
+            &DIALOG_ID,
+        );
+        scene.add_view_to_parent(
+            make_button(&DEEP_CLEAN_ID, "Clean Screen"),
             &DIALOG_ID,
         );
         scene.add_view_to_parent(
@@ -722,6 +727,8 @@ fn main() {
                             if let Some(view) = scene.get_view_mut(&ViewId::new("time")) {
                                 view.title = format_time_utc(t);
                             }
+                        } else if input.source == DEEP_CLEAN_ID {
+                            // no-op in simulator
                         } else if input.source == ViewId::new("prev_page") {
                             nav_prev_page(
                                 &mut hw,
@@ -1469,6 +1476,11 @@ async fn main(spawner: Spawner) -> ! {
                         // } else {
                         //     info!("NTP query failed");
                         // }
+                    } else if input.source == DEEP_CLEAN_ID {
+                        info!("deep clean started");
+                        bridge.display.deep_clean(3).unwrap();
+                        partial_refresh_count = 0;
+                        scene.mark_dirty_all();
                     } else if input.source == ViewId::new("prev_page") {
                         nav_prev_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
                         hw.save_bookmark(
