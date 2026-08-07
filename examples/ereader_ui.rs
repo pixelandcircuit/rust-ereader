@@ -1206,6 +1206,12 @@ async fn main(spawner: Spawner) -> ! {
     update_content(&mut scene, &session, font_px_for(hw.font_size()));
 
     let mut last_interaction = Instant::now();
+    // Counts consecutive partial refreshes so we can force a full ghost-clear
+    // periodically.  E-paper capacitive field coupling from repeated partial
+    // waveform passes slowly darkens white areas adjacent to the dirty rect;
+    // a full refresh resets all pixels to a clean state.
+    let mut partial_refresh_count: u32 = 0;
+    const PARTIAL_REFRESH_FULL_INTERVAL: u32 = 8;
 
     // ── WiFi + NTP time sync ──────────────────────────────────────────────────
     // Only sync on cold boot. On deep-sleep wakeup the RTC already holds the
@@ -1348,15 +1354,23 @@ async fn main(spawner: Spawner) -> ! {
                 if !dirty_rect.is_empty() {
                     let (sw, sh) = hw.orientation().logical_size();
                     let needs_full = dirty_rect.size.w >= sw && dirty_rect.size.h >= sh;
-                    if needs_full {
+                    let force_full = !needs_full
+                        && partial_refresh_count >= PARTIAL_REFRESH_FULL_INTERVAL;
+                    if needs_full || force_full {
                         bridge.display.fill(0x0F).unwrap();
                         bridge.display.flush(DrawMode::WhiteOnBlack).unwrap();
+                        partial_refresh_count = 0;
                     } else {
                         bridge.clearing_flush_region(&dirty_rect);
+                        partial_refresh_count += 1;
                     }
                     {
                         let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
-                        ctx.clip = dirty_rect;
+                        ctx.clip = if force_full {
+                            Bounds::new(0, 0, sw, sh)
+                        } else {
+                            dirty_rect
+                        };
                         layout_scene(&mut scene, &theme);
                         draw_scene(&mut scene, &mut ctx, &theme);
                     }
@@ -1391,15 +1405,27 @@ async fn main(spawner: Spawner) -> ! {
             // correctly lighten any pixels that changed from dark to light (e.g. deselected
             // list item, dismissed dialog). Without this, white-target pixels get "no drive"
             // from the LUT and black display pixels stay black.
-            if needs_full_refresh {
+            //
+            // Periodic full refresh: repeated partial waveform passes accumulate field
+            // coupling that slowly darkens white areas adjacent to the dirty rect.
+            // Every PARTIAL_REFRESH_FULL_INTERVAL partial refreshes we force a full clear.
+            let force_full = !needs_full_refresh
+                && partial_refresh_count >= PARTIAL_REFRESH_FULL_INTERVAL;
+            if needs_full_refresh || force_full {
                 bridge.display.fill(0x0F).unwrap();
                 bridge.display.flush(DrawMode::WhiteOnBlack).unwrap();
+                partial_refresh_count = 0;
             } else {
                 bridge.clearing_flush_region(&dirty_rect);
+                partial_refresh_count += 1;
             }
             {
                 let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
-                ctx.clip = dirty_rect.clone();
+                ctx.clip = if force_full {
+                    Bounds::new(0, 0, scene_w, scene_h)
+                } else {
+                    dirty_rect.clone()
+                };
                 layout_scene(&mut scene, &theme);
                 draw_scene(&mut scene, &mut ctx, &theme);
             }

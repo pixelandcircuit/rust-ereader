@@ -1,5 +1,13 @@
 # Changes
 
+## 2026-08-07 (3)
+
+Periodic full refresh to prevent gradual darkening of white areas outside the dirty rect.
+
+- `examples/ereader_ui.rs`: Added `partial_refresh_count` counter and `PARTIAL_REFRESH_FULL_INTERVAL = 8` constant before the main loop. Both the fast-scroll and main-loop partial refresh blocks now increment the counter on each partial refresh and force a full `fill(0x0F)` + `flush(WhiteOnBlack)` + full-screen draw every 8 partial refreshes (then reset the counter). A full-screen refresh always resets the counter to 0.
+
+**Root cause:** Repeated partial waveform passes cause capacitive field coupling that gradually darkens e-paper pixels adjacent to the dirty column/row boundaries. A periodic full refresh resets all pixels to a clean state. The interval of 8 means ghosting accumulates for at most a few selection changes before the display is fully reset.
+
 ## 2026-08-07 (2)
 
 Fix partial refresh: previously selected list items stay black after deselection.
