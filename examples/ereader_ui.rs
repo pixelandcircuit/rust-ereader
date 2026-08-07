@@ -35,7 +35,7 @@ use iris_ui::view::{Align, Flex, View, ViewId};
 use iris_ui::{Callback, FontKind, GuiEvent, LayoutEvent, Theme, ViewStyle};
 use Align::Center;
 
-const EPUB_DATA: &[u8] = include_bytes!("sherlock_holmes.epub");
+const WELCOME_HTML: &[u8] = include_bytes!("welcome.html");
 
 const DIALOG_ID: ViewId = ViewId::new("dialog");
 const LIBRARY_DIALOG_ID: ViewId = ViewId::new("library_dialog");
@@ -547,10 +547,10 @@ fn main() {
     let handlers: Vec<Callback> = vec![handle_click];
 
     let mut book: Box<dyn Book> =
-        Box::new(EpubArchive::new(EPUB_DATA).expect("sherlock_holmes.epub parse failed"));
+        Box::new(HtmlBook::from_vec(WELCOME_HTML.to_vec()));
     let mut cfg = cfg_from_scene(&mut scene, &theme, body_font, hw.font_size());
     let mut session = BookSession::new(book.as_ref(), &cfg).expect("BookSession init failed");
-    let mut current_filename = String::from("__embedded__");
+    let mut current_filename = String::from("__welcome__");
     update_content(&mut scene, &session, font_px_for(hw.font_size()));
 
     // Fast-scroll hold state (Up/Down arrow keys).
@@ -1201,9 +1201,9 @@ async fn main(spawner: Spawner) -> ! {
     let handlers = vec![handle_click as Callback];
     let mut was_touching = false;
 
-    let mut book: Box<dyn Book> = Box::new(EpubArchive::new(EPUB_DATA).expect("epub parse"));
+    let mut book: Box<dyn Book> = Box::new(HtmlBook::from_vec(WELCOME_HTML.to_vec()));
     let mut cfg = cfg_from_scene(&mut scene, &theme, body_font, hw.font_size());
-    let mut current_filename = String::from("__embedded__");
+    let mut current_filename = String::from("__welcome__");
     let mut session = if saved_chapter > 0 || saved_anchor > 0 {
         BookSession::restore(book.as_ref(), &cfg, saved_chapter, saved_anchor)
             .unwrap_or_else(|_| BookSession::new(book.as_ref(), &cfg).expect("epub load"))

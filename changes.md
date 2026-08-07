@@ -1,5 +1,12 @@
 # Changes
 
+## 2026-08-07 (5)
+
+Replace default Sherlock Holmes EPUB with a built-in welcome guide.
+
+- `examples/welcome.html`: New HTML welcome page explaining buttons, library, settings, screen cleaning, and bookmark saving.
+- `examples/ereader_ui.rs`: Replaced `EPUB_DATA` / `sherlock_holmes.epub` with `WELCOME_HTML` / `welcome.html`. Both the simulator and ESP paths now open the welcome guide on a fresh start (`current_filename = "__welcome__"`), so the Sherlock Holmes text is no longer embedded in the firmware.
+
 ## 2026-08-07 (4)
 
 Add `deep_clean()` to `Display` and a "Clean Screen" button in the settings dialog.
