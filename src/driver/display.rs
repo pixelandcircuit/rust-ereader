@@ -138,6 +138,20 @@ impl<'a> Display<'a> {
         Ok(())
     }
 
+    pub fn fill_region(&mut self, area: Rectangle, color: u8) -> Result<()> {
+        if color > 0x0F {
+            return Err(Error::InvalidColor);
+        }
+        let x_end = (area.x + area.width).min(Self::WIDTH);
+        let y_end = (area.y + area.height).min(Self::HEIGHT);
+        for y in area.y..y_end {
+            for x in area.x..x_end {
+                self.set_pixel(x, y, color).ok();
+            }
+        }
+        Ok(())
+    }
+
     pub fn flush(&mut self, mode: DrawMode) -> Result<()> {
         debug!("display flush");
         self.draw(mode)?;
@@ -377,6 +391,58 @@ impl<'a> Display<'a> {
             self.epd.frame_end()?;
         }
         Ok(())
+    }
+
+    /// Like `flush`, but applies the waveform only within `area` (physical coords).
+    /// Rows outside area.y..area.y+area.height get fast CKV skips.
+    /// Columns outside area.x..area.x+area.width are zeroed in the DMA buffer (VCOM = no drive),
+    /// so display content outside the column range is left physically unchanged.
+    pub fn flush_region(&mut self, area: Rectangle, mode: DrawMode) -> Result<()> {
+        debug!("display flush_region");
+        let row_start = area.y.min(Self::HEIGHT);
+        let row_end = (area.y + area.height).min(Self::HEIGHT);
+        let col_start = area.x as usize;
+        let col_end = (area.x + area.width).min(Self::WIDTH) as usize;
+
+        let mut lut = vec![mode.lut_default(); 1 << 16];
+        for k in 0..Self::DRAW_IMAGE_FRAME_COUNT {
+            update_lut(&mut lut, k, mode);
+            self.skipping = 0;
+            self.epd.frame_start()?;
+            for y in 0..Self::HEIGHT {
+                if y < row_start || y >= row_end {
+                    self.epd.skip()?;
+                    continue;
+                }
+                let start = y as usize * LINE_BYTES_4BPP;
+                let end = start + LINE_BYTES_4BPP;
+                let mut buf = prepare_dma_buffer(&self.framebuffer[start..end], &lut);
+                mask_dma_columns(&mut buf, col_start, col_end);
+                self.epd.set_buffer(buf.as_slice())?;
+                self.row_write(mode.contrast_cycles()[k])?;
+            }
+            if self.skipping == 0 {
+                self.row_write(mode.contrast_cycles()[k])?;
+            }
+            self.epd.frame_end()?;
+        }
+        self.tainted_rows.fill(0);
+        self.framebuffer.fill(0xFF);
+        Ok(())
+    }
+}
+
+/// Zero out the 2-bit waveform values for pixel columns outside [col_start, col_end).
+/// After `prepare_dma_buffer`, each byte holds 4 pixels in MSB-first 2-bit pairs:
+///   bits 7-6 = column 4*byte_idx+0, bits 5-4 = +1, bits 3-2 = +2, bits 1-0 = +3.
+/// Setting a pair to 0b00 applies VCOM (no drive) to that column.
+fn mask_dma_columns(buf: &mut [u8], col_start: usize, col_end: usize) {
+    for c in 0..Display::WIDTH as usize {
+        if c < col_start || c >= col_end {
+            let byte_idx = c / 4;
+            let bit_shift = 6 - 2 * (c % 4);
+            buf[byte_idx] &= !(0b11u8 << bit_shift);
+        }
     }
 }
 

@@ -1,5 +1,15 @@
 # Changes
 
+## 2026-08-07 (2)
+
+Fix partial refresh: previously selected list items stay black after deselection.
+
+- `src/driver/display.rs`: Added `fill_region(area, color)` (utility) and `flush_region(area, mode)`. `flush_region` drives the waveform only within the physical rectangle: rows outside get fast CKV skips; for rows inside, `mask_dma_columns` zeros out the 2-bit waveform values for columns outside the x-range (VCOM = no drive), so content outside the column range is physically untouched.
+- `examples/ereader_ui.rs`: Added `clearing_flush_region(dirty_rect)` to `Rgb565ToGray4` — converts the logical `Bounds` to a physical `Rectangle` (samples 4 corners to handle all orientations) and calls `display.flush_region(WhiteOnBlack)`.
+- `examples/ereader_ui.rs`: Both ESP partial refresh blocks now call `clearing_flush_region` for the ghost-clear pass instead of a bare `fill(0x0F)` + `flush(WhiteOnBlack)`. Full-screen refreshes (`needs_full_refresh`) still use the original `fill(0x0F)` + `flush(WhiteOnBlack)` path unchanged.
+
+**Root cause:** After each `flush()`, the framebuffer resets to 0xFF. The `BlackOnWhite` LUT immediately clears all drive bits for white-target pixels — so nothing drives physically-black pixels to white. A preceding `WhiteOnBlack` clearing pass is needed; without column masking it was incorrectly driving full row widths to white, wiping content outside the dirty area.
+
 ## 2026-08-07
 
 Partial refresh: limit e-paper waveform to dirty row range only.

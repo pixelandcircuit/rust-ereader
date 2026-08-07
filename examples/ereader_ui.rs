@@ -868,7 +868,7 @@ use esp_backtrace as _;
 esp_bootloader_esp_idf::esp_app_desc!();
 
 #[cfg(feature = "esp")]
-use ereader::driver::display::{Display, DrawMode};
+use ereader::driver::display::{Display, DrawMode, Rectangle};
 #[cfg(feature = "esp")]
 use ereader::driver::gt911::GT911_ADDR_PRIMARY;
 #[cfg(feature = "esp")]
@@ -897,6 +897,38 @@ impl<'a> Rgb565ToGray4<'a> {
     }
     fn flush(&mut self) {
         self.display.flush(DrawMode::BlackOnWhite).unwrap();
+    }
+
+    /// WhiteOnBlack clearing pass scoped to the logical dirty rect.
+    /// Converts to physical coords, then calls `display.flush_region(WhiteOnBlack)` which
+    /// applies the clearing waveform only within that physical rectangle (column-masked so
+    /// pixels outside the column range receive VCOM = no drive and are left unchanged).
+    fn clearing_flush_region(&mut self, dirty_rect: &Bounds) {
+        let lw = self.orientation.logical_size().0 as u16;
+        let lh = self.orientation.logical_size().1 as u16;
+        let lx1 = (dirty_rect.position.x.max(0) as u16).min(lw);
+        let ly1 = (dirty_rect.position.y.max(0) as u16).min(lh);
+        let lx2 = ((dirty_rect.position.x + dirty_rect.size.w as i32).max(0) as u16).min(lw);
+        let ly2 = ((dirty_rect.position.y + dirty_rect.size.h as i32).max(0) as u16).min(lh);
+        // Sample the 4 corners of the logical rect to get the physical bounding box.
+        // This handles all orientations correctly since axes may be swapped/flipped.
+        let corners = [
+            self.orientation.logical_to_phys(lx1, ly1),
+            self.orientation.logical_to_phys(lx1, ly2.saturating_sub(1)),
+            self.orientation.logical_to_phys(lx2.saturating_sub(1), ly1),
+            self.orientation.logical_to_phys(lx2.saturating_sub(1), ly2.saturating_sub(1)),
+        ];
+        let px = corners.iter().map(|c| c.0).min().unwrap_or(0);
+        let py = corners.iter().map(|c| c.1).min().unwrap_or(0);
+        let px2 = corners.iter().map(|c| c.0).max().unwrap_or(0);
+        let py2 = corners.iter().map(|c| c.1).max().unwrap_or(0);
+        let area = Rectangle {
+            x: px,
+            y: py,
+            width: px2 - px + 1,
+            height: py2 - py + 1,
+        };
+        self.display.flush_region(area, DrawMode::WhiteOnBlack).unwrap();
     }
 }
 
@@ -1319,6 +1351,8 @@ async fn main(spawner: Spawner) -> ! {
                     if needs_full {
                         bridge.display.fill(0x0F).unwrap();
                         bridge.display.flush(DrawMode::WhiteOnBlack).unwrap();
+                    } else {
+                        bridge.clearing_flush_region(&dirty_rect);
                     }
                     {
                         let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
@@ -1353,11 +1387,15 @@ async fn main(spawner: Spawner) -> ! {
 
         if was_dirty {
             info!("clip rect {}", scene.dirty_rect);
+            // Ghost-clear pass: drives dark pixels to white so the BlackOnWhite draw can
+            // correctly lighten any pixels that changed from dark to light (e.g. deselected
+            // list item, dismissed dialog). Without this, white-target pixels get "no drive"
+            // from the LUT and black display pixels stay black.
             if needs_full_refresh {
-                // Ghost-clear pass: needed for dark→light pixel transitions (e.g. dialog dismiss).
-                // Matches the page-turn pattern in ereader_full: fill white → WhiteOnBlack → draw → BlackOnWhite.
                 bridge.display.fill(0x0F).unwrap();
                 bridge.display.flush(DrawMode::WhiteOnBlack).unwrap();
+            } else {
+                bridge.clearing_flush_region(&dirty_rect);
             }
             {
                 let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
@@ -1432,11 +1470,8 @@ async fn main(spawner: Spawner) -> ! {
                                 s.selected = 0;
                             }
                         }
-                        scene.mark_layout_dirty();
-                        scene.mark_dirty_all();
                         last_interaction = Instant::now();
                     } else if input.source == ViewId::new("lib_list") {
-                        scene.mark_dirty_all();
                         last_interaction = Instant::now();
                     } else if input.source == ViewId::new("library_read") {
                         let filename = scene
