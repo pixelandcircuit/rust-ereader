@@ -424,7 +424,11 @@ impl<'a> Display<'a> {
             self.epd.frame_start()?;
             for y in 0..Self::HEIGHT {
                 if y < row_start || y >= row_end {
-                    self.epd.skip()?;
+                    // row_skip() writes VCOM for the first two skipped rows then falls
+                    // back to CKV-only once the output latch is neutralized.  The raw
+                    // epd.skip() here would leave the latch holding whatever waveform
+                    // the last in-range row drove, causing overdraw outside the dialog.
+                    self.row_skip(mode.contrast_cycles()[k])?;
                     continue;
                 }
                 let start = y as usize * LINE_BYTES_4BPP;

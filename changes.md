@@ -1,5 +1,11 @@
 # Changes
 
+## 2026-08-07 (7)
+
+Fix overdraw outside dialog during partial refresh.
+
+- `src/driver/display.rs`: `flush_region()` was calling `self.epd.skip()` (raw CKV-only pulse) for rows outside the dirty rectangle. This left the display's output latch holding whatever waveform the last in-range row drove; with OE active, every skipped row was driven by that stale latch. The clearing pass (WhiteOnBlack) latch bled into rows after the dialog (left side in portrait → went white) and the prior full-flush book-content latch bled into rows before the dialog (right side → went black). Fix: replace `epd.skip()` with `self.row_skip()` for out-of-range rows. `row_skip()` explicitly writes VCOM for the first two skipped rows to neutralize the latch, then falls back to CKV-only — the same mechanism `draw()` already uses for untainted rows. As a secondary effect, `self.skipping` is now non-zero after out-of-range rows, so the end-of-frame guard no longer fires an extra `row_write()` that was driving the first row outside the dialog with the last in-dialog row's waveform.
+
 ## 2026-08-07 (6)
 
 Render HTML/EPUB headings in bold at a larger size.

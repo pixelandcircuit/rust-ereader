@@ -27,7 +27,7 @@ use iris_ui::button::{make_button, make_full_button};
 use iris_ui::device::EmbeddedDrawingContext;
 use iris_ui::geom::{Bounds, Insets, Point as GPoint};
 use iris_ui::label::make_label;
-use iris_ui::layouts::{layout_hbox, layout_vbox};
+use iris_ui::layouts::{layout_centered_dialog, layout_hbox, layout_vbox};
 use iris_ui::list_view::{make_list_view, ListState};
 use iris_ui::scene::{click_at, draw_scene, layout_scene, Scene};
 use iris_ui::toggle_group::{make_toggle_group, SelectOneOfState};
@@ -55,10 +55,8 @@ const UI_FONT_SIZE_LARGE: f32 = 24.0;
 fn handle_click(event: &mut GuiEvent) {
     if event.target == &ViewId::new("settings") {
         event.scene.show_view(&DIALOG_ID);
-        event.scene.mark_dirty_all();
     } else if event.target == &ViewId::new("dialog_close") {
         event.scene.hide_view(&DIALOG_ID);
-        event.scene.mark_dirty_all();
     } else if event.target == &ViewId::new("library") {
         event.scene.show_view(&LIBRARY_DIALOG_ID);
         event.scene.mark_layout_dirty();
@@ -316,14 +314,15 @@ fn make_scene(body_font: &'static Font, bold_font: &'static Font, w: i32, h: i32
     // --- settings dialog --------------------
     {
         let dialog_panel = make_panel(&DIALOG_ID)
-            .with_layout(Some(layout_vbox))
-            .with_h_flex(Flex::Grow)
-            .with_v_flex(Flex::Grow)
+            .with_layout(Some(layout_centered_dialog))
+            .with_h_flex(Flex::Fixed)
+            .with_v_flex(Flex::Shrink)
+            .with_size(440, 0)
             .with_visible(false)
             .with_state(Some(Box::new(PanelState {
                 border_visible: true,
-                gap: 10,
-                padding: Insets::new_same(10),
+                gap: 8,
+                padding: Insets::new_same(8),
             })));
         // ── Settings dialog (hidden, drawn last so it appears on top) ────────────
         scene.add_view_to_parent(
@@ -910,19 +909,16 @@ impl<'a> Rgb565ToGray4<'a> {
         self.display.flush(DrawMode::BlackOnWhite).unwrap();
     }
 
-    /// WhiteOnBlack clearing pass scoped to the logical dirty rect.
-    /// Converts to physical coords, then calls `display.flush_region(WhiteOnBlack)` which
-    /// applies the clearing waveform only within that physical rectangle (column-masked so
-    /// pixels outside the column range receive VCOM = no drive and are left unchanged).
-    fn clearing_flush_region(&mut self, dirty_rect: &Bounds) {
+    /// Apply `mode` waveform to the logical dirty rect only.
+    /// Converts to physical coords and calls `display.flush_region` with column masking,
+    /// so pixels outside the rect receive VCOM (no drive) and are physically unchanged.
+    fn flush_region(&mut self, dirty_rect: &Bounds, mode: DrawMode) {
         let lw = self.orientation.logical_size().0 as u16;
         let lh = self.orientation.logical_size().1 as u16;
         let lx1 = (dirty_rect.position.x.max(0) as u16).min(lw);
         let ly1 = (dirty_rect.position.y.max(0) as u16).min(lh);
         let lx2 = ((dirty_rect.position.x + dirty_rect.size.w as i32).max(0) as u16).min(lw);
         let ly2 = ((dirty_rect.position.y + dirty_rect.size.h as i32).max(0) as u16).min(lh);
-        // Sample the 4 corners of the logical rect to get the physical bounding box.
-        // This handles all orientations correctly since axes may be swapped/flipped.
         let corners = [
             self.orientation.logical_to_phys(lx1, ly1),
             self.orientation.logical_to_phys(lx1, ly2.saturating_sub(1)),
@@ -939,7 +935,11 @@ impl<'a> Rgb565ToGray4<'a> {
             width: px2 - px + 1,
             height: py2 - py + 1,
         };
-        self.display.flush_region(area, DrawMode::WhiteOnBlack).unwrap();
+        self.display.flush_region(area, mode).unwrap();
+    }
+
+    fn clearing_flush_region(&mut self, dirty_rect: &Bounds) {
+        self.flush_region(dirty_rect, DrawMode::WhiteOnBlack);
     }
 }
 
@@ -1385,7 +1385,11 @@ async fn main(spawner: Spawner) -> ! {
                         layout_scene(&mut scene, &theme);
                         draw_scene(&mut scene, &mut ctx, &theme);
                     }
-                    bridge.flush();
+                    if needs_full || force_full {
+                        bridge.flush();
+                    } else {
+                        bridge.flush_region(&dirty_rect, DrawMode::BlackOnWhite);
+                    }
                 }
 
                 EmbassyTimer::after(Duration::from_millis(10)).await;
@@ -1440,7 +1444,11 @@ async fn main(spawner: Spawner) -> ! {
                 layout_scene(&mut scene, &theme);
                 draw_scene(&mut scene, &mut ctx, &theme);
             }
-            bridge.flush();
+            if needs_full_refresh || force_full {
+                bridge.flush();
+            } else {
+                bridge.flush_region(&dirty_rect, DrawMode::BlackOnWhite);
+            }
         }
 
         if let Some((tx, ty)) = bridge.display.read_touch(&mut gt911) {
