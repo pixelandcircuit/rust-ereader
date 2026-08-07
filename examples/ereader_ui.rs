@@ -40,6 +40,7 @@ const WELCOME_HTML: &[u8] = include_bytes!("welcome.html");
 const DIALOG_ID: ViewId = ViewId::new("dialog");
 const LIBRARY_DIALOG_ID: ViewId = ViewId::new("library_dialog");
 const ERROR_DIALOG_ID: ViewId = ViewId::new("error_dialog");
+const LOADING_DIALOG_ID: ViewId = ViewId::new("loading_dialog");
 const FAST_SCROLL_PANEL_ID: ViewId = ViewId::new("fast_scroll_panel");
 const FAST_SCROLL_W: i32 = 300;
 const FAST_SCROLL_H: i32 = 80;
@@ -162,6 +163,19 @@ fn show_error_dialog(scene: &mut Scene, filename: &str) {
     scene.show_view(&ERROR_DIALOG_ID);
     scene.mark_layout_dirty();
     scene.mark_dirty_all();
+}
+
+fn show_loading_dialog(scene: &mut Scene, filename: &str) {
+    if let Some(v) = scene.get_view_mut(&ViewId::new("loading_msg")) {
+        v.title = format!("Loading {filename}\u{2026}");
+    }
+    scene.show_view(&LOADING_DIALOG_ID);
+    scene.mark_layout_dirty_view(&LOADING_DIALOG_ID);
+}
+
+fn hide_loading_dialog(scene: &mut Scene) {
+    scene.hide_view(&LOADING_DIALOG_ID);
+    scene.mark_dirty_view(&LOADING_DIALOG_ID);
 }
 
 fn layout_fast_scroll_panel(e: &mut LayoutEvent) {
@@ -436,6 +450,26 @@ fn make_scene(body_font: &'static Font, bold_font: &'static Font, w: i32, h: i32
             &ERROR_DIALOG_ID,
         );
         scene.add_view_to_root(err_panel);
+    }
+
+    // ── Loading dialog (hidden, shown while a book file is being read) ────────
+    {
+        let loading_panel = make_panel(&LOADING_DIALOG_ID)
+            .with_layout(Some(layout_centered_dialog))
+            .with_h_flex(Flex::Fixed)
+            .with_v_flex(Flex::Shrink)
+            .with_size(320, 0)
+            .with_visible(false)
+            .with_state(Some(Box::new(PanelState {
+                border_visible: true,
+                gap: 8,
+                padding: Insets::new_same(16),
+            })));
+        scene.add_view_to_parent(
+            make_label(&ViewId::new("loading_msg"), ""),
+            &LOADING_DIALOG_ID,
+        );
+        scene.add_view_to_root(loading_panel);
     }
 
     // ── Fast-scroll overlay (hidden; shows page indicator while button held) ──
@@ -763,6 +797,17 @@ fn main() {
                                 .and_then(|v| v.get_state::<ListState>())
                                 .and_then(|s| s.items.get(s.selected).cloned());
                             if let Some(filename) = filename {
+                                scene.hide_view(&LIBRARY_DIALOG_ID);
+                                show_loading_dialog(&mut scene, &filename);
+                                // Flush the loading screen to the window before blocking.
+                                {
+                                    let dirty = scene.dirty_rect.clone();
+                                    let mut ctx = EmbeddedDrawingContext::new(&mut display);
+                                    ctx.clip = dirty;
+                                    layout_scene(&mut scene, &theme);
+                                    draw_scene(&mut scene, &mut ctx, &theme);
+                                    window.update(&display);
+                                }
                                 if let Some(data) = hw.load_book_file(&filename) {
                                     hw.save_bookmark(
                                         &current_filename,
@@ -781,6 +826,7 @@ fn main() {
                                         .or_else(|_| BookSession::new(new_book.as_ref(), &cfg)),
                                         None => BookSession::new(new_book.as_ref(), &cfg),
                                     };
+                                    hide_loading_dialog(&mut scene);
                                     if let Ok(s) = new_session {
                                         current_filename = filename.clone();
                                         session = s;
@@ -796,11 +842,11 @@ fn main() {
                                             v.title = filename.clone();
                                         }
                                     } else {
-                                        scene.hide_view(&LIBRARY_DIALOG_ID);
                                         show_error_dialog(&mut scene, &filename);
                                     }
-                                    scene.hide_view(&LIBRARY_DIALOG_ID);
-                                    scene.mark_dirty_all();
+                                } else {
+                                    hide_loading_dialog(&mut scene);
+                                    show_error_dialog(&mut scene, &filename);
                                 }
                             }
                         }
@@ -1514,6 +1560,7 @@ async fn main(spawner: Spawner) -> ! {
                                 s.selected = 0;
                             }
                         }
+                        scene.mark_layout_dirty_view(&LIBRARY_DIALOG_ID);
                         last_interaction = Instant::now();
                     } else if input.source == ViewId::new("lib_list") {
                         last_interaction = Instant::now();
@@ -1523,6 +1570,23 @@ async fn main(spawner: Spawner) -> ! {
                             .and_then(|v| v.get_state::<ListState>())
                             .and_then(|s| s.items.get(s.selected).cloned());
                         if let Some(filename) = filename {
+                            scene.hide_view(&LIBRARY_DIALOG_ID);
+                            show_loading_dialog(&mut scene, &filename);
+                            // Flush the loading screen to e-paper before the blocking SD read.
+                            // E-paper is bistable so the "Loading…" message stays visible
+                            // for the full duration of the blocking file read.
+                            {
+                                let dirty = scene.dirty_rect.clone();
+                                bridge.clearing_flush_region(&dirty);
+                                {
+                                    let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
+                                    ctx.clip = dirty.clone();
+                                    layout_scene(&mut scene, &theme);
+                                    draw_scene(&mut scene, &mut ctx, &theme);
+                                }
+                                bridge.flush_region(&dirty, DrawMode::BlackOnWhite);
+                                partial_refresh_count += 1;
+                            }
                             if let Some(data) = hw.load_book_file(&filename) {
                                 hw.save_bookmark(
                                     &current_filename,
@@ -1541,6 +1605,7 @@ async fn main(spawner: Spawner) -> ! {
                                     .or_else(|_| BookSession::new(new_book.as_ref(), &cfg)),
                                     None => BookSession::new(new_book.as_ref(), &cfg),
                                 };
+                                hide_loading_dialog(&mut scene);
                                 if let Ok(s) = new_session {
                                     current_filename = filename.clone();
                                     session = s;
@@ -1554,11 +1619,11 @@ async fn main(spawner: Spawner) -> ! {
                                         v.title = filename.clone();
                                     }
                                 } else {
-                                    scene.hide_view(&LIBRARY_DIALOG_ID);
                                     show_error_dialog(&mut scene, &filename);
                                 }
-                                scene.hide_view(&LIBRARY_DIALOG_ID);
-                                scene.mark_dirty_all();
+                            } else {
+                                hide_loading_dialog(&mut scene);
+                                show_error_dialog(&mut scene, &filename);
                             }
                         }
                         last_interaction = Instant::now();

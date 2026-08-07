@@ -1,5 +1,12 @@
 # Changes
 
+## 2026-08-07 (9)
+
+Show a "Loading…" dialog before the blocking book-file read so the user gets feedback immediately.
+
+- `examples/ereader_ui.rs`: Added `LOADING_DIALOG_ID` constant, `show_loading_dialog` and `hide_loading_dialog` helpers, and a centered 320 px-wide loading panel in `make_scene`.
+- In both the simulator and ESP `library_read` action arms: the library dialog is now hidden and the loading dialog shown *before* calling `hw.load_book_file`. An inline force-flush (layout + draw + display flush) writes the "Loading \<filename\>…" message to the screen before the blocking I/O begins. On the ESP, the e-paper panel remains visible for the entire duration of the multi-second SD card read without needing a background thread (e-paper is bistable). After the load succeeds the loading dialog is hidden and the book shown; on failure it is hidden and the error dialog shown.
+
 ## 2026-08-07 (8)
 
 Make the library dialog narrower so partial refresh covers less of the screen.
