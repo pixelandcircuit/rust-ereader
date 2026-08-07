@@ -332,6 +332,24 @@ impl<'a> Display<'a> {
 
     const DRAW_IMAGE_FRAME_COUNT: usize = 15;
     fn draw(&mut self, mode: DrawMode) -> Result<()> {
+        // Find the contiguous physical row range that needs updating.
+        // Rows outside this range get fast CKV skips to avoid driving untouched pixels.
+        let mut row_start = Self::HEIGHT;
+        let mut row_end = 0u16;
+        for y in 0..Self::HEIGHT {
+            if self.is_tainted(y) {
+                if y < row_start {
+                    row_start = y;
+                }
+                if y + 1 > row_end {
+                    row_end = y + 1;
+                }
+            }
+        }
+        if row_start >= Self::HEIGHT {
+            return Ok(()); // nothing tainted
+        }
+
         let mut lut = vec![mode.lut_default(); 1 << 16];
 
         for k in 0..Self::DRAW_IMAGE_FRAME_COUNT {
@@ -339,6 +357,10 @@ impl<'a> Display<'a> {
             self.skipping = 0;
             self.epd.frame_start()?;
             for y in 0..Self::HEIGHT {
+                if y < row_start || y >= row_end {
+                    self.epd.skip()?;
+                    continue;
+                }
                 if !self.is_tainted(y) {
                     self.row_skip(mode.contrast_cycles()[k])?;
                     continue;

@@ -1,5 +1,11 @@
 # Changes
 
+## 2026-08-07
+
+Partial refresh: limit e-paper waveform to dirty row range only.
+
+- `src/driver/display.rs`: `draw()` now computes the first and last tainted physical rows before rendering. Rows outside that range receive a bare `epd.skip()` (fast CKV pulse, no pixel data) rather than going through `row_skip()`. For landscape partial updates this reduces the scan to just the dirty rows; for portrait mode it also narrows the scan to the logical-x → physical-y footprint of the changed area, avoiding full-panel waveform passes for small updates.
+
 ## 2026-08-06 (6)
 
 Add truncating book-title label to the top bar.
