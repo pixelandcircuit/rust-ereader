@@ -42,6 +42,9 @@ pub struct LayoutConfig {
     pub margin_x: u32,      // horizontal margin on each side
     pub margin_y: u32,      // vertical margin on each side
     pub font: FontMetrics,
+    /// Optional metrics for heading paragraphs (introduced by \x01–\x03 sentinels).
+    /// `None` leaves headings measured and rendered identically to body text.
+    pub heading_font: Option<FontMetrics>,
 }
 
 // ── Core layout function ──────────────────────────────────────────────────────
@@ -59,11 +62,11 @@ pub struct LayoutConfig {
 pub fn layout_chapter(text: &str, cfg: &LayoutConfig) -> Layout {
     let content_w = cfg.screen_width.saturating_sub(2 * cfg.margin_x);
     let content_h = cfg.screen_height.saturating_sub(2 * cfg.margin_y);
-    let line_h = cfg.font.line_height_px;
-    let para_gap = line_h * PARA_GAP_LINES;
+    let body_line_h = cfg.font.line_height_px;
+    let para_gap = body_line_h * PARA_GAP_LINES;
 
     // Degenerate / zero-sized config: one page for everything.
-    if content_w == 0 || content_h == 0 || line_h == 0 {
+    if content_w == 0 || content_h == 0 || body_line_h == 0 {
         let pages = if text.is_empty() {
             Vec::new()
         } else {
@@ -79,15 +82,18 @@ pub fn layout_chapter(text: &str, cfg: &LayoutConfig) -> Layout {
         return Layout { pages };
     }
 
-    // ── ASCII glyph width cache ───────────────────────────────────────────────
-    // Pre-measuring every printable ASCII character avoids calling `measure`
-    // repeatedly for the overwhelmingly common case of ASCII text.
+    // ── ASCII glyph width caches ──────────────────────────────────────────────
     let mut gcache = [0u32; 128];
+    let mut hcache = [0u32; 128];
     {
         let mut buf = [0u8; 4];
         for b in 32u8..127u8 {
             let s = char::from(b).encode_utf8(&mut buf);
             gcache[b as usize] = (cfg.font.measure)(s);
+            hcache[b as usize] = cfg
+                .heading_font
+                .as_ref()
+                .map_or(gcache[b as usize], |hf| (hf.measure)(s));
         }
     }
     let space_w = if cfg.font.space_width_px > 0 {
@@ -95,24 +101,27 @@ pub fn layout_chapter(text: &str, cfg: &LayoutConfig) -> Layout {
     } else {
         gcache[b' ' as usize]
     };
+    let heading_line_h = cfg
+        .heading_font
+        .as_ref()
+        .map_or(body_line_h, |hf| hf.line_height_px);
 
     let bytes = text.as_bytes();
     let total = bytes.len();
 
     let mut pages = Vec::new();
     let mut page_start = 0usize;
-    let mut line_y = 0u32; // top of current line, relative to page top
-    let mut line_px = 0u32; // pixel width consumed so far on this line
+    let mut line_y = 0u32;
+    let mut line_px = 0u32;
     let mut pos = 0usize;
-    let mut pending_space = false; // space token seen before the next word
+    let mut pending_space = false;
+    let mut in_heading = false;
+    let mut current_line_h = body_line_h;
 
-    // Advance to the next line.  `extra` adds paragraph spacing.  `at` is the
-    // byte offset that will become page_start if a page boundary is crossed.
-    // Callers are responsible for resetting line_px and pending_space afterwards.
     macro_rules! next_line {
         ($extra:expr, $at:expr) => {{
-            line_y += line_h + $extra;
-            if line_y + line_h > content_h {
+            line_y += current_line_h + $extra;
+            if line_y + current_line_h > content_h {
                 pages.push(Page {
                     start: page_start,
                     end: $at,
@@ -134,14 +143,24 @@ pub fn layout_chapter(text: &str, cfg: &LayoutConfig) -> Layout {
             next_line!(extra, pos + skip);
             line_px = 0;
             pending_space = false;
+            if double {
+                in_heading = false;
+                current_line_h = body_line_h;
+            }
             pos += skip;
+            continue;
+        }
+
+        // ── Heading sentinel (\x01–\x03) ──────────────────────────────────────
+        if b >= 1 && b <= 3 {
+            in_heading = true;
+            current_line_h = heading_line_h;
+            pos += 1;
             continue;
         }
 
         // ── Spaces ────────────────────────────────────────────────────────────
         if b == b' ' {
-            // Consume all consecutive spaces; only set pending_space when we're
-            // mid-line so that lines never start with whitespace.
             if line_px > 0 {
                 pending_space = true;
             }
@@ -158,47 +177,46 @@ pub fn layout_chapter(text: &str, cfg: &LayoutConfig) -> Layout {
         while pos < total && bytes[pos] != b' ' && bytes[pos] != b'\n' {
             let wb = bytes[pos];
             if wb < 128 {
-                // Fast path: ASCII — look up cache.
-                word_px += gcache[wb as usize];
+                word_px += if in_heading {
+                    hcache[wb as usize]
+                } else {
+                    gcache[wb as usize]
+                };
                 pos += 1;
             } else {
-                // Slow path: multi-byte UTF-8 — scan to the end of the codepoint,
-                // then measure the whole character as a string.
                 let cs = pos;
                 pos += 1;
                 while pos < total && (bytes[pos] & 0xC0) == 0x80 {
                     pos += 1;
                 }
-                word_px += (cfg.font.measure)(&text[cs..pos]);
+                word_px += if in_heading {
+                    cfg.heading_font
+                        .as_ref()
+                        .map_or_else(|| (cfg.font.measure)(&text[cs..pos]), |hf| (hf.measure)(&text[cs..pos]))
+                } else {
+                    (cfg.font.measure)(&text[cs..pos])
+                };
             }
         }
 
         if word_start == pos {
             pos += 1;
             continue;
-        } // safety skip for unexpected bytes
+        }
 
-        // How much horizontal space does this word need?
-        let gap = if pending_space && line_px > 0 {
-            space_w
-        } else {
-            0
-        };
+        let gap = if pending_space && line_px > 0 { space_w } else { 0 };
         let needed = line_px + gap + word_px;
 
         if needed > content_w && line_px > 0 {
-            // Word doesn't fit on the current line: wrap, then place at line start.
             next_line!(0, word_start);
             line_px = word_px;
             pending_space = false;
         } else {
-            // Fits (or is alone on an empty line — overflowing is unavoidable).
             line_px = needed;
             pending_space = false;
         }
     }
 
-    // Emit the final (possibly partial) page.
     if page_start < total || pages.is_empty() {
         pages.push(Page {
             start: page_start,
@@ -227,6 +245,7 @@ mod tests {
                 space_width_px: char_px,
                 measure: Box::new(move |s: &str| s.chars().count() as u32 * char_px),
             },
+            heading_font: None,
         }
     }
 

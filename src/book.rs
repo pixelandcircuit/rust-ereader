@@ -165,6 +165,8 @@ fn process_tag(tag: &str, out: &mut String, skip: &mut bool) {
 fn on_open(name: &str, out: &mut String) {
     if is_heading(name) {
         push_blank_line(out);
+        let level = name.as_bytes()[1].saturating_sub(b'0').clamp(1, 6);
+        out.push(char::from(level.min(3)));
     } else if name.eq_ignore_ascii_case("br") {
         push_newline(out);
     } else if name.eq_ignore_ascii_case("li") {
@@ -373,11 +375,11 @@ mod tests {
 
     #[test]
     fn heading_surrounded_by_blank_lines() {
-        // Content before the heading, heading, content after.
+        // Headings are surrounded by blank lines and prefixed with a sentinel byte.
         let out = html_to_text("<p>intro</p><h1>Title</h1><p>body</p>");
         assert!(
-            out.contains("\n\nTitle\n\n"),
-            "heading must be surrounded by blank lines; got: {out:?}"
+            out.contains("\n\n\x01Title\n\n"),
+            "heading must be surrounded by blank lines with sentinel; got: {out:?}"
         );
     }
 

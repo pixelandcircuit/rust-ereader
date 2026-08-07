@@ -66,6 +66,7 @@ fn run_tests() {
             space_width_px: 10,
             measure: Box::new(fixed_measure),
         },
+        heading_font: None,
     };
 
     let mut reader = ReaderState::new(text, &cfg);
@@ -96,6 +97,7 @@ fn run_tests() {
             space_width_px: 13,
             measure: Box::new(|s: &str| s.chars().count() as u32 * 13),
         },
+        heading_font: None,
     };
     reader.go_to_page(0);
     reader.anchor_byte = reader

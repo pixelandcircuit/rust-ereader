@@ -1,5 +1,15 @@
 # Changes
 
+## 2026-08-07 (6)
+
+Render HTML/EPUB headings in bold at a larger size.
+
+- `src/book.rs`: `on_open` pushes a sentinel byte (`\x01`=H1, `\x02`=H2, `\x03`=H3+) immediately after the `\n\n` that opens a heading paragraph.
+- `src/epub.rs`: `apply_tag` does the same for EPUB XHTML heading tags on the opening tag only.
+- `src/layout.rs`: `LayoutConfig` gains `heading_font: Option<FontMetrics>`. `layout_chapter` detects sentinel bytes, switches to heading metrics (larger line height + measure fn) for the rest of that paragraph, and resets on the next `\n\n`.
+- `src/bookview.rs`: `BookState` gains `heading_font` and `heading_font_px`. `layout_cfg` accepts a `heading_font` parameter and builds the `FontMetrics` at 1.4× body size. `render_ttf_text` detects sentinels at paragraph boundaries and switches font/size for heading paragraphs, stripping the sentinel before drawing.
+- `examples/ereader_ui.rs`: `make_scene` and `cfg_from_scene` accept `bold_font`; `BookState` is initialised with `heading_font = bold_font` (AtkinsonHyperlegible-Bold) at 1.4× body size.
+
 ## 2026-08-07 (5)
 
 Replace default Sherlock Holmes EPUB with a built-in welcome guide.

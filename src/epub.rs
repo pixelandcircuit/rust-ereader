@@ -624,8 +624,11 @@ fn apply_tag(
         "p" | "div" | "blockquote" if closing => push_para_break(out),
 
         "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
-            // Heading open or close: insert a paragraph-style break on both sides.
             push_para_break(out);
+            if !closing {
+                let level = name.as_bytes()[1].saturating_sub(b'0').clamp(1, 6);
+                out.push(char::from(level.min(3)));
+            }
         }
 
         "li" if !closing => {

@@ -23,6 +23,8 @@ pub struct BookState {
     pub text: String,
     pub font_px: f32,
     pub font: &'static fontdue::Font,
+    pub heading_font: &'static fontdue::Font,
+    pub heading_font_px: f32,
 }
 
 pub fn draw_book_content(e: &mut DrawEvent) {
@@ -35,8 +37,10 @@ pub fn draw_book_content(e: &mut DrawEvent) {
         e.ctx.fill_rect(&bounds, &Rgb565::WHITE);
         render_ttf_text(
             state.font,
+            state.heading_font,
             &state.text,
             state.font_px,
+            state.heading_font_px,
             bounds,
             |px, py, g4| {
                 let gray8 = (g4 << 4) | g4;
@@ -86,6 +90,7 @@ pub fn update_content(scene: &mut Scene, session: &BookSession, font_px: f32) {
 /// so layout and render agree on how many characters/lines fit.
 pub fn layout_cfg(
     font: &'static Font,
+    heading_font: &'static Font,
     font_size: FontSize,
     content_w: i32,
     content_h: i32,
@@ -93,6 +98,10 @@ pub fn layout_cfg(
     let font_px = font_px_for(font_size);
     let line_h = (line_height(font, font_px) as u32).saturating_add(4);
     let space_w = char_advance(font, ' ', font_px) as u32;
+
+    let heading_px = font_px * 1.4;
+    let heading_line_h = (line_height(heading_font, heading_px) as u32).saturating_add(4);
+    let heading_space_w = char_advance(heading_font, ' ', heading_px) as u32;
 
     // render_ttf_text uses pad_x=16 on each side and pad_y=12 on each side.
     let text_w = (content_w as u32).saturating_sub(32);
@@ -108,6 +117,13 @@ pub fn layout_cfg(
             space_width_px: space_w,
             measure: Box::new(move |s: &str| measure_width(font, s, font_px).max(0) as u32),
         },
+        heading_font: Some(FontMetrics {
+            line_height_px: heading_line_h,
+            space_width_px: heading_space_w,
+            measure: Box::new(move |s: &str| {
+                measure_width(heading_font, s, heading_px).max(0) as u32
+            }),
+        }),
     }
 }
 
@@ -147,15 +163,16 @@ fn next_ttf_line<'a>(
 /// at a time to `put_pixel`. Handles word-wrap, padding, and bounds clipping.
 fn render_ttf_text(
     font: &'static Font,
+    heading_font: &'static Font,
     text: &str,
     font_px: f32,
+    heading_font_px: f32,
     bounds: Bounds,
     mut put_pixel: impl FnMut(i32, i32, u8),
 ) {
     if text.is_empty() {
         return;
     }
-    let line_h = line_height(font, font_px) + 4; // +4 px leading
     let pad_x = 16i32;
     let pad_y = 12i32;
     let cx = bounds.position.x;
@@ -163,17 +180,36 @@ fn render_ttf_text(
     let cw = bounds.size.w;
     let ch = bounds.size.h;
     let max_px = cw - pad_x * 2;
-    let mut baseline = cy + pad_y + line_height(font, font_px);
-    let mut remaining = text;
+
+    // Detect whether the current paragraph is a heading by checking for a
+    // sentinel byte (\x01–\x03) at the start of the paragraph.
+    fn is_sentinel(s: &str) -> bool {
+        s.as_bytes().first().map_or(false, |&b| b >= 1 && b <= 3)
+    }
+    fn strip_sentinel(s: &str) -> &str {
+        if s.as_bytes().first().map_or(false, |&b| b >= 1 && b <= 3) {
+            &s[1..]
+        } else {
+            s
+        }
+    }
+
+    let mut in_heading = is_sentinel(text);
+    let mut current_font = if in_heading { heading_font } else { font };
+    let mut current_px = if in_heading { heading_font_px } else { font_px };
+    let mut line_h = line_height(current_font, current_px) + 4;
+    let mut baseline = cy + pad_y + line_height(current_font, current_px);
+    let mut remaining = strip_sentinel(text);
+
     while !remaining.is_empty() && baseline < cy + ch - pad_y {
-        let (line, rest) = next_ttf_line(&font, remaining, max_px, font_px);
+        let (line, rest) = next_ttf_line(current_font, remaining, max_px, current_px);
         if !line.is_empty() {
             draw_str(
-                font,
+                current_font,
                 line,
                 cx + pad_x,
                 baseline,
-                font_px,
+                current_px,
                 15,
                 &mut |px, py, g4| {
                     if px >= cx && px < cx + cw && py >= cy && py < cy + ch {
@@ -183,15 +219,15 @@ fn render_ttf_text(
             );
         }
         remaining = rest;
-        // After a line ending with '\n', if 'remaining' also starts with '\n',
-        // this is a double-newline paragraph break.  Consume the second '\n' and
-        // advance only by para_gap (line_h / 2), matching layout_chapter which
-        // advances line_h + para_gap = 1.5 × line_h for '\n\n'.  Without this,
-        // each paragraph break consumes 2 × line_h here vs 1.5 × line_h in the
-        // layout, causing the renderer to clip the last lines of a page.
         if remaining.starts_with('\n') {
             remaining = &remaining[1..];
             baseline += line_h * crate::layout::PARA_GAP_LINES as i32;
+            // Detect next paragraph's heading status and update font/size.
+            in_heading = is_sentinel(remaining);
+            remaining = strip_sentinel(remaining);
+            current_font = if in_heading { heading_font } else { font };
+            current_px = if in_heading { heading_font_px } else { font_px };
+            line_h = line_height(current_font, current_px) + 4;
         } else {
             baseline += line_h;
         }

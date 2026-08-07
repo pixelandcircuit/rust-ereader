@@ -186,13 +186,14 @@ fn cfg_from_scene(
     scene: &mut Scene,
     theme: &Theme,
     body_font: &'static Font,
+    bold_font: &'static Font,
     font_size: FontSize,
 ) -> LayoutConfig {
     layout_scene(scene, theme);
     let bounds = scene
         .get_view_bounds(&CONTENT_ID)
         .expect("content view not in scene");
-    layout_cfg(body_font, font_size, bounds.size.w, bounds.size.h)
+    layout_cfg(body_font, bold_font, font_size, bounds.size.w, bounds.size.h)
 }
 
 fn update_fast_scroll_label(
@@ -214,7 +215,7 @@ fn update_fast_scroll_label(
     scene.mark_dirty_view(&FAST_SCROLL_PANEL_ID);
 }
 
-fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
+fn make_scene(body_font: &'static Font, bold_font: &'static Font, w: i32, h: i32) -> Scene {
     let mut scene = Scene::new_with_bounds(Bounds::new(0, 0, w, h));
     let main_id = ViewId::new("main");
     let main_panel = make_panel(&main_id)
@@ -263,6 +264,8 @@ fn make_scene(body_font: &'static Font, w: i32, h: i32) -> Scene {
                 text: String::new(),
                 font_px: 22.0,
                 font: body_font,
+                heading_font: bold_font,
+                heading_font_px: 22.0 * 1.4,
             })),
             ..Default::default()
         }
@@ -542,13 +545,13 @@ fn main() {
     let mut window = Window::new("ereader_ui", &settings);
 
     let (font, bold_font, body_font) = load_fonts();
-    let mut scene = make_scene(body_font, win_w, win_h);
+    let mut scene = make_scene(body_font, bold_font, win_w, win_h);
     let mut theme = make_theme(font, bold_font);
     let handlers: Vec<Callback> = vec![handle_click];
 
     let mut book: Box<dyn Book> =
         Box::new(HtmlBook::from_vec(WELCOME_HTML.to_vec()));
-    let mut cfg = cfg_from_scene(&mut scene, &theme, body_font, hw.font_size());
+    let mut cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size());
     let mut session = BookSession::new(book.as_ref(), &cfg).expect("BookSession init failed");
     let mut current_filename = String::from("__welcome__");
     update_content(&mut scene, &session, font_px_for(hw.font_size()));
@@ -705,7 +708,7 @@ fn main() {
                                         win_h as u32,
                                     ));
                                     window = Window::new("ereader_ui", &settings);
-                                    cfg = cfg_from_scene(&mut scene, &theme, body_font, hw.font_size());
+                                    cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size());
                                     session.reader.relayout(&cfg);
                                     update_content(
                                         &mut scene,
@@ -715,7 +718,7 @@ fn main() {
                                 }
                             } else if input.source == FONT_SIZE_ID {
                                 hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
-                                cfg = cfg_from_scene(&mut scene, &theme, body_font, hw.font_size());
+                                cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size());
                                 session.reader.relayout(&cfg);
                                 update_content(&mut scene, &session, font_px_for(hw.font_size()));
                             } else if input.source == BACKLIGHT_ID {
@@ -770,7 +773,7 @@ fn main() {
                                         session.reader.anchor_byte,
                                     );
                                     let new_book = book_from_data(&filename, data);
-                                    cfg = cfg_from_scene(&mut scene, &theme, body_font, hw.font_size());
+                                    cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size());
                                     let new_session = match hw.load_bookmark(&filename) {
                                         Some((ch, anchor)) => BookSession::restore(
                                             new_book.as_ref(),
@@ -1195,14 +1198,14 @@ async fn main(spawner: Spawner) -> ! {
     let (lw, lh) = hw.orientation().logical_size();
     let mut bridge = Rgb565ToGray4::new(display, hw.orientation());
     let (font, bold_font, body_font) = load_fonts();
-    let mut scene = make_scene(body_font, lw, lh);
+    let mut scene = make_scene(body_font, bold_font, lw, lh);
     sync_settings_ui(&mut scene, font_idx, bl_idx, ori_idx);
     let mut theme = make_theme(font, bold_font);
     let handlers = vec![handle_click as Callback];
     let mut was_touching = false;
 
     let mut book: Box<dyn Book> = Box::new(HtmlBook::from_vec(WELCOME_HTML.to_vec()));
-    let mut cfg = cfg_from_scene(&mut scene, &theme, body_font, hw.font_size());
+    let mut cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size());
     let mut current_filename = String::from("__welcome__");
     let mut session = if saved_chapter > 0 || saved_anchor > 0 {
         BookSession::restore(book.as_ref(), &cfg, saved_chapter, saved_anchor)
@@ -1446,7 +1449,7 @@ async fn main(spawner: Spawner) -> ! {
                     if let Some(OutputAction::Command(ref cmd)) = input.action {
                         if input.source == FONT_SIZE_ID {
                             hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
-                            cfg = cfg_from_scene(&mut scene, &theme, body_font, hw.font_size());
+                            cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size());
                             session.reader.relayout(&cfg);
                             update_content(&mut scene, &session, font_px_for(hw.font_size()));
                             hw.save_settings();
@@ -1458,7 +1461,7 @@ async fn main(spawner: Spawner) -> ! {
                             bridge.orientation = hw.orientation();
                             let (new_w, new_h) = hw.orientation().logical_size();
                             scene.resize(Bounds::new(0, 0, new_w, new_h));
-                            cfg = cfg_from_scene(&mut scene, &theme, body_font, hw.font_size());
+                            cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size());
                             session.reader.relayout(&cfg);
                             update_content(&mut scene, &session, font_px_for(hw.font_size()));
                             hw.save_settings();
@@ -1521,7 +1524,7 @@ async fn main(spawner: Spawner) -> ! {
                                     session.reader.anchor_byte,
                                 );
                                 let new_book = book_from_data(&filename, data);
-                                cfg = cfg_from_scene(&mut scene, &theme, body_font, hw.font_size());
+                                cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size());
                                 let new_session = match hw.load_bookmark(&filename) {
                                     Some((ch_idx, anchor)) => BookSession::restore(
                                         new_book.as_ref(),
@@ -1627,7 +1630,7 @@ mod tests {
         let w = 960i32;
         let h = 540i32;
 
-        let mut scene = make_scene(body_font, w, h);
+        let mut scene = make_scene(body_font, bold_font, w, h);
         let mut theme = make_theme(ui_font, bold_font);
         layout_scene(&mut scene, &theme);
 
@@ -1638,7 +1641,7 @@ mod tests {
         let content_h = content_bounds.size.h as u32;
 
         for font_size in [FontSize::Small, FontSize::Medium, FontSize::Large] {
-            let cfg = layout_cfg(body_font, font_size, content_w, content_h as i32);
+            let cfg = layout_cfg(body_font, bold_font, font_size, content_w, content_h as i32);
             let render_pad_total = 24u32; // pad_y (12) top + pad_y (12) bottom
             let expected = content_h.saturating_sub(render_pad_total);
             assert_eq!(
@@ -1662,7 +1665,7 @@ mod tests {
         let w = 960i32;
         let h = 540i32;
 
-        let mut scene = make_scene(body_font, w, h);
+        let mut scene = make_scene(body_font, bold_font, w, h);
         let mut theme = make_theme(ui_font, bold_font);
         layout_scene(&mut scene, &theme);
 
@@ -1674,7 +1677,7 @@ mod tests {
         let render_usable = content_h.saturating_sub(24); // top+bottom pad_y
 
         for font_size in [FontSize::Small, FontSize::Medium, FontSize::Large] {
-            let cfg = layout_cfg(body_font, font_size, content_w, content_h as i32);
+            let cfg = layout_cfg(body_font, bold_font, font_size, content_w, content_h as i32);
             let font_px = ereader::font::font_px_for(font_size);
             let line_h = line_height(body_font, font_px) as u32 + 4; // matches render_ttf_text
             let layout_lines = cfg.screen_height / line_h;

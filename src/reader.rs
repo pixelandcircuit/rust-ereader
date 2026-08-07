@@ -210,6 +210,7 @@ mod tests {
                 space_width_px: char_px,
                 measure: Box::new(move |s: &str| s.chars().count() as u32 * char_px),
             },
+            heading_font: None,
         }
     }
 
