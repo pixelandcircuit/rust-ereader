@@ -556,7 +556,7 @@ fn main() {
     let mut fs_last_step = Instant::now();
 
     scene.mark_layout_dirty();
-    'running: loop {
+    'sim_running: loop {
         // Advance fast-scroll page counter while a direction key is held.
         if let Some(pressed_at) = fs_pressed_at {
             if !fs_active && pressed_at.elapsed().as_millis() >= 1000 {
@@ -619,7 +619,7 @@ fn main() {
         let events: Vec<_> = window.events().collect();
         for event in events {
             match event {
-                SimulatorEvent::Quit => break 'running,
+                SimulatorEvent::Quit => break 'sim_running,
                 // Keyboard shortcuts: arrow keys / Space simulate physical buttons.
                 SimulatorEvent::KeyDown {
                     keycode: Keycode::Left,
@@ -1268,7 +1268,7 @@ async fn main(spawner: Spawner) -> ! {
     }
     let _ = seed;
 
-    'running: loop {
+    'esp_running: loop {
         // Physical button handling: BOOT (GPIO0) = prev, GPIO38 = next.
         // Short press → single page turn. Hold > 1 s → fast-scroll mode: a
         // small overlay shows the target page number, incrementing every 200 ms.
@@ -1415,12 +1415,10 @@ async fn main(spawner: Spawner) -> ! {
                             hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
                             cfg = cfg_from_scene(&mut scene, &theme, body_font, hw.font_size());
                             session.reader.relayout(&cfg);
-                            scene.mark_layout_dirty();
                             update_content(&mut scene, &session, font_px_for(hw.font_size()));
                             hw.save_settings();
                         } else if input.source == BACKLIGHT_ID {
                             hw.set_backlight_level(BacklightLevel::from_cmd(cmd.as_str()));
-                            scene.mark_dirty_all();
                             hw.save_settings();
                         } else if input.source == ORIENTATION_ID {
                             hw.set_orientation(Orientation::from_cmd(cmd.as_str()));
@@ -1429,7 +1427,6 @@ async fn main(spawner: Spawner) -> ! {
                             scene.resize(Bounds::new(0, 0, new_w, new_h));
                             cfg = cfg_from_scene(&mut scene, &theme, body_font, hw.font_size());
                             session.reader.relayout(&cfg);
-                            scene.mark_layout_dirty();
                             update_content(&mut scene, &session, font_px_for(hw.font_size()));
                             hw.save_settings();
                         }
