@@ -1,5 +1,16 @@
 # Changes
 
+## 2026-08-07 (8)
+
+Make the library dialog narrower so partial refresh covers less of the screen.
+
+- `rust-embedded-gui/src/layouts.rs`: Fixed a bug in `layout_vbox` where Grow children were laid out with the parent's full available space width (`pass.space.w`) instead of the panel's own content width (`available_space.w`). For Fixed-width panels this caused Grow children (e.g. the list view) to size themselves wider than the panel, potentially overflowing the framebuffer.
+- `rust-embedded-gui/src/scene.rs`: Added `mark_layout_dirty_view(name)` — sets `layout_dirty = true` and marks only the named view's bounds dirty, without expanding the dirty rect to the full screen as `mark_layout_dirty()` does.
+- `examples/ereader_ui.rs`:
+  - Library dialog panel now uses `layout_centered_dialog` with `Flex::Fixed` width (440 px) and `Flex::Grow` height. In portrait mode this reduces the physical row count from 540 to 440 (≈19% fewer row writes per refresh frame).
+  - `handle_click` for library open/close no longer calls `mark_dirty_all()` or `mark_layout_dirty()`. `show_view` / `hide_view` already mark just the dialog area dirty; the extra full-screen marks were causing unnecessary full-screen refreshes.
+  - Simulator action handler for the "library" source now calls `mark_layout_dirty_view(&LIBRARY_DIALOG_ID)` instead of `mark_layout_dirty() + mark_dirty_all()`, and list-selection changes call `mark_dirty_view(&LIBRARY_DIALOG_ID)` instead of `mark_dirty_all()`.
+
 ## 2026-08-07 (7)
 
 Fix overdraw outside dialog during partial refresh.

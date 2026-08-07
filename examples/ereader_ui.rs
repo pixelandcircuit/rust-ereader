@@ -59,11 +59,8 @@ fn handle_click(event: &mut GuiEvent) {
         event.scene.hide_view(&DIALOG_ID);
     } else if event.target == &ViewId::new("library") {
         event.scene.show_view(&LIBRARY_DIALOG_ID);
-        event.scene.mark_layout_dirty();
-        event.scene.mark_dirty_all();
     } else if event.target == &ViewId::new("library_close") {
         event.scene.hide_view(&LIBRARY_DIALOG_ID);
-        event.scene.mark_dirty_all();
     } else if event.target == &ViewId::new("error_dismiss") {
         event.scene.hide_view(&ERROR_DIALOG_ID);
         event.scene.mark_dirty_all();
@@ -375,14 +372,15 @@ fn make_scene(body_font: &'static Font, bold_font: &'static Font, w: i32, h: i32
     // ── Library dialog (hidden, shown when Library button pressed) ───────────
     {
         let lib_panel = make_panel(&LIBRARY_DIALOG_ID)
-            .with_layout(Some(layout_vbox))
-            .with_h_flex(Flex::Grow)
+            .with_layout(Some(layout_centered_dialog))
+            .with_h_flex(Flex::Fixed)
             .with_v_flex(Flex::Grow)
+            .with_size(440, 0)
             .with_visible(false)
             .with_state(Some(Box::new(PanelState {
                 border_visible: true,
-                gap: 10,
-                padding: Insets::new_same(10),
+                gap: 8,
+                padding: Insets::new_same(8),
             })));
         scene.add_view_to_parent(
             make_label(&ViewId::new("lib_title"), "Library"),
@@ -756,10 +754,9 @@ fn main() {
                                     s.selected = 0;
                                 }
                             }
-                            scene.mark_layout_dirty();
-                            scene.mark_dirty_all();
+                            scene.mark_layout_dirty_view(&LIBRARY_DIALOG_ID);
                         } else if input.source == ViewId::new("lib_list") {
-                            scene.mark_dirty_all();
+                            scene.mark_dirty_view(&LIBRARY_DIALOG_ID);
                         } else if input.source == ViewId::new("library_read") {
                             let filename = scene
                                 .get_view_mut(&ViewId::new("lib_list"))
