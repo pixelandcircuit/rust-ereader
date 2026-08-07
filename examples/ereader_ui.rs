@@ -217,6 +217,7 @@ fn update_fast_scroll_label(
 
 fn make_scene(body_font: &'static Font, bold_font: &'static Font, w: i32, h: i32) -> Scene {
     let mut scene = Scene::new_with_bounds(Bounds::new(0, 0, w, h));
+    scene.set_focus_enabled(false);
     let main_id = ViewId::new("main");
     let main_panel = make_panel(&main_id)
         .with_layout(Some(layout_vbox))
