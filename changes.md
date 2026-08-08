@@ -1,5 +1,14 @@
 # Changes
 
+## 2026-08-07 (10)
+
+Restore the last-read book when waking from deep sleep.
+
+- `src/hardware.rs`: Added `save_last_filename(filename: &str)` and `load_last_filename() -> Option<String>` (ESP-only). The filename is packed as 4-byte LE chunks into NVS keys 50 (length) and 51–66 (data), giving up to 64 bytes. Sentinel filenames (starting with `__`) store length=0 so the welcome screen is shown on wakeup when no SD book was open.
+- `examples/ereader_ui.rs`:
+  - Before entering deep sleep, `save_last_filename(&current_filename)` is now called alongside the existing bookmark save.
+  - On sleep wakeup (`is_sleep_wakeup`), `load_last_filename()` is called before the event loop. If a filename is found, the loading dialog is shown and force-flushed to e-paper, the SD file is loaded, and the book/session are set up using the chapter and anchor already in the RTC registers. If the SD card is absent or the file is missing, the device falls back silently to the welcome HTML.
+
 ## 2026-08-07 (9)
 
 Show a "Loading…" dialog before the blocking book-file read so the user gets feedback immediately.

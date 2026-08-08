@@ -494,6 +494,42 @@ pub fn load_cold_boot_position() -> (usize, usize) {
     load_bookmark_impl("__embedded__").unwrap_or((0, 0))
 }
 
+/// Persist the last-read SD card filename to NVS so it can be restored on
+/// sleep wakeup. Sentinels like "__welcome__" store length=0 (no restore).
+/// NVS key 50 = byte length; keys 51-66 = filename bytes packed as u32s (LE).
+/// Silently truncates filenames longer than 64 bytes.
+#[cfg(feature = "esp")]
+pub fn save_last_filename(filename: &str) {
+    let bytes = filename.as_bytes();
+    let len = if filename.starts_with("__") { 0 } else { bytes.len().min(64) };
+    flash_save_u32(50, len as u32);
+    for i in 0..((len + 3) / 4) {
+        let mut chunk = [0u8; 4];
+        let start = i * 4;
+        let end = (start + 4).min(len);
+        chunk[..end - start].copy_from_slice(&bytes[start..end]);
+        flash_save_u32(51 + i as u8, u32::from_le_bytes(chunk));
+    }
+}
+
+/// Read back the filename persisted by `save_last_filename`.
+/// Returns `None` if nothing was saved or the stored bytes are not valid UTF-8.
+#[cfg(feature = "esp")]
+pub fn load_last_filename() -> Option<String> {
+    let len = flash_load_u32(50)? as usize;
+    if len == 0 || len > 64 {
+        return None;
+    }
+    let mut bytes = alloc::vec![0u8; len];
+    for i in 0..((len + 3) / 4) {
+        let chunk = flash_load_u32(51 + i as u8)?.to_le_bytes();
+        let start = i * 4;
+        let end = (start + 4).min(len);
+        bytes[start..end].copy_from_slice(&chunk[..end - start]);
+    }
+    String::from_utf8(bytes).ok()
+}
+
 // ── ESP implementation ────────────────────────────────────────────────────────
 
 #[cfg(feature = "esp")]

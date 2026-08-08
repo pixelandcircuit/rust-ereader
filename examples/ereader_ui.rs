@@ -19,7 +19,8 @@ use ereader::font::font_px_for;
 #[cfg(feature = "simulator")]
 use ereader::hardware::SimHardware;
 #[cfg(feature = "esp")]
-use ereader::hardware::{load_cold_boot_position, load_settings, EspHardware};
+use ereader::hardware::{load_cold_boot_position, load_last_filename, load_settings,
+                        save_last_filename, EspHardware};
 use ereader::hardware::{BacklightLevel, FontSize, HardwareAccess, Orientation};
 use ereader::layout::LayoutConfig;
 use ereader::reader::BookSession;
@@ -1249,8 +1250,33 @@ async fn main(spawner: Spawner) -> ! {
     let mut was_touching = false;
 
     let mut book: Box<dyn Book> = Box::new(HtmlBook::from_vec(WELCOME_HTML.to_vec()));
-    let mut cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size());
     let mut current_filename = String::from("__welcome__");
+
+    // On sleep wakeup, try to reopen the SD card book the user was reading.
+    // The filename was saved to NVS just before entering deep sleep.
+    if is_sleep_wakeup {
+        if let Some(last_file) = load_last_filename() {
+            show_loading_dialog(&mut scene, &last_file);
+            {
+                let dirty = scene.dirty_rect.clone();
+                bridge.clearing_flush_region(&dirty);
+                {
+                    let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
+                    ctx.clip = dirty.clone();
+                    layout_scene(&mut scene, &theme);
+                    draw_scene(&mut scene, &mut ctx, &theme);
+                }
+                bridge.flush_region(&dirty, DrawMode::BlackOnWhite);
+            }
+            if let Some(data) = hw.load_book_file(&last_file) {
+                book = book_from_data(&last_file, data);
+                current_filename = last_file;
+            }
+            hide_loading_dialog(&mut scene);
+        }
+    }
+
+    let mut cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size());
     let mut session = if saved_chapter > 0 || saved_anchor > 0 {
         BookSession::restore(book.as_ref(), &cfg, saved_chapter, saved_anchor)
             .unwrap_or_else(|_| BookSession::new(book.as_ref(), &cfg).expect("epub load"))
@@ -1654,7 +1680,8 @@ async fn main(spawner: Spawner) -> ! {
             }
             bridge.flush();
             bridge.display.power_off();
-            // Ensure the bookmark is current before powering off (flash survives sleep).
+            // Persist filename and position so wakeup can reopen the same book.
+            save_last_filename(&current_filename);
             hw.save_bookmark(
                 &current_filename,
                 session.chapter_idx,
