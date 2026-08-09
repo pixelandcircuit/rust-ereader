@@ -254,6 +254,7 @@ impl HardwareAccess for SimHardware {
     }
     fn set_backlight_level(&mut self, level: BacklightLevel) {
         self.backlight = level;
+        info!("Set backlight level to {:?}", self.backlight);
     }
     fn set_orientation(&mut self, orientation: Orientation) {
         self.orientation = orientation;
@@ -545,6 +546,7 @@ use esp_hal::{
         Rtc,
     },
 };
+use log::info;
 
 #[cfg(feature = "esp")]
 const BL_DUTY: [u8; 3] = [0, 25, 100];

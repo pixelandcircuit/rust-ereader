@@ -18,6 +18,10 @@ use ereader::epub::EpubArchive;
 use ereader::font::font_px_for;
 #[cfg(feature = "simulator")]
 use ereader::hardware::SimHardware;
+
+#[cfg(feature = "simulator")]
+use std::time::Instant;
+
 #[cfg(feature = "esp")]
 use ereader::hardware::{load_cold_boot_position, load_last_filename, load_settings,
                         save_last_filename, EspHardware};
@@ -559,15 +563,26 @@ fn make_theme(font: &'static Font, bold_font: &'static Font) -> Theme {
     }
 }
 
+struct AppState {
+    partial_refresh_count: u32,
+    current_filename: String,
+    last_interaction: Instant,
+}
+
 #[cfg(feature = "simulator")]
 fn main() {
     use embedded_graphics::geometry::Size;
     use embedded_graphics_simulator::{
         sdl2::Keycode, OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
     };
-    use std::time::Instant;
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
+    let mut state = AppState {
+        partial_refresh_count: 0,
+        current_filename: String::from("__welcome__"),
+        last_interaction: Instant::now(),
+    };
 
     let mut hw = SimHardware::new();
     let (mut win_w, mut win_h) = hw.orientation().logical_size();
@@ -579,11 +594,10 @@ fn main() {
 
     let (font, bold_font, body_font) = load_fonts();
     let mut scene = make_scene(body_font, bold_font, win_w, win_h);
-    let mut theme = make_theme(font, bold_font);
+    let theme = make_theme(font, bold_font);
     let handlers: Vec<Callback> = vec![handle_click];
 
-    let mut book: Box<dyn Book> =
-        Box::new(HtmlBook::from_vec(WELCOME_HTML.to_vec()));
+    let mut book: Box<dyn Book> = Box::new(HtmlBook::from_vec(WELCOME_HTML.to_vec()));
     let mut cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size());
     let mut session = BookSession::new(book.as_ref(), &cfg).expect("BookSession init failed");
     let mut current_filename = String::from("__welcome__");
@@ -755,32 +769,15 @@ fn main() {
                                 session.reader.relayout(&cfg);
                                 update_content(&mut scene, &session, font_px_for(hw.font_size()));
                             } else if input.source == BACKLIGHT_ID {
-                                hw.set_backlight_level(BacklightLevel::from_cmd(cmd.as_str()));
+                                handle_action(cmd,&mut hw);
                             }
                         }
-                        if input.source == ViewId::new("sync_time") {
-                            let t = hw.current_time_secs();
-                            if let Some(view) = scene.get_view_mut(&ViewId::new("time")) {
-                                view.title = format_time_utc(t);
-                            }
-                        } else if input.source == DEEP_CLEAN_ID {
+                        handle_click_action(&mut hw,
+                                            &input, &mut scene, &mut book, &mut cfg,
+                                            &mut  session, &mut state
+                        );
+                        if input.source == DEEP_CLEAN_ID {
                             // no-op in simulator
-                        } else if input.source == ViewId::new("prev_page") {
-                            nav_prev_page(
-                                &mut hw,
-                                &mut scene,
-                                book.as_ref(),
-                                &mut cfg,
-                                &mut session,
-                            );
-                        } else if input.source == ViewId::new("next_page") {
-                            nav_next_page(
-                                &mut hw,
-                                &mut scene,
-                                book.as_ref(),
-                                &mut cfg,
-                                &mut session,
-                            );
                         } else if input.source == ViewId::new("library") {
                             let files = hw.list_book_files();
                             if let Some(v) = scene.get_view_mut(&ViewId::new("lib_list")) {
@@ -857,6 +854,50 @@ fn main() {
             }
         }
     }
+}
+
+fn handle_click_action(hw: &mut dyn HardwareAccess,
+                       input: &InputResult,
+                       scene: &mut Scene,
+                       book: &mut Box<dyn Book>,
+                       cfg: &mut LayoutConfig,
+                       session: &mut BookSession,
+                       state: &mut AppState) {
+    if input.source == ViewId::new("sync_time") {
+        let t = hw.current_time_secs();
+        if let Some(view) = scene.get_view_mut(&ViewId::new("time")) {
+            view.title = format_time_utc(t);
+        }
+    }
+    if input.source == ViewId::new("prev_page") {
+        nav_prev_page(
+            hw,
+            scene,
+            book.as_ref(),
+            cfg,
+            session,
+        );
+        hw.save_bookmark(
+            &state.current_filename,
+            session.chapter_idx,
+            session.reader.anchor_byte,
+        );
+        state.last_interaction = Instant::now();
+    }
+    if input.source == ViewId::new("next_page") {
+        nav_next_page(
+            hw,
+            scene,
+            book.as_ref(),
+            cfg,
+            session,
+        );
+    }
+}
+
+fn handle_action(cmd: &String, hw: &mut dyn HardwareAccess) {
+    hw.set_backlight_level(BacklightLevel::from_cmd(cmd.as_str()));
+    hw.save_settings();
 }
 
 fn book_from_data(filename: &str, data: Vec<u8>) -> Box<dyn Book> {
@@ -1053,7 +1094,7 @@ use esp_hal::{
 #[cfg(feature = "esp")]
 use esp_radio::wifi::{sta::StationConfig, Config, ControllerConfig, Interface};
 use fontdue::Font;
-use iris_ui::input::OutputAction;
+use iris_ui::input::{InputResult, OutputAction};
 use iris_ui::panel::{make_panel, PanelState};
 use iris_ui::view::Flex::Grow;
 use log::info;
@@ -1247,12 +1288,20 @@ async fn main(spawner: Spawner) -> ! {
     let (font, bold_font, body_font) = load_fonts();
     let mut scene = make_scene(body_font, bold_font, lw, lh);
     sync_settings_ui(&mut scene, font_idx, bl_idx, ori_idx);
-    let mut theme = make_theme(font, bold_font);
+    let theme = make_theme(font, bold_font);
     let handlers = vec![handle_click as Callback];
     let mut was_touching = false;
 
     let mut book: Box<dyn Book> = Box::new(HtmlBook::from_vec(WELCOME_HTML.to_vec()));
-    let mut current_filename = String::from("__welcome__");
+    // Counts consecutive partial refreshes so we can force a full ghost-clear
+    // periodically.  E-paper capacitive field coupling from repeated partial
+    // waveform passes slowly darkens white areas adjacent to the dirty rect;
+    // a full refresh resets all pixels to a clean state.
+    let mut state = AppState {
+        partial_refresh_count: 0,
+        current_filename: String::from("__welcome__"),
+        last_interaction: Instant::now(),
+    };
 
     // On sleep wakeup, try to reopen the SD card book the user was reading.
     // The filename was saved to NVS just before entering deep sleep.
@@ -1272,7 +1321,7 @@ async fn main(spawner: Spawner) -> ! {
             }
             if let Some(data) = hw.load_book_file(&last_file) {
                 book = book_from_data(&last_file, data);
-                current_filename = last_file;
+                state.current_filename = last_file;
             }
             hide_loading_dialog(&mut scene);
         }
@@ -1287,13 +1336,7 @@ async fn main(spawner: Spawner) -> ! {
     };
     update_content(&mut scene, &session, font_px_for(hw.font_size()));
 
-    let mut last_interaction = Instant::now();
     let mut just_woke = false;
-    // Counts consecutive partial refreshes so we can force a full ghost-clear
-    // periodically.  E-paper capacitive field coupling from repeated partial
-    // waveform passes slowly darkens white areas adjacent to the dirty rect;
-    // a full refresh resets all pixels to a clean state.
-    let mut partial_refresh_count: u32 = 0;
     const PARTIAL_REFRESH_FULL_INTERVAL: u32 = 8;
 
     // ── WiFi + NTP time sync ──────────────────────────────────────────────────
@@ -1438,14 +1481,14 @@ async fn main(spawner: Spawner) -> ! {
                     let (sw, sh) = hw.orientation().logical_size();
                     let needs_full = dirty_rect.size.w >= sw && dirty_rect.size.h >= sh;
                     let force_full = !needs_full
-                        && partial_refresh_count >= PARTIAL_REFRESH_FULL_INTERVAL;
+                        && state.partial_refresh_count >= PARTIAL_REFRESH_FULL_INTERVAL;
                     if needs_full || force_full {
                         bridge.display.fill(0x0F).unwrap();
                         bridge.display.flush(DrawMode::WhiteOnBlack).unwrap();
-                        partial_refresh_count = 0;
+                        state.partial_refresh_count = 0;
                     } else {
                         bridge.clearing_flush_region(&dirty_rect);
-                        partial_refresh_count += 1;
+                        state.partial_refresh_count += 1;
                     }
                     {
                         let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
@@ -1480,8 +1523,9 @@ async fn main(spawner: Spawner) -> ! {
                 nav_prev_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
             }
             just_woke = false;
-            hw.save_bookmark(&current_filename, session.chapter_idx, session.reader.anchor_byte);
-            last_interaction = Instant::now();
+            hw.save_bookmark(&state.current_filename, session.chapter_idx, session.reader
+                .anchor_byte);
+            state.last_interaction = Instant::now();
         }
 
         let dirty_rect = scene.dirty_rect.clone();
@@ -1500,14 +1544,14 @@ async fn main(spawner: Spawner) -> ! {
             // coupling that slowly darkens white areas adjacent to the dirty rect.
             // Every PARTIAL_REFRESH_FULL_INTERVAL partial refreshes we force a full clear.
             let force_full = !needs_full_refresh
-                && partial_refresh_count >= PARTIAL_REFRESH_FULL_INTERVAL;
+                && state.partial_refresh_count >= PARTIAL_REFRESH_FULL_INTERVAL;
             if needs_full_refresh || force_full {
                 bridge.display.fill(0x0F).unwrap();
                 bridge.display.flush(DrawMode::WhiteOnBlack).unwrap();
-                partial_refresh_count = 0;
+                state.partial_refresh_count = 0;
             } else {
                 bridge.clearing_flush_region(&dirty_rect);
-                partial_refresh_count += 1;
+                state.partial_refresh_count += 1;
             }
             {
                 let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
@@ -1538,8 +1582,7 @@ async fn main(spawner: Spawner) -> ! {
                             update_content(&mut scene, &session, font_px_for(hw.font_size()));
                             hw.save_settings();
                         } else if input.source == BACKLIGHT_ID {
-                            hw.set_backlight_level(BacklightLevel::from_cmd(cmd.as_str()));
-                            hw.save_settings();
+                            handle_action(cmd, &mut hw);
                         } else if input.source == ORIENTATION_ID {
                             hw.set_orientation(Orientation::from_cmd(cmd.as_str()));
                             bridge.orientation = hw.orientation();
@@ -1551,6 +1594,9 @@ async fn main(spawner: Spawner) -> ! {
                             hw.save_settings();
                         }
                     }
+                    handle_click_action(&mut hw,
+                                        &input, &mut scene, &mut book, &mut cfg,
+                                        &mut  session, &mut state);
                     if input.source == ViewId::new("sync_time") {
                         info!("sync_time pressed, querying NTP");
                         // if let Some(unix_secs) = query_ntp(stack).await {
@@ -1566,24 +1612,16 @@ async fn main(spawner: Spawner) -> ! {
                     } else if input.source == DEEP_CLEAN_ID {
                         info!("deep clean started");
                         bridge.display.deep_clean(3).unwrap();
-                        partial_refresh_count = 0;
+                        state.partial_refresh_count = 0;
                         scene.mark_dirty_all();
-                    } else if input.source == ViewId::new("prev_page") {
-                        nav_prev_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
-                        hw.save_bookmark(
-                            &current_filename,
-                            session.chapter_idx,
-                            session.reader.anchor_byte,
-                        );
-                        last_interaction = Instant::now();
                     } else if input.source == ViewId::new("next_page") {
                         nav_next_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
                         hw.save_bookmark(
-                            &current_filename,
+                            &state.current_filename,
                             session.chapter_idx,
                             session.reader.anchor_byte,
                         );
-                        last_interaction = Instant::now();
+                        state.last_interaction = Instant::now();
                     } else if input.source == ViewId::new("library") {
                         let files = hw.list_book_files();
                         if let Some(v) = scene.get_view_mut(&ViewId::new("lib_list")) {
@@ -1593,9 +1631,9 @@ async fn main(spawner: Spawner) -> ! {
                             }
                         }
                         scene.mark_layout_dirty_view(&LIBRARY_DIALOG_ID);
-                        last_interaction = Instant::now();
+                        state.last_interaction = Instant::now();
                     } else if input.source == ViewId::new("lib_list") {
-                        last_interaction = Instant::now();
+                        state.last_interaction = Instant::now();
                     } else if input.source == ViewId::new("library_read") {
                         let filename = scene
                             .get_view_mut(&ViewId::new("lib_list"))
@@ -1617,11 +1655,11 @@ async fn main(spawner: Spawner) -> ! {
                                     draw_scene(&mut scene, &mut ctx, &theme);
                                 }
                                 bridge.flush_region(&dirty, DrawMode::BlackOnWhite);
-                                partial_refresh_count += 1;
+                                state.partial_refresh_count += 1;
                             }
                             if let Some(data) = hw.load_book_file(&filename) {
                                 hw.save_bookmark(
-                                    &current_filename,
+                                    &state.current_filename,
                                     session.chapter_idx,
                                     session.reader.anchor_byte,
                                 );
@@ -1639,7 +1677,7 @@ async fn main(spawner: Spawner) -> ! {
                                 };
                                 hide_loading_dialog(&mut scene);
                                 if let Ok(s) = new_session {
-                                    current_filename = filename.clone();
+                                    state.current_filename = filename.clone();
                                     session = s;
                                     book = new_book;
                                     update_content(
@@ -1658,9 +1696,9 @@ async fn main(spawner: Spawner) -> ! {
                                 show_error_dialog(&mut scene, &filename);
                             }
                         }
-                        last_interaction = Instant::now();
+                        state.last_interaction = Instant::now();
                     } else {
-                        last_interaction = Instant::now();
+                        state.last_interaction = Instant::now();
                     }
                 }
             }
@@ -1670,7 +1708,7 @@ async fn main(spawner: Spawner) -> ! {
         }
 
         // Two-tier inactivity sleep: light sleep at 60 s, deep sleep at 60 min.
-        let elapsed_secs = last_interaction.elapsed().as_secs();
+        let elapsed_secs = state.last_interaction.elapsed().as_secs();
         if elapsed_secs >= DEEP_SLEEP_AFTER_SECS {
             log::info!("inactivity timeout — entering deep sleep");
             if let Some(v) = scene.get_view_mut(&ViewId::new("page")) {
@@ -1688,9 +1726,9 @@ async fn main(spawner: Spawner) -> ! {
             bridge.flush();
             bridge.display.power_off();
             // Persist filename and position so wakeup can reopen the same book.
-            save_last_filename(&current_filename);
+            save_last_filename(&state.current_filename);
             hw.save_bookmark(
-                &current_filename,
+                &state.current_filename,
                 session.chapter_idx,
                 session.reader.anchor_byte,
             );
@@ -1698,13 +1736,13 @@ async fn main(spawner: Spawner) -> ! {
             // On simulator enter_deep_sleep is a no-op; reset the timer so we
             // don't loop immediately back into the sleep check.
             hw.enter_deep_sleep(session.chapter_idx, session.reader.anchor_byte);
-            last_interaction = Instant::now();
+            state.last_interaction = Instant::now();
             update_content(&mut scene, &session, font_px_for(hw.font_size()));
         } else if elapsed_secs >= LIGHT_SLEEP_AFTER_SECS {
             log::info!("inactivity timeout — entering light sleep");
             // Backlight is turned off inside enter_light_sleep and restored on return.
             hw.enter_light_sleep();
-            last_interaction = Instant::now();
+            state.last_interaction = Instant::now();
             just_woke = true;
         }
 
