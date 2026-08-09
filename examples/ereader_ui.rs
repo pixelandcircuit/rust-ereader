@@ -574,6 +574,8 @@ struct AppState {
     current_filename: String,
     last_interaction: Instant,
     cfg: LayoutConfig,
+    book: Box<dyn Book>,
+    session: BookSession,
 }
 
 #[cfg(feature = "simulator")]
@@ -599,18 +601,20 @@ fn main() {
     let theme = make_theme(font, bold_font);
     let handlers: Vec<Callback> = vec![handle_click];
 
+    let pre_cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size());
+    let pre_book = Box::new(HtmlBook::from_vec(WELCOME_HTML.to_vec()));
+    let mut pre_session = BookSession::new(pre_book.as_ref(), &pre_cfg).expect("BookSession init failed");
     let mut state = AppState {
         partial_refresh_count: 0,
         current_filename: String::from("__welcome__"),
         last_interaction: Instant::now(),
-        cfg:cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size())
+        cfg:pre_cfg,
+        book: pre_book,
+        session: pre_session,
     };
 
-    let mut book: Box<dyn Book> = Box::new(HtmlBook::from_vec(WELCOME_HTML.to_vec()));
-    let mut cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size());
-    let mut session = BookSession::new(book.as_ref(), &cfg).expect("BookSession init failed");
     let mut current_filename = String::from("__welcome__");
-    update_content(&mut scene, &session, font_px_for(hw.font_size()));
+    update_content(&mut scene, &state.session, font_px_for(hw.font_size()));
 
     // Fast-scroll hold state (Up/Down arrow keys).
     let mut fs_forward = false;
@@ -625,24 +629,25 @@ fn main() {
         if let Some(pressed_at) = fs_pressed_at {
             if !fs_active && pressed_at.elapsed().as_millis() >= 1000 {
                 fs_active = true;
-                fs_target = session.reader.current_page;
+                fs_target = state.session.reader.current_page;
                 fs_last_step = Instant::now();
                 update_fast_scroll_label(
                     &mut scene,
-                    session.chapter_idx,
-                    session.chapter_count(),
+                    state.session.chapter_idx,
+                    state.session.chapter_count(),
                     fs_target,
-                    session.reader.page_count(),
+                    state.session.reader.page_count(),
                 );
                 scene.show_view(&FAST_SCROLL_PANEL_ID);
                 scene.mark_layout_dirty();
             }
             if fs_active && fs_last_step.elapsed().as_millis() >= 200 {
                 if fs_forward {
-                    if fs_target + 1 >= session.reader.page_count() {
-                        if session.chapter_idx + 1 < session.chapter_count() {
-                            session
-                                .go_to_chapter(session.chapter_idx + 1, book.as_ref(), &cfg)
+                    if fs_target + 1 >= state.session.reader.page_count() {
+                        if state.session.chapter_idx + 1 < state.session.chapter_count() {
+                            state.session
+                                .go_to_chapter(state.session.chapter_idx + 1, state.book.as_ref(),
+                                               &state.cfg)
                                 .ok();
                             fs_target = 0;
                         }
@@ -650,11 +655,11 @@ fn main() {
                         fs_target += 1;
                     }
                 } else if fs_target == 0 {
-                    if session.chapter_idx > 0 {
-                        session
-                            .go_to_chapter(session.chapter_idx - 1, book.as_ref(), &cfg)
+                    if state.session.chapter_idx > 0 {
+                        state.session
+                            .go_to_chapter(state.session.chapter_idx - 1, state.book.as_ref(), &state.cfg)
                             .ok();
-                        fs_target = session.reader.page_count().saturating_sub(1);
+                        fs_target = state.session.reader.page_count().saturating_sub(1);
                     }
                 } else {
                     fs_target -= 1;
@@ -662,10 +667,10 @@ fn main() {
                 fs_last_step = Instant::now();
                 update_fast_scroll_label(
                     &mut scene,
-                    session.chapter_idx,
-                    session.chapter_count(),
+                    state.session.chapter_idx,
+                    state.session.chapter_count(),
                     fs_target,
-                    session.reader.page_count(),
+                    state.session.reader.page_count(),
                 );
             }
         }
@@ -695,7 +700,8 @@ fn main() {
                     repeat: false,
                     ..
                 } => {
-                    nav_prev_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
+                    nav_prev_page(&mut hw, &mut scene, state.book.as_ref(), &mut state.cfg, &mut
+                        state.session);
                 }
                 SimulatorEvent::KeyDown {
                     keycode: Keycode::Right,
@@ -707,7 +713,8 @@ fn main() {
                     repeat: false,
                     ..
                 } => {
-                    nav_next_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
+                    nav_next_page(&mut hw, &mut scene, state.book.as_ref(), &mut state.cfg, &mut
+                        state.session);
                 }
                 // Fast-scroll: hold Up or Down for >1 s to scan pages without rendering content.
                 SimulatorEvent::KeyDown {
@@ -739,8 +746,8 @@ fn main() {
                     ..
                 } => {
                     if fs_active {
-                        session.reader.go_to_page(fs_target);
-                        update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                        state.session.reader.go_to_page(fs_target);
+                        update_content(&mut scene, &state.session, font_px_for(hw.font_size()));
                         scene.hide_view(&FAST_SCROLL_PANEL_ID);
                         scene.mark_dirty_all();
                     }
@@ -764,26 +771,28 @@ fn main() {
                                         win_h as u32,
                                     ));
                                     window = Window::new("ereader_ui", &settings);
-                                    cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size());
-                                    session.reader.relayout(&cfg);
+                                    state.cfg = cfg_from_scene(&mut scene, &theme, body_font,
+                                                          bold_font, hw.font_size());
+                                    state.session.reader.relayout(&state.cfg);
                                     update_content(
                                         &mut scene,
-                                        &session,
+                                        &state.session,
                                         font_px_for(hw.font_size()),
                                     );
                                 }
                             } else if input.source == FONT_SIZE_ID {
                                 hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
-                                cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size());
-                                session.reader.relayout(&cfg);
-                                update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                                state.cfg = cfg_from_scene(&mut scene, &theme, body_font,
+                                                           bold_font, hw.font_size());
+                                state.session.reader.relayout(&state.cfg);
+                                update_content(&mut scene, &state.session, font_px_for(hw.font_size()));
                             } else if input.source == BACKLIGHT_ID {
                                 handle_action(cmd,&mut hw);
                             }
                         }
                         handle_click_action(&mut hw,
-                                            &input, &mut scene, &mut book,
-                                            &mut  session, &mut state
+                                            &input, &mut scene,
+                                            &mut state
                         );
                         if input.source == DEEP_CLEAN_ID {
                             // no-op in simulator
@@ -807,29 +816,31 @@ fn main() {
                                 if let Some(data) = hw.load_book_file(&filename) {
                                     hw.save_bookmark(
                                         &current_filename,
-                                        session.chapter_idx,
-                                        session.reader.anchor_byte,
+                                        state.session.chapter_idx,
+                                        state.session.reader.anchor_byte,
                                     );
                                     let new_book = book_from_data(&filename, data);
-                                    cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size());
+                                    state.cfg = cfg_from_scene(&mut scene, &theme, body_font,
+                                                          bold_font, hw.font_size());
                                     let new_session = match hw.load_bookmark(&filename) {
                                         Some((ch, anchor)) => BookSession::restore(
                                             new_book.as_ref(),
-                                            &cfg,
+                                            &state.cfg,
                                             ch,
                                             anchor,
                                         )
-                                        .or_else(|_| BookSession::new(new_book.as_ref(), &cfg)),
-                                        None => BookSession::new(new_book.as_ref(), &cfg),
+                                        .or_else(|_| BookSession::new(new_book.as_ref(),
+                                                                      &state.cfg)),
+                                        None => BookSession::new(new_book.as_ref(), &state.cfg),
                                     };
                                     hide_loading_dialog(&mut scene);
                                     if let Ok(s) = new_session {
                                         current_filename = filename.clone();
-                                        session = s;
-                                        book = new_book;
+                                        state.session = s;
+                                        state.book = new_book;
                                         update_content(
                                             &mut scene,
-                                            &session,
+                                            &state.session,
                                             font_px_for(hw.font_size()),
                                         );
                                         if let Some(v) =
@@ -857,8 +868,6 @@ fn main() {
 fn handle_click_action(hw: &mut dyn HardwareAccess,
                        input: &InputResult,
                        scene: &mut Scene,
-                       book: &mut Box<dyn Book>,
-                       session: &mut BookSession,
                        state: &mut AppState) {
     if input.source == ViewId::new("sync_time") {
         let t = hw.current_time_secs();
@@ -870,14 +879,14 @@ fn handle_click_action(hw: &mut dyn HardwareAccess,
         nav_prev_page(
             hw,
             scene,
-            book.as_ref(),
+            state.book.as_ref(),
             &mut state.cfg,
-            session,
+            &mut state.session,
         );
         hw.save_bookmark(
             &state.current_filename,
-            session.chapter_idx,
-            session.reader.anchor_byte,
+            state.session.chapter_idx,
+            state.session.reader.anchor_byte,
         );
         state.last_interaction = Instant::now();
     }
@@ -885,14 +894,14 @@ fn handle_click_action(hw: &mut dyn HardwareAccess,
         nav_next_page(
             hw,
             scene,
-            book.as_ref(),
+            state.book.as_ref(),
             &mut state.cfg,
-            session,
+            &mut state.session,
         );
         hw.save_bookmark(
             &state.current_filename,
-            session.chapter_idx,
-            session.reader.anchor_byte,
+            state.session.chapter_idx,
+            state.session.reader.anchor_byte,
         );
         state.last_interaction = Instant::now();
     }
@@ -1310,16 +1319,20 @@ async fn main(spawner: Spawner) -> ! {
     let handlers = vec![handle_click as Callback];
     let mut was_touching = false;
 
-    let mut book: Box<dyn Book> = Box::new(HtmlBook::from_vec(WELCOME_HTML.to_vec()));
+    let pre_book = Box::new(HtmlBook::from_vec(WELCOME_HTML.to_vec()));
     // Counts consecutive partial refreshes so we can force a full ghost-clear
     // periodically.  E-paper capacitive field coupling from repeated partial
     // waveform passes slowly darkens white areas adjacent to the dirty rect;
     // a full refresh resets all pixels to a clean state.
+    let pre_cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size());
+    let mut pre_session = BookSession::new(pre_book.as_ref(), &pre_cfg).expect("BookSession init failed");
     let mut state = AppState {
         partial_refresh_count: 0,
         current_filename: String::from("__welcome__"),
         last_interaction: Instant::now(),
-        cfg:cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size())
+        cfg:pre_cfg,
+        book: pre_book,
+        session: pre_session,
     };
 
     // On sleep wakeup, try to reopen the SD card book the user was reading.
@@ -1339,20 +1352,21 @@ async fn main(spawner: Spawner) -> ! {
                 bridge.flush_region(&dirty, DrawMode::BlackOnWhite);
             }
             if let Some(data) = hw.load_book_file(&last_file) {
-                book = book_from_data(&last_file, data);
+                state.book = book_from_data(&last_file, data);
                 state.current_filename = last_file;
             }
             hide_loading_dialog(&mut scene);
         }
     }
 
-    let mut session = if saved_chapter > 0 || saved_anchor > 0 {
-        BookSession::restore(book.as_ref(), &state.cfg, saved_chapter, saved_anchor)
-            .unwrap_or_else(|_| BookSession::new(book.as_ref(), &state.cfg).expect("epub load"))
+    state.session = if saved_chapter > 0 || saved_anchor > 0 {
+        BookSession::restore(state.book.as_ref(), &state.cfg, saved_chapter, saved_anchor)
+            .unwrap_or_else(|_| BookSession::new(state.book.as_ref(), &state.cfg).expect("epub \
+            load"))
     } else {
-        BookSession::new(book.as_ref(), &state.cfg).expect("epub load")
+        BookSession::new(state.book.as_ref(), &state.cfg).expect("epub load")
     };
-    update_content(&mut scene, &session, font_px_for(hw.font_size()));
+    update_content(&mut scene, &state.session, font_px_for(hw.font_size()));
 
     let mut just_woke = false;
     const PARTIAL_REFRESH_FULL_INTERVAL: u32 = 8;
@@ -1448,14 +1462,14 @@ async fn main(spawner: Spawner) -> ! {
 
                 if !fs_active && pressed_at.elapsed().as_millis() >= 1000 {
                     fs_active = true;
-                    fs_target = session.reader.current_page;
+                    fs_target = state.session.reader.current_page;
                     fs_last_step = Instant::now();
                     update_fast_scroll_label(
                         &mut scene,
-                        session.chapter_idx,
-                        session.chapter_count(),
+                        state.session.chapter_idx,
+                        state.session.chapter_count(),
                         fs_target,
-                        session.reader.page_count(),
+                        state.session.reader.page_count(),
                     );
                     scene.show_view(&FAST_SCROLL_PANEL_ID);
                     scene.mark_layout_dirty();
@@ -1463,10 +1477,10 @@ async fn main(spawner: Spawner) -> ! {
 
                 if fs_active && fs_last_step.elapsed().as_millis() >= 200 {
                     if forward {
-                        if fs_target + 1 >= session.reader.page_count() {
-                            if session.chapter_idx + 1 < session.chapter_count() {
-                                session
-                                    .go_to_chapter(session.chapter_idx + 1, book.as_ref(),
+                        if fs_target + 1 >= state.session.reader.page_count() {
+                            if state.session.chapter_idx + 1 < state.session.chapter_count() {
+                                state.session
+                                    .go_to_chapter(state.session.chapter_idx + 1, state.book.as_ref(),
                                                    &state.cfg)
                                     .ok();
                                 fs_target = 0;
@@ -1475,11 +1489,12 @@ async fn main(spawner: Spawner) -> ! {
                             fs_target += 1;
                         }
                     } else if fs_target == 0 {
-                        if session.chapter_idx > 0 {
-                            session
-                                .go_to_chapter(session.chapter_idx - 1, book.as_ref(), &state.cfg)
+                        if state.session.chapter_idx > 0 {
+                            state.session
+                                .go_to_chapter(state.session.chapter_idx - 1, state.book.as_ref(), &state
+                                    .cfg)
                                 .ok();
-                            fs_target = session.reader.page_count().saturating_sub(1);
+                            fs_target = state.session.reader.page_count().saturating_sub(1);
                         }
                     } else {
                         fs_target -= 1;
@@ -1487,10 +1502,10 @@ async fn main(spawner: Spawner) -> ! {
                     fs_last_step = Instant::now();
                     update_fast_scroll_label(
                         &mut scene,
-                        session.chapter_idx,
-                        session.chapter_count(),
+                        state.session.chapter_idx,
+                        state.session.chapter_count(),
                         fs_target,
-                        session.reader.page_count(),
+                        state.session.reader.page_count(),
                     );
                 }
 
@@ -1531,18 +1546,20 @@ async fn main(spawner: Spawner) -> ! {
 
             if fs_active {
                 scene.hide_view(&FAST_SCROLL_PANEL_ID);
-                session.reader.go_to_page(fs_target);
-                update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                state.session.reader.go_to_page(fs_target);
+                update_content(&mut scene, &state.session, font_px_for(hw.font_size()));
                 scene.mark_dirty_all();
             } else if just_woke {
                 // First press after light sleep: consume as wake-only, no page turn.
             } else if forward {
-                nav_next_page(&mut hw, &mut scene, book.as_ref(), &mut state.cfg, &mut session);
+                nav_next_page(&mut hw, &mut scene, state.book.as_ref(), &mut state.cfg, &mut
+                    state.session);
             } else {
-                nav_prev_page(&mut hw, &mut scene, book.as_ref(), &mut state.cfg, &mut session);
+                nav_prev_page(&mut hw, &mut scene, state.book.as_ref(), &mut state.cfg, &mut
+                    state.session);
             }
             just_woke = false;
-            hw.save_bookmark(&state.current_filename, session.chapter_idx, session.reader
+            hw.save_bookmark(&state.current_filename, state.session.chapter_idx, state.session.reader
                 .anchor_byte);
             state.last_interaction = Instant::now();
         }
@@ -1598,8 +1615,8 @@ async fn main(spawner: Spawner) -> ! {
                             hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
                             state.cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw
                                 .font_size());
-                            session.reader.relayout(&state.cfg);
-                            update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                            state.session.reader.relayout(&state.cfg);
+                            update_content(&mut scene, &state.session, font_px_for(hw.font_size()));
                             hw.save_settings();
                         } else if input.source == BACKLIGHT_ID {
                             handle_action(cmd, &mut hw);
@@ -1610,14 +1627,14 @@ async fn main(spawner: Spawner) -> ! {
                             scene.resize(Bounds::new(0, 0, new_w, new_h));
                             state.cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw
                                 .font_size());
-                            session.reader.relayout(&state.cfg);
-                            update_content(&mut scene, &session, font_px_for(hw.font_size()));
+                            state.session.reader.relayout(&state.cfg);
+                            update_content(&mut scene, &state.session, font_px_for(hw.font_size()));
                             hw.save_settings();
                         }
                     }
                     handle_click_action(&mut hw,
-                                        &input, &mut scene, &mut book,
-                                        &mut  session, &mut state);
+                                        &input, &mut scene,
+                                        &mut state);
                     if input.source == ViewId::new("sync_time") {
                         info!("sync_time pressed, querying NTP");
                         // if let Some(unix_secs) = query_ntp(stack).await {
@@ -1661,8 +1678,8 @@ async fn main(spawner: Spawner) -> ! {
                             if let Some(data) = hw.load_book_file(&filename) {
                                 hw.save_bookmark(
                                     &state.current_filename,
-                                    session.chapter_idx,
-                                    session.reader.anchor_byte,
+                                    state.session.chapter_idx,
+                                    state.session.reader.anchor_byte,
                                 );
                                 let new_book = book_from_data(&filename, data);
                                 state.cfg = cfg_from_scene(&mut scene, &theme, body_font,
@@ -1680,11 +1697,11 @@ async fn main(spawner: Spawner) -> ! {
                                 hide_loading_dialog(&mut scene);
                                 if let Ok(s) = new_session {
                                     state.current_filename = filename.clone();
-                                    session = s;
-                                    book = new_book;
+                                    state.session = s;
+                                    state.book = new_book;
                                     update_content(
                                         &mut scene,
-                                        &session,
+                                        &state.session,
                                         font_px_for(hw.font_size()),
                                     );
                                     if let Some(v) = scene.get_view_mut(&ViewId::new("booktitle")) {
@@ -1731,15 +1748,15 @@ async fn main(spawner: Spawner) -> ! {
             save_last_filename(&state.current_filename);
             hw.save_bookmark(
                 &state.current_filename,
-                session.chapter_idx,
-                session.reader.anchor_byte,
+                state.session.chapter_idx,
+                state.session.reader.anchor_byte,
             );
             // On ESP: saves RTC state and enters deep sleep (never returns).
             // On simulator enter_deep_sleep is a no-op; reset the timer so we
             // don't loop immediately back into the sleep check.
-            hw.enter_deep_sleep(session.chapter_idx, session.reader.anchor_byte);
+            hw.enter_deep_sleep(state.session.chapter_idx, state.session.reader.anchor_byte);
             state.last_interaction = Instant::now();
-            update_content(&mut scene, &session, font_px_for(hw.font_size()));
+            update_content(&mut scene, &state.session, font_px_for(hw.font_size()));
         } else if elapsed_secs >= LIGHT_SLEEP_AFTER_SECS {
             log::info!("inactivity timeout — entering light sleep");
             // Backlight is turned off inside enter_light_sleep and restored on return.
