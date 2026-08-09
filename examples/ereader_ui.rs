@@ -806,7 +806,7 @@ fn main() {
                                 state.session.reader.relayout(&state.cfg);
                                 state.update_content(&hw);
                             } else if input.source == BACKLIGHT_ID {
-                                handle_action(cmd,&mut hw);
+                                handle_backlight_action(cmd, &mut hw);
                             }
                         }
                         handle_click_action(&mut hw,
@@ -924,7 +924,7 @@ fn handle_click_action(hw: &mut dyn HardwareAccess,
     }
 }
 
-fn handle_action(cmd: &String, hw: &mut dyn HardwareAccess) {
+fn handle_backlight_action(cmd: &String, hw: &mut dyn HardwareAccess) {
     hw.set_backlight_level(BacklightLevel::from_cmd(cmd.as_str()));
     hw.save_settings();
 }
@@ -1591,7 +1591,7 @@ async fn main(spawner: Spawner) -> ! {
                             state.update_content(&hw);
                             hw.save_settings();
                         } else if input.source == BACKLIGHT_ID {
-                            handle_action(cmd, &mut hw);
+                            handle_backlight_action(cmd, &mut hw);
                         } else if input.source == ORIENTATION_ID {
                             hw.set_orientation(Orientation::from_cmd(cmd.as_str()));
                             bridge.orientation = hw.orientation();
