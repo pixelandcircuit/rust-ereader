@@ -45,6 +45,9 @@ const WELCOME_HTML: &[u8] = include_bytes!("welcome.html");
 const DIALOG_ID: ViewId = ViewId::new("dialog");
 const LIBRARY_DIALOG_ID: ViewId = ViewId::new("library_dialog");
 const LIBRARY_BUTTON_ID: ViewId = ViewId::new("library");
+const LIBRARY_LIST_ID: ViewId = ViewId::new("lib_list");
+const LIBRARY_READ_BUTTON_ID: ViewId = ViewId::new("library_read");
+const LIBRARY_CLOSE_BUTTON_ID: ViewId = ViewId::new("library_close");
 const ERROR_DIALOG_ID: ViewId = ViewId::new("error_dialog");
 const LOADING_DIALOG_ID: ViewId = ViewId::new("loading_dialog");
 const FAST_SCROLL_PANEL_ID: ViewId = ViewId::new("fast_scroll_panel");
@@ -68,7 +71,7 @@ fn handle_click(event: &mut GuiEvent) {
         event.scene.hide_view(&DIALOG_ID);
     } else if event.target == &LIBRARY_BUTTON_ID {
         event.scene.show_view(&LIBRARY_DIALOG_ID);
-    } else if event.target == &ViewId::new("library_close") {
+    } else if event.target == &LIBRARY_CLOSE_BUTTON_ID {
         event.scene.hide_view(&LIBRARY_DIALOG_ID);
     } else if event.target == &ViewId::new("error_dismiss") {
         event.scene.hide_view(&ERROR_DIALOG_ID);
@@ -409,7 +412,7 @@ fn make_scene(body_font: &'static Font, bold_font: &'static Font, w: i32, h: i32
             &LIBRARY_DIALOG_ID,
         );
         scene.add_view_to_parent(
-            make_list_view(&ViewId::new("lib_list"), vec![], 0)
+            make_list_view(&LIBRARY_LIST_ID, vec![], 0)
                 .with_h_flex(Flex::Grow)
                 .with_v_flex(Flex::Grow)
                 .with_h_align(Align::Start),
@@ -417,11 +420,11 @@ fn make_scene(body_font: &'static Font, bold_font: &'static Font, w: i32, h: i32
         );
         let lib_btn_row_id = ViewId::new("lib_btn_row");
         scene.add_view_to_parent(
-            make_button(&ViewId::new("library_close"), "Cancel"),
+            make_button(&LIBRARY_CLOSE_BUTTON_ID, "Cancel"),
             &lib_btn_row_id,
         );
         scene.add_view_to_parent(
-            make_button(&ViewId::new("library_read"), "Read"),
+            make_button(&LIBRARY_READ_BUTTON_ID, "Read"),
             &lib_btn_row_id,
         );
         let lib_btn_row = make_panel(&lib_btn_row_id)
@@ -781,11 +784,9 @@ fn main() {
                         );
                         if input.source == DEEP_CLEAN_ID {
                             // no-op in simulator
-                        } else if input.source == ViewId::new("lib_list") {
-                            scene.mark_dirty_view(&LIBRARY_DIALOG_ID);
-                        } else if input.source == ViewId::new("library_read") {
+                        } else if input.source == LIBRARY_READ_BUTTON_ID {
                             let filename = scene
-                                .get_view_mut(&ViewId::new("lib_list"))
+                                .get_view_mut(&LIBRARY_LIST_ID)
                                 .and_then(|v| v.get_state::<ListState>())
                                 .and_then(|s| s.items.get(s.selected).cloned());
                             if let Some(filename) = filename {
@@ -895,7 +896,7 @@ fn handle_click_action(hw: &mut dyn HardwareAccess,
     }
     if input.source == LIBRARY_BUTTON_ID {
         let files = hw.list_book_files();
-        if let Some(v) = scene.get_view_mut(&ViewId::new("lib_list")) {
+        if let Some(v) = scene.get_view_mut(&LIBRARY_LIST_ID) {
             if let Some(s) = v.get_state::<ListState>() {
                 s.items = files;
                 s.selected = 0;
@@ -903,6 +904,10 @@ fn handle_click_action(hw: &mut dyn HardwareAccess,
         }
         scene.mark_layout_dirty_view(&LIBRARY_DIALOG_ID);
         state.last_interaction = Instant::now();
+    }
+    if input.source == LIBRARY_LIST_ID {
+        state.last_interaction = Instant::now();
+        // scene.mark_dirty_view(&LIBRARY_DIALOG_ID);
     }
 }
 
@@ -1625,11 +1630,9 @@ async fn main(spawner: Spawner) -> ! {
                         bridge.display.deep_clean(3).unwrap();
                         state.partial_refresh_count = 0;
                         scene.mark_dirty_all();
-                    } else if input.source == ViewId::new("lib_list") {
-                        state.last_interaction = Instant::now();
-                    } else if input.source == ViewId::new("library_read") {
+                    } else if input.source == LIBRARY_READ_BUTTON_ID {
                         let filename = scene
-                            .get_view_mut(&ViewId::new("lib_list"))
+                            .get_view_mut(&LIBRARY_LIST_ID)
                             .and_then(|v| v.get_state::<ListState>())
                             .and_then(|s| s.items.get(s.selected).cloned());
                         if let Some(filename) = filename {
