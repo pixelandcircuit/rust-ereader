@@ -638,7 +638,6 @@ fn main() {
         scene: pre_scene,
     };
 
-    let mut current_filename = String::from("__welcome__");
     state.update_content(&hw);
 
     // Fast-scroll hold state (Up/Down arrow keys).
@@ -834,7 +833,7 @@ fn main() {
                                 }
                                 if let Some(data) = hw.load_book_file(&filename) {
                                     hw.save_bookmark(
-                                        &current_filename,
+                                        &state.current_filename,
                                         state.session.chapter_idx,
                                         state.session.reader.anchor_byte,
                                     );
@@ -854,7 +853,7 @@ fn main() {
                                     };
                                     hide_loading_dialog(&mut state.scene);
                                     if let Ok(s) = new_session {
-                                        current_filename = filename.clone();
+                                        state.current_filename = filename.clone();
                                         state.session = s;
                                         state.book = new_book;
                                         state.update_content(&hw);
