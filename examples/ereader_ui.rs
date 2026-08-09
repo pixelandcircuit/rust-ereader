@@ -579,6 +579,7 @@ struct AppState {
     scene: Scene,
     bold_font: &'static Font,
     body_font: &'static Font,
+    theme: Theme,
 }
 
 impl AppState {
@@ -602,7 +603,7 @@ impl AppState {
         }
         self.update_content(hw);
     }
-    fn load_book(&mut self, hw: &mut dyn HardwareAccess, theme: &Theme, filename: &String) {
+    fn load_book(&mut self, hw: &mut dyn HardwareAccess, filename: &String) {
         if let Some(data) = hw.load_book_file(&filename) {
             hw.save_bookmark(
                 &self.current_filename,
@@ -610,7 +611,8 @@ impl AppState {
                 self.session.reader.anchor_byte,
             );
             let new_book = book_from_data(&filename, data);
-            self.cfg = cfg_from_scene(&mut self.scene, &theme, self.body_font, self.bold_font, hw.font_size());
+            self.cfg = cfg_from_scene(&mut self.scene, &self.theme, self.body_font, self
+                .bold_font, hw.font_size());
             let new_session = match hw.load_bookmark(&filename) {
                 Some((ch_idx, anchor)) => BookSession::restore(
                     new_book.as_ref(),
@@ -659,25 +661,8 @@ fn main() {
     let settings = OutputSettingsBuilder::new().scale(1).build();
     let mut window = Window::new("ereader_ui", &settings);
 
-    let (font, bold_font, body_font) = load_fonts();
-    let mut pre_scene = make_scene(body_font, bold_font, win_w, win_h);
-    let theme = make_theme(font, bold_font);
     let handlers: Vec<Callback> = vec![handle_click];
-
-    let pre_cfg = cfg_from_scene(&mut pre_scene, &theme, body_font, bold_font, hw.font_size());
-    let pre_book = Box::new(HtmlBook::from_vec(WELCOME_HTML.to_vec()));
-    let mut pre_session = BookSession::new(pre_book.as_ref(), &pre_cfg).expect("BookSession init failed");
-    let mut state = AppState {
-        partial_refresh_count: 0,
-        current_filename: String::from("__welcome__"),
-        last_interaction: Instant::now(),
-        cfg:pre_cfg,
-        book: pre_book,
-        session: pre_session,
-        scene: pre_scene,
-        bold_font: bold_font,
-        body_font: body_font,
-    };
+    let mut state:AppState = init_app_state(&hw);
 
     state.update_content(&hw);
 
@@ -745,8 +730,8 @@ fn main() {
             let dirty = state.scene.dirty_rect.clone();
             let mut ctx = EmbeddedDrawingContext::new(&mut display);
             ctx.clip = dirty.clone();
-            layout_scene(&mut state.scene, &theme);
-            draw_scene(&mut state.scene, &mut ctx, &theme);
+            layout_scene(&mut state.scene, &state.theme);
+            draw_scene(&mut state.scene, &mut ctx, &state.theme);
             window.update(&display);
         }
 
@@ -834,13 +819,18 @@ fn main() {
                                         win_h as u32,
                                     ));
                                     window = Window::new("ereader_ui", &settings);
-                                    state.cfg = cfg_from_scene(&mut state.scene, &theme, body_font, bold_font, hw.font_size());
+                                    state.cfg = cfg_from_scene(&mut state.scene, &state.theme,
+                                                               state.body_font,
+                                                               state.bold_font,
+                                                               hw.font_size());
                                     state.session.reader.relayout(&state.cfg);
                                     state.update_content(&hw);
                                 }
                             } else if input.source == FONT_SIZE_ID {
                                 hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
-                                state.cfg = cfg_from_scene(&mut state.scene, &theme, body_font, bold_font, hw.font_size());
+                                state.cfg = cfg_from_scene(&mut state.scene, &state.theme,
+                                                           state.body_font,
+                                                           state.bold_font, hw.font_size());
                                 state.session.reader.relayout(&state.cfg);
                                 state.update_content(&hw);
                             } else if input.source == BACKLIGHT_ID {
@@ -866,11 +856,11 @@ fn main() {
                                     let dirty = state.scene.dirty_rect.clone();
                                     let mut ctx = EmbeddedDrawingContext::new(&mut display);
                                     ctx.clip = dirty;
-                                    layout_scene(&mut state.scene, &theme);
-                                    draw_scene(&mut state.scene, &mut ctx, &theme);
+                                    layout_scene(&mut state.scene, &state.theme);
+                                    draw_scene(&mut state.scene, &mut ctx, &state.theme);
                                     window.update(&display);
                                 }
-                                state.load_book(&mut hw, &theme, &filename);
+                                state.load_book(&mut hw, &filename);
                             }
                         }
                     }
@@ -878,6 +868,30 @@ fn main() {
                 _ => {}
             }
         }
+    }
+}
+
+fn init_app_state(hw: &dyn HardwareAccess) -> AppState {
+    let (win_w, mut win_h) = hw.orientation().logical_size();
+    let (font, bold_font, body_font) = load_fonts();
+    let mut pre_scene = make_scene(body_font, bold_font, win_w, win_h);
+    let theme = make_theme(font, bold_font);
+
+    let pre_cfg = cfg_from_scene(&mut pre_scene, &theme, body_font, bold_font, hw.font_size());
+    let pre_book = Box::new(HtmlBook::from_vec(WELCOME_HTML.to_vec()));
+    let mut pre_session = BookSession::new(pre_book.as_ref(), &pre_cfg).expect("BookSession init failed");
+
+    AppState {
+        partial_refresh_count: 0,
+        current_filename: String::from("__welcome__"),
+        last_interaction: Instant::now(),
+        cfg:pre_cfg,
+        book: pre_book,
+        session: pre_session,
+        scene: pre_scene,
+        bold_font: bold_font,
+        body_font: body_font,
+        theme: theme,
     }
 }
 
@@ -1286,31 +1300,15 @@ async fn main(spawner: Spawner) -> ! {
     );
     let (lw, lh) = hw.orientation().logical_size();
     let mut bridge = Rgb565ToGray4::new(display, hw.orientation());
-    let (pre_font, pre_bold_font, pre_body_font) = load_fonts();
-    let mut pre_scene = make_scene(pre_body_font, pre_bold_font, lw, lh);
-    sync_settings_ui(&mut pre_scene, font_idx, bl_idx, ori_idx);
-    let theme = make_theme(pre_font, pre_bold_font);
     let handlers = vec![handle_click as Callback];
     let mut was_touching = false;
 
-    let pre_book = Box::new(HtmlBook::from_vec(WELCOME_HTML.to_vec()));
     // Counts consecutive partial refreshes so we can force a full ghost-clear
     // periodically.  E-paper capacitive field coupling from repeated partial
     // waveform passes slowly darkens white areas adjacent to the dirty rect;
     // a full refresh resets all pixels to a clean state.
-    let pre_cfg = cfg_from_scene(&mut pre_scene, &theme, pre_body_font, pre_bold_font, hw.font_size());
-    let mut pre_session = BookSession::new(pre_book.as_ref(), &pre_cfg).expect("BookSession init failed");
-    let mut state = AppState {
-        partial_refresh_count: 0,
-        current_filename: String::from("__welcome__"),
-        last_interaction: Instant::now(),
-        cfg:pre_cfg,
-        book: pre_book,
-        session: pre_session,
-        scene: pre_scene,
-        bold_font: pre_bold_font,
-        body_font: pre_body_font,
-    };
+    let mut state:AppState = init_app_state(&hw);
+    sync_settings_ui(&mut state.scene, font_idx, bl_idx, ori_idx);
 
     // On sleep wakeup, try to reopen the SD card book the user was reading.
     // The filename was saved to NVS just before entering deep sleep.
@@ -1323,8 +1321,8 @@ async fn main(spawner: Spawner) -> ! {
                 {
                     let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
                     ctx.clip = dirty.clone();
-                    layout_scene(&mut state.scene, &theme);
-                    draw_scene(&mut state.scene, &mut ctx, &theme);
+                    layout_scene(&mut state.scene, &state.theme);
+                    draw_scene(&mut state.scene, &mut ctx, &state.theme);
                 }
                 bridge.flush_region(&dirty, DrawMode::BlackOnWhite);
             }
@@ -1508,8 +1506,8 @@ async fn main(spawner: Spawner) -> ! {
                         } else {
                             dirty_rect
                         };
-                        layout_scene(&mut state.scene, &theme);
-                        draw_scene(&mut state.scene, &mut ctx, &theme);
+                        layout_scene(&mut state.scene, &state.theme);
+                        draw_scene(&mut state.scene, &mut ctx, &state.theme);
                     }
                     if needs_full || force_full {
                         bridge.flush();
@@ -1571,8 +1569,8 @@ async fn main(spawner: Spawner) -> ! {
                 } else {
                     dirty_rect.clone()
                 };
-                layout_scene(&mut state.scene, &theme);
-                draw_scene(&mut state.scene, &mut ctx, &theme);
+                layout_scene(&mut state.scene, &state.theme);
+                draw_scene(&mut state.scene, &mut ctx, &state.theme);
             }
             if needs_full_refresh || force_full {
                 bridge.flush();
@@ -1588,7 +1586,8 @@ async fn main(spawner: Spawner) -> ! {
                     if let Some(OutputAction::Command(ref cmd)) = input.action {
                         if input.source == FONT_SIZE_ID {
                             hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
-                            state.cfg = cfg_from_scene(&mut state.scene, &theme, state.body_font, state.bold_font, hw.font_size());
+                            state.cfg = cfg_from_scene(&mut state.scene, &state.theme, state
+                                .body_font, state.bold_font, hw.font_size());
                             state.session.reader.relayout(&state.cfg);
                             state.update_content(&hw);
                             hw.save_settings();
@@ -1599,7 +1598,8 @@ async fn main(spawner: Spawner) -> ! {
                             bridge.orientation = hw.orientation();
                             let (new_w, new_h) = hw.orientation().logical_size();
                             state.scene.resize(Bounds::new(0, 0, new_w, new_h));
-                            state.cfg = cfg_from_scene(&mut state.scene, &theme, state.body_font, state.bold_font, hw.font_size());
+                            state.cfg = cfg_from_scene(&mut state.scene, &state.theme, state
+                                .body_font, state.bold_font, hw.font_size());
                             state.session.reader.relayout(&state.cfg);
                             state.update_content(&hw);
                             hw.save_settings();
@@ -1640,13 +1640,13 @@ async fn main(spawner: Spawner) -> ! {
                                 {
                                     let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
                                     ctx.clip = dirty.clone();
-                                    layout_scene(&mut state.scene, &theme);
-                                    draw_scene(&mut state.scene, &mut ctx, &theme);
+                                    layout_scene(&mut state.scene, &state.theme);
+                                    draw_scene(&mut state.scene, &mut ctx, &state.theme);
                                 }
                                 bridge.flush_region(&dirty, DrawMode::BlackOnWhite);
                                 state.partial_refresh_count += 1;
                             }
-                            state.load_book(&mut hw, &theme, &filename);
+                            state.load_book(&mut hw, &filename);
                         }
                         state.last_interaction = Instant::now();
                     } else {
@@ -1672,8 +1672,8 @@ async fn main(spawner: Spawner) -> ! {
             {
                 let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
                 ctx.clip = sleep_dirty;
-                layout_scene(&mut state.scene, &theme);
-                draw_scene(&mut state.scene, &mut ctx, &theme);
+                layout_scene(&mut state.scene, &state.theme);
+                draw_scene(&mut state.scene, &mut ctx, &state.theme);
             }
             bridge.flush();
             bridge.display.power_off();
