@@ -184,6 +184,9 @@ pub trait HardwareAccess {
     /// backlight, and enter deep sleep (wakes on BOOT button / GPIO0 LOW).
     /// On ESP this never returns. On simulator it is a no-op.
     fn enter_deep_sleep(&mut self, chapter_idx: usize, anchor_byte: usize);
+    /// Turn off backlight, light-sleep until either button is pressed, then
+    /// restore backlight and return. On simulator this is a no-op.
+    fn enter_light_sleep(&mut self);
 
     /// Persist per-book reading position identified by `filename`.
     /// Stores up to 8 books; evicts the oldest when the table is full.
@@ -264,6 +267,7 @@ impl HardwareAccess for SimHardware {
         false
     }
     fn enter_deep_sleep(&mut self, _chapter_idx: usize, _anchor_byte: usize) {}
+    fn enter_light_sleep(&mut self) {}
     fn save_bookmark(&mut self, filename: &str, chapter_idx: usize, anchor_byte: usize) {
         self.bookmarks
             .insert(String::from(filename), (chapter_idx, anchor_byte));
@@ -534,10 +538,10 @@ pub fn load_last_filename() -> Option<String> {
 
 #[cfg(feature = "esp")]
 use esp_hal::{
-    gpio::Input,
+    gpio::{Input, WakeEvent},
     ledc::{channel::ChannelIFace, LowSpeed},
     rtc_cntl::{
-        sleep::{Ext0WakeupSource, WakeupLevel},
+        sleep::{Ext0WakeupSource, GpioWakeupSource, WakeupLevel},
         Rtc,
     },
 };
@@ -673,6 +677,15 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
         let wakeup_pin = unsafe { esp_hal::gpio::AnyPin::steal(0) };
         let boot_src = Ext0WakeupSource::new(wakeup_pin, WakeupLevel::Low);
         self.rtc.sleep_deep(&[&boot_src]);
+    }
+
+    fn enter_light_sleep(&mut self) {
+        self.bl_ch.set_duty(0).unwrap();
+        self.btn_prev.wakeup_enable(true, WakeEvent::LowLevel).unwrap();
+        self.btn_next.wakeup_enable(true, WakeEvent::LowLevel).unwrap();
+        let gpio_src = GpioWakeupSource::new();
+        self.rtc.sleep_light(&[&gpio_src]);
+        self.bl_ch.set_duty(BL_DUTY[self.backlight as usize]).unwrap();
     }
 
     fn save_bookmark(&mut self, filename: &str, chapter_idx: usize, anchor_byte: usize) {

@@ -928,9 +928,11 @@ use ereader::driver::gt911::GT911_ADDR_PRIMARY;
 #[cfg(feature = "esp")]
 use ereader::driver::Gt911;
 
-// Deep sleep after 60 seconds of inactivity.
+// Light sleep after 60 s of inactivity; deep sleep after 60 min.
 #[cfg(feature = "esp")]
-const SLEEP_AFTER_SECS: u64 = 60;
+const LIGHT_SLEEP_AFTER_SECS: u64 = 60;
+#[cfg(feature = "esp")]
+const DEEP_SLEEP_AFTER_SECS: u64 = 3600;
 
 /// Wraps the Gray4 e-paper display and presents an Rgb565 DrawTarget for iris-ui.
 /// Converts Rgb565 luminance to 4-bit gray and applies orientation rotation so
@@ -1286,6 +1288,7 @@ async fn main(spawner: Spawner) -> ! {
     update_content(&mut scene, &session, font_px_for(hw.font_size()));
 
     let mut last_interaction = Instant::now();
+    let mut just_woke = false;
     // Counts consecutive partial refreshes so we can force a full ghost-clear
     // periodically.  E-paper capacitive field coupling from repeated partial
     // waveform passes slowly darkens white areas adjacent to the dirty rect;
@@ -1469,11 +1472,14 @@ async fn main(spawner: Spawner) -> ! {
                 session.reader.go_to_page(fs_target);
                 update_content(&mut scene, &session, font_px_for(hw.font_size()));
                 scene.mark_dirty_all();
+            } else if just_woke {
+                // First press after light sleep: consume as wake-only, no page turn.
             } else if forward {
                 nav_next_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
             } else {
                 nav_prev_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
             }
+            just_woke = false;
             hw.save_bookmark(&current_filename, session.chapter_idx, session.reader.anchor_byte);
             last_interaction = Instant::now();
         }
@@ -1663,8 +1669,9 @@ async fn main(spawner: Spawner) -> ! {
             was_touching = false;
         }
 
-        // Enter deep sleep after inactivity timeout.
-        if last_interaction.elapsed().as_secs() >= SLEEP_AFTER_SECS {
+        // Two-tier inactivity sleep: light sleep at 60 s, deep sleep at 60 min.
+        let elapsed_secs = last_interaction.elapsed().as_secs();
+        if elapsed_secs >= DEEP_SLEEP_AFTER_SECS {
             log::info!("inactivity timeout — entering deep sleep");
             if let Some(v) = scene.get_view_mut(&ViewId::new("page")) {
                 v.title = "Sleeping\u{2026} Press BOOT to wake".into();
@@ -1693,6 +1700,12 @@ async fn main(spawner: Spawner) -> ! {
             hw.enter_deep_sleep(session.chapter_idx, session.reader.anchor_byte);
             last_interaction = Instant::now();
             update_content(&mut scene, &session, font_px_for(hw.font_size()));
+        } else if elapsed_secs >= LIGHT_SLEEP_AFTER_SECS {
+            log::info!("inactivity timeout — entering light sleep");
+            // Backlight is turned off inside enter_light_sleep and restored on return.
+            hw.enter_light_sleep();
+            last_interaction = Instant::now();
+            just_woke = true;
         }
 
         EmbassyTimer::after(Duration::from_millis(50)).await;

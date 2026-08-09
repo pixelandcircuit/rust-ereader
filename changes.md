@@ -1,5 +1,18 @@
 # Changes
 
+## 2026-08-08
+
+Two-tier inactivity sleep: light sleep at 60 s, deep sleep at 60 min.
+
+- `src/hardware.rs`:
+  - Added `enter_light_sleep(&mut self)` to the `HardwareAccess` trait and the simulator default (no-op).
+  - ESP impl: turns off backlight, enables `GpioWakeupSource` on both GPIO0 and GPIO38 via `wakeup_enable(true, WakeEvent::LowLevel)`, calls `sleep_light`, and restores backlight on return. GPIO38 can only wake from light sleep (not an RTC pin), so deep sleep still uses `Ext0WakeupSource` on GPIO0 only.
+  - Added `GpioWakeupSource` and `WakeEvent` to ESP imports.
+- `examples/ereader_ui.rs`:
+  - Replaced `SLEEP_AFTER_SECS = 60` with `LIGHT_SLEEP_AFTER_SECS = 60` and `DEEP_SLEEP_AFTER_SECS = 3600`.
+  - Added `just_woke: bool` flag. After returning from light sleep, the first button press is consumed as a wake event (backlight restore only, no page turn), then `just_woke` is cleared.
+  - The idle check is now a two-branch `if/else if`: `>= DEEP_SLEEP_AFTER_SECS` triggers the existing deep sleep path; `>= LIGHT_SLEEP_AFTER_SECS` calls `enter_light_sleep()`.
+
 ## 2026-08-07 (10)
 
 Restore the last-read book when waking from deep sleep.
