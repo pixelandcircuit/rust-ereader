@@ -573,6 +573,7 @@ struct AppState {
     partial_refresh_count: u32,
     current_filename: String,
     last_interaction: Instant,
+    cfg: LayoutConfig,
 }
 
 #[cfg(feature = "simulator")]
@@ -584,11 +585,6 @@ fn main() {
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let mut state = AppState {
-        partial_refresh_count: 0,
-        current_filename: String::from("__welcome__"),
-        last_interaction: Instant::now(),
-    };
 
     let mut hw = SimHardware::new();
     let (mut win_w, mut win_h) = hw.orientation().logical_size();
@@ -602,6 +598,13 @@ fn main() {
     let mut scene = make_scene(body_font, bold_font, win_w, win_h);
     let theme = make_theme(font, bold_font);
     let handlers: Vec<Callback> = vec![handle_click];
+
+    let mut state = AppState {
+        partial_refresh_count: 0,
+        current_filename: String::from("__welcome__"),
+        last_interaction: Instant::now(),
+        cfg:cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size())
+    };
 
     let mut book: Box<dyn Book> = Box::new(HtmlBook::from_vec(WELCOME_HTML.to_vec()));
     let mut cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size());
@@ -779,7 +782,7 @@ fn main() {
                             }
                         }
                         handle_click_action(&mut hw,
-                                            &input, &mut scene, &mut book, &mut cfg,
+                                            &input, &mut scene, &mut book,
                                             &mut  session, &mut state
                         );
                         if input.source == DEEP_CLEAN_ID {
@@ -855,7 +858,6 @@ fn handle_click_action(hw: &mut dyn HardwareAccess,
                        input: &InputResult,
                        scene: &mut Scene,
                        book: &mut Box<dyn Book>,
-                       cfg: &mut LayoutConfig,
                        session: &mut BookSession,
                        state: &mut AppState) {
     if input.source == ViewId::new("sync_time") {
@@ -869,7 +871,7 @@ fn handle_click_action(hw: &mut dyn HardwareAccess,
             hw,
             scene,
             book.as_ref(),
-            cfg,
+            &mut state.cfg,
             session,
         );
         hw.save_bookmark(
@@ -884,7 +886,7 @@ fn handle_click_action(hw: &mut dyn HardwareAccess,
             hw,
             scene,
             book.as_ref(),
-            cfg,
+            &mut state.cfg,
             session,
         );
         hw.save_bookmark(
@@ -1317,6 +1319,7 @@ async fn main(spawner: Spawner) -> ! {
         partial_refresh_count: 0,
         current_filename: String::from("__welcome__"),
         last_interaction: Instant::now(),
+        cfg:cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size())
     };
 
     // On sleep wakeup, try to reopen the SD card book the user was reading.
@@ -1343,12 +1346,11 @@ async fn main(spawner: Spawner) -> ! {
         }
     }
 
-    let mut cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size());
     let mut session = if saved_chapter > 0 || saved_anchor > 0 {
-        BookSession::restore(book.as_ref(), &cfg, saved_chapter, saved_anchor)
-            .unwrap_or_else(|_| BookSession::new(book.as_ref(), &cfg).expect("epub load"))
+        BookSession::restore(book.as_ref(), &state.cfg, saved_chapter, saved_anchor)
+            .unwrap_or_else(|_| BookSession::new(book.as_ref(), &state.cfg).expect("epub load"))
     } else {
-        BookSession::new(book.as_ref(), &cfg).expect("epub load")
+        BookSession::new(book.as_ref(), &state.cfg).expect("epub load")
     };
     update_content(&mut scene, &session, font_px_for(hw.font_size()));
 
@@ -1464,7 +1466,8 @@ async fn main(spawner: Spawner) -> ! {
                         if fs_target + 1 >= session.reader.page_count() {
                             if session.chapter_idx + 1 < session.chapter_count() {
                                 session
-                                    .go_to_chapter(session.chapter_idx + 1, book.as_ref(), &cfg)
+                                    .go_to_chapter(session.chapter_idx + 1, book.as_ref(),
+                                                   &state.cfg)
                                     .ok();
                                 fs_target = 0;
                             }
@@ -1474,7 +1477,7 @@ async fn main(spawner: Spawner) -> ! {
                     } else if fs_target == 0 {
                         if session.chapter_idx > 0 {
                             session
-                                .go_to_chapter(session.chapter_idx - 1, book.as_ref(), &cfg)
+                                .go_to_chapter(session.chapter_idx - 1, book.as_ref(), &state.cfg)
                                 .ok();
                             fs_target = session.reader.page_count().saturating_sub(1);
                         }
@@ -1534,9 +1537,9 @@ async fn main(spawner: Spawner) -> ! {
             } else if just_woke {
                 // First press after light sleep: consume as wake-only, no page turn.
             } else if forward {
-                nav_next_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
+                nav_next_page(&mut hw, &mut scene, book.as_ref(), &mut state.cfg, &mut session);
             } else {
-                nav_prev_page(&mut hw, &mut scene, book.as_ref(), &mut cfg, &mut session);
+                nav_prev_page(&mut hw, &mut scene, book.as_ref(), &mut state.cfg, &mut session);
             }
             just_woke = false;
             hw.save_bookmark(&state.current_filename, session.chapter_idx, session.reader
@@ -1593,8 +1596,9 @@ async fn main(spawner: Spawner) -> ! {
                     if let Some(OutputAction::Command(ref cmd)) = input.action {
                         if input.source == FONT_SIZE_ID {
                             hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
-                            cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size());
-                            session.reader.relayout(&cfg);
+                            state.cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw
+                                .font_size());
+                            session.reader.relayout(&state.cfg);
                             update_content(&mut scene, &session, font_px_for(hw.font_size()));
                             hw.save_settings();
                         } else if input.source == BACKLIGHT_ID {
@@ -1604,14 +1608,15 @@ async fn main(spawner: Spawner) -> ! {
                             bridge.orientation = hw.orientation();
                             let (new_w, new_h) = hw.orientation().logical_size();
                             scene.resize(Bounds::new(0, 0, new_w, new_h));
-                            cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size());
-                            session.reader.relayout(&cfg);
+                            state.cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw
+                                .font_size());
+                            session.reader.relayout(&state.cfg);
                             update_content(&mut scene, &session, font_px_for(hw.font_size()));
                             hw.save_settings();
                         }
                     }
                     handle_click_action(&mut hw,
-                                        &input, &mut scene, &mut book, &mut cfg,
+                                        &input, &mut scene, &mut book,
                                         &mut  session, &mut state);
                     if input.source == ViewId::new("sync_time") {
                         info!("sync_time pressed, querying NTP");
@@ -1660,16 +1665,17 @@ async fn main(spawner: Spawner) -> ! {
                                     session.reader.anchor_byte,
                                 );
                                 let new_book = book_from_data(&filename, data);
-                                cfg = cfg_from_scene(&mut scene, &theme, body_font, bold_font, hw.font_size());
+                                state.cfg = cfg_from_scene(&mut scene, &theme, body_font,
+                                                           bold_font, hw.font_size());
                                 let new_session = match hw.load_bookmark(&filename) {
                                     Some((ch_idx, anchor)) => BookSession::restore(
                                         new_book.as_ref(),
-                                        &cfg,
+                                        &state.cfg,
                                         ch_idx,
                                         anchor,
                                     )
-                                    .or_else(|_| BookSession::new(new_book.as_ref(), &cfg)),
-                                    None => BookSession::new(new_book.as_ref(), &cfg),
+                                    .or_else(|_| BookSession::new(new_book.as_ref(), &state.cfg)),
+                                    None => BookSession::new(new_book.as_ref(), &state.cfg),
                                 };
                                 hide_loading_dialog(&mut scene);
                                 if let Ok(s) = new_session {
