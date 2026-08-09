@@ -577,6 +577,8 @@ struct AppState {
     book: Box<dyn Book>,
     session: BookSession,
     scene: Scene,
+    bold_font: &'static Font,
+    body_font: &'static Font,
 }
 
 impl AppState {
@@ -600,6 +602,43 @@ impl AppState {
         }
         self.update_content(hw);
     }
+    fn load_book(&mut self, hw: &mut dyn HardwareAccess, theme: &Theme, filename: &String) {
+        if let Some(data) = hw.load_book_file(&filename) {
+            hw.save_bookmark(
+                &self.current_filename,
+                self.session.chapter_idx,
+                self.session.reader.anchor_byte,
+            );
+            let new_book = book_from_data(&filename, data);
+            self.cfg = cfg_from_scene(&mut self.scene, &theme, self.body_font, self.bold_font, hw.font_size());
+            let new_session = match hw.load_bookmark(&filename) {
+                Some((ch_idx, anchor)) => BookSession::restore(
+                    new_book.as_ref(),
+                    &self.cfg,
+                    ch_idx,
+                    anchor,
+                )
+                    .or_else(|_| BookSession::new(new_book.as_ref(), &self.cfg)),
+                None => BookSession::new(new_book.as_ref(), &self.cfg),
+            };
+            hide_loading_dialog(&mut self.scene);
+            if let Ok(s) = new_session {
+                self.current_filename = filename.clone();
+                self.session = s;
+                self.book = new_book;
+                self.update_content(hw);
+                if let Some(v) = self.scene.get_view_mut(&ViewId::new("booktitle")) {
+                    v.title = filename.clone();
+                }
+            } else {
+                show_error_dialog(&mut self.scene, &filename);
+            }
+        } else {
+            hide_loading_dialog(&mut self.scene);
+            show_error_dialog(&mut self.scene, &filename);
+        }
+    }
+
 }
 
 #[cfg(feature = "simulator")]
@@ -636,6 +675,8 @@ fn main() {
         book: pre_book,
         session: pre_session,
         scene: pre_scene,
+        bold_font: bold_font,
+        body_font: body_font,
     };
 
     state.update_content(&hw);
@@ -793,15 +834,13 @@ fn main() {
                                         win_h as u32,
                                     ));
                                     window = Window::new("ereader_ui", &settings);
-                                    state.cfg = cfg_from_scene(&mut state.scene, &theme, body_font,
-                                                          bold_font, hw.font_size());
+                                    state.cfg = cfg_from_scene(&mut state.scene, &theme, body_font, bold_font, hw.font_size());
                                     state.session.reader.relayout(&state.cfg);
                                     state.update_content(&hw);
                                 }
                             } else if input.source == FONT_SIZE_ID {
                                 hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
-                                state.cfg = cfg_from_scene(&mut state.scene, &theme, body_font,
-                                                           bold_font, hw.font_size());
+                                state.cfg = cfg_from_scene(&mut state.scene, &theme, body_font, bold_font, hw.font_size());
                                 state.session.reader.relayout(&state.cfg);
                                 state.update_content(&hw);
                             } else if input.source == BACKLIGHT_ID {
@@ -831,44 +870,7 @@ fn main() {
                                     draw_scene(&mut state.scene, &mut ctx, &theme);
                                     window.update(&display);
                                 }
-                                if let Some(data) = hw.load_book_file(&filename) {
-                                    hw.save_bookmark(
-                                        &state.current_filename,
-                                        state.session.chapter_idx,
-                                        state.session.reader.anchor_byte,
-                                    );
-                                    let new_book = book_from_data(&filename, data);
-                                    state.cfg = cfg_from_scene(&mut state.scene, &theme, body_font,
-                                                          bold_font, hw.font_size());
-                                    let new_session = match hw.load_bookmark(&filename) {
-                                        Some((ch, anchor)) => BookSession::restore(
-                                            new_book.as_ref(),
-                                            &state.cfg,
-                                            ch,
-                                            anchor,
-                                        )
-                                        .or_else(|_| BookSession::new(new_book.as_ref(),
-                                                                      &state.cfg)),
-                                        None => BookSession::new(new_book.as_ref(), &state.cfg),
-                                    };
-                                    hide_loading_dialog(&mut state.scene);
-                                    if let Ok(s) = new_session {
-                                        state.current_filename = filename.clone();
-                                        state.session = s;
-                                        state.book = new_book;
-                                        state.update_content(&hw);
-                                        if let Some(v) =
-                                            state.scene.get_view_mut(&ViewId::new("booktitle"))
-                                        {
-                                            v.title = filename.clone();
-                                        }
-                                    } else {
-                                        show_error_dialog(&mut state.scene, &filename);
-                                    }
-                                } else {
-                                    hide_loading_dialog(&mut state.scene);
-                                    show_error_dialog(&mut state.scene, &filename);
-                                }
+                                state.load_book(&mut hw, &theme, &filename);
                             }
                         }
                     }
@@ -1284,10 +1286,10 @@ async fn main(spawner: Spawner) -> ! {
     );
     let (lw, lh) = hw.orientation().logical_size();
     let mut bridge = Rgb565ToGray4::new(display, hw.orientation());
-    let (font, bold_font, body_font) = load_fonts();
-    let mut pre_scene = make_scene(body_font, bold_font, lw, lh);
+    let (pre_font, pre_bold_font, pre_body_font) = load_fonts();
+    let mut pre_scene = make_scene(pre_body_font, pre_bold_font, lw, lh);
     sync_settings_ui(&mut pre_scene, font_idx, bl_idx, ori_idx);
-    let theme = make_theme(font, bold_font);
+    let theme = make_theme(pre_font, pre_bold_font);
     let handlers = vec![handle_click as Callback];
     let mut was_touching = false;
 
@@ -1296,7 +1298,7 @@ async fn main(spawner: Spawner) -> ! {
     // periodically.  E-paper capacitive field coupling from repeated partial
     // waveform passes slowly darkens white areas adjacent to the dirty rect;
     // a full refresh resets all pixels to a clean state.
-    let pre_cfg = cfg_from_scene(&mut pre_scene, &theme, body_font, bold_font, hw.font_size());
+    let pre_cfg = cfg_from_scene(&mut pre_scene, &theme, pre_body_font, pre_bold_font, hw.font_size());
     let mut pre_session = BookSession::new(pre_book.as_ref(), &pre_cfg).expect("BookSession init failed");
     let mut state = AppState {
         partial_refresh_count: 0,
@@ -1306,6 +1308,8 @@ async fn main(spawner: Spawner) -> ! {
         book: pre_book,
         session: pre_session,
         scene: pre_scene,
+        bold_font: pre_bold_font,
+        body_font: pre_body_font,
     };
 
     // On sleep wakeup, try to reopen the SD card book the user was reading.
@@ -1584,8 +1588,7 @@ async fn main(spawner: Spawner) -> ! {
                     if let Some(OutputAction::Command(ref cmd)) = input.action {
                         if input.source == FONT_SIZE_ID {
                             hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
-                            state.cfg = cfg_from_scene(&mut state.scene, &theme, body_font, bold_font, hw
-                                .font_size());
+                            state.cfg = cfg_from_scene(&mut state.scene, &theme, state.body_font, state.bold_font, hw.font_size());
                             state.session.reader.relayout(&state.cfg);
                             state.update_content(&hw);
                             hw.save_settings();
@@ -1596,8 +1599,7 @@ async fn main(spawner: Spawner) -> ! {
                             bridge.orientation = hw.orientation();
                             let (new_w, new_h) = hw.orientation().logical_size();
                             state.scene.resize(Bounds::new(0, 0, new_w, new_h));
-                            state.cfg = cfg_from_scene(&mut state.scene, &theme, body_font, bold_font, hw
-                                .font_size());
+                            state.cfg = cfg_from_scene(&mut state.scene, &theme, state.body_font, state.bold_font, hw.font_size());
                             state.session.reader.relayout(&state.cfg);
                             state.update_content(&hw);
                             hw.save_settings();
@@ -1644,41 +1646,7 @@ async fn main(spawner: Spawner) -> ! {
                                 bridge.flush_region(&dirty, DrawMode::BlackOnWhite);
                                 state.partial_refresh_count += 1;
                             }
-                            if let Some(data) = hw.load_book_file(&filename) {
-                                hw.save_bookmark(
-                                    &state.current_filename,
-                                    state.session.chapter_idx,
-                                    state.session.reader.anchor_byte,
-                                );
-                                let new_book = book_from_data(&filename, data);
-                                state.cfg = cfg_from_scene(&mut state.scene, &theme, body_font,
-                                                           bold_font, hw.font_size());
-                                let new_session = match hw.load_bookmark(&filename) {
-                                    Some((ch_idx, anchor)) => BookSession::restore(
-                                        new_book.as_ref(),
-                                        &state.cfg,
-                                        ch_idx,
-                                        anchor,
-                                    )
-                                    .or_else(|_| BookSession::new(new_book.as_ref(), &state.cfg)),
-                                    None => BookSession::new(new_book.as_ref(), &state.cfg),
-                                };
-                                hide_loading_dialog(&mut state.scene);
-                                if let Ok(s) = new_session {
-                                    state.current_filename = filename.clone();
-                                    state.session = s;
-                                    state.book = new_book;
-                                    state.update_content(&hw);
-                                    if let Some(v) = state.scene.get_view_mut(&ViewId::new("booktitle")) {
-                                        v.title = filename.clone();
-                                    }
-                                } else {
-                                    show_error_dialog(&mut state.scene, &filename);
-                                }
-                            } else {
-                                hide_loading_dialog(&mut state.scene);
-                                show_error_dialog(&mut state.scene, &filename);
-                            }
+                            state.load_book(&mut hw, &theme, &filename);
                         }
                         state.last_interaction = Instant::now();
                     } else {
