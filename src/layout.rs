@@ -190,9 +190,10 @@ pub fn layout_chapter(text: &str, cfg: &LayoutConfig) -> Layout {
                     pos += 1;
                 }
                 word_px += if in_heading {
-                    cfg.heading_font
-                        .as_ref()
-                        .map_or_else(|| (cfg.font.measure)(&text[cs..pos]), |hf| (hf.measure)(&text[cs..pos]))
+                    cfg.heading_font.as_ref().map_or_else(
+                        || (cfg.font.measure)(&text[cs..pos]),
+                        |hf| (hf.measure)(&text[cs..pos]),
+                    )
                 } else {
                     (cfg.font.measure)(&text[cs..pos])
                 };
@@ -204,7 +205,11 @@ pub fn layout_chapter(text: &str, cfg: &LayoutConfig) -> Layout {
             continue;
         }
 
-        let gap = if pending_space && line_px > 0 { space_w } else { 0 };
+        let gap = if pending_space && line_px > 0 {
+            space_w
+        } else {
+            0
+        };
         let needed = line_px + gap + word_px;
 
         if needed > content_w && line_px > 0 {

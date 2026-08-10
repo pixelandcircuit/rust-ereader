@@ -2,6 +2,7 @@
 
 #[cfg(feature = "esp")]
 extern crate alloc;
+pub mod appstate;
 pub mod book;
 pub mod bookview;
 #[cfg(feature = "esp")]
@@ -11,4 +12,3 @@ pub mod font;
 pub mod hardware;
 pub mod layout;
 pub mod reader;
-pub mod appstate;

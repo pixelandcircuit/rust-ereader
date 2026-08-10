@@ -23,8 +23,9 @@ use ereader::hardware::SimHardware;
 use std::time::Instant;
 
 #[cfg(feature = "esp")]
-use ereader::hardware::{load_cold_boot_position, load_last_filename, load_settings,
-                        save_last_filename, EspHardware};
+use ereader::hardware::{
+    load_cold_boot_position, load_last_filename, load_settings, save_last_filename, EspHardware,
+};
 use ereader::hardware::{BacklightLevel, FontSize, HardwareAccess, Orientation};
 use ereader::layout::LayoutConfig;
 use ereader::reader::BookSession;
@@ -62,6 +63,7 @@ const FONT_SIZE_ID: ViewId = ViewId::new("font_size");
 const DEEP_CLEAN_ID: ViewId = ViewId::new("deep_clean");
 const PREV_PAGE_ID: ViewId = ViewId::new("prev_page");
 const NEXT_PAGE_ID: ViewId = ViewId::new("next_page");
+const SYNC_TIME_BUTTON_ID: ViewId = ViewId::new("sync_time");
 
 const UI_FONT_SIZE_SMALL: f32 = 16.0;
 const UI_FONT_SIZE_MEDIUM: f32 = 20.0;
@@ -207,7 +209,6 @@ fn layout_fast_scroll_panel(e: &mut LayoutEvent) {
     }
 }
 
-
 fn update_fast_scroll_label(
     scene: &mut Scene,
     chapter: usize,
@@ -248,8 +249,10 @@ fn make_scene(body_font: &'static Font, bold_font: &'static Font, w: i32, h: i32
         scene.add_view_to_parent(make_h_spacer(&ViewId::new("spacer1")), &topbar_id);
         scene.add_view_to_parent(make_label(&ViewId::new("time"), "--:-- --"), &topbar_id);
         scene.add_view_to_parent(make_button(&BATTERY_BUTTON_ID, "85%"), &topbar_id);
-        scene.add_view_to_parent(make_full_button(&ViewId::new("settings"), "Settings",
-                                                  "settings", false),&topbar_id);
+        scene.add_view_to_parent(
+            make_full_button(&ViewId::new("settings"), "Settings", "settings", false),
+            &topbar_id,
+        );
         let topbar = make_panel(&topbar_id)
             .with_layout(Some(layout_hbox))
             .with_h_flex(Flex::Grow)
@@ -293,10 +296,7 @@ fn make_scene(body_font: &'static Font, bold_font: &'static Font, w: i32, h: i32
     // ── Bottom bar ───────────────────────────────────────────────────────────
     {
         let bottombar_id = ViewId::new("bottombar");
-        scene.add_view_to_parent(
-            make_button(&PREV_PAGE_ID, "< Prev"),
-            &bottombar_id,
-        );
+        scene.add_view_to_parent(make_button(&PREV_PAGE_ID, "< Prev"), &bottombar_id);
         scene.add_view_to_parent(
             make_truncating_label(&ViewId::new("booktitle"), "Sherlock Holmes"),
             &bottombar_id,
@@ -307,10 +307,7 @@ fn make_scene(body_font: &'static Font, bold_font: &'static Font, w: i32, h: i32
             &bottombar_id,
         );
         scene.add_view_to_parent(make_label(&ViewId::new("page"), ""), &bottombar_id);
-        scene.add_view_to_parent(
-            make_button(&NEXT_PAGE_ID, "Next >"),
-            &bottombar_id,
-        );
+        scene.add_view_to_parent(make_button(&NEXT_PAGE_ID, "Next >"), &bottombar_id);
         let bottombar = make_panel(&bottombar_id)
             .with_layout(Some(layout_hbox))
             .with_h_flex(Flex::Grow)
@@ -371,10 +368,7 @@ fn make_scene(body_font: &'static Font, bold_font: &'static Font, w: i32, h: i32
             make_button(&ViewId::new("sync_time"), "Sync Time"),
             &DIALOG_ID,
         );
-        scene.add_view_to_parent(
-            make_button(&DEEP_CLEAN_ID, "Clean Screen"),
-            &DIALOG_ID,
-        );
+        scene.add_view_to_parent(make_button(&DEEP_CLEAN_ID, "Clean Screen"), &DIALOG_ID);
         scene.add_view_to_parent(
             make_label(&ViewId::new("dlg_battery"), "Battery: 85%  (Charging)"),
             &DIALOG_ID,
@@ -605,16 +599,18 @@ fn load_book(state: &mut AppState, hw: &mut dyn HardwareAccess, filename: &Strin
             state.session.reader.anchor_byte,
         );
         let new_book = book_from_data(&filename, data);
-        state.cfg = cfg_from_scene(&mut state.scene, &state.theme, state.body_font, state
-            .bold_font, hw.font_size());
+        state.cfg = cfg_from_scene(
+            &mut state.scene,
+            &state.theme,
+            state.body_font,
+            state.bold_font,
+            hw.font_size(),
+        );
         let new_session = match hw.load_bookmark(&filename) {
-            Some((ch_idx, anchor)) => BookSession::restore(
-                new_book.as_ref(),
-                &state.cfg,
-                ch_idx,
-                anchor,
-            )
-                .or_else(|_| BookSession::new(new_book.as_ref(), &state.cfg)),
+            Some((ch_idx, anchor)) => {
+                BookSession::restore(new_book.as_ref(), &state.cfg, ch_idx, anchor)
+                    .or_else(|_| BookSession::new(new_book.as_ref(), &state.cfg))
+            }
             None => BookSession::new(new_book.as_ref(), &state.cfg),
         };
         hide_loading_dialog(&mut state.scene);
@@ -645,7 +641,6 @@ fn main() {
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-
     let mut hw = SimHardware::new();
     let (mut win_w, mut win_h) = hw.orientation().logical_size();
 
@@ -655,7 +650,7 @@ fn main() {
     let mut window = Window::new("ereader_ui", &settings);
 
     let handlers: Vec<Callback> = vec![handle_click];
-    let mut state:AppState = init_app_state(&hw);
+    let mut state: AppState = init_app_state(&hw);
 
     state.update_content(&hw);
 
@@ -688,9 +683,13 @@ fn main() {
                 if fs_forward {
                     if fs_target + 1 >= state.session.reader.page_count() {
                         if state.session.chapter_idx + 1 < state.session.chapter_count() {
-                            state.session
-                                .go_to_chapter(state.session.chapter_idx + 1, state.book.as_ref(),
-                                               &state.cfg)
+                            state
+                                .session
+                                .go_to_chapter(
+                                    state.session.chapter_idx + 1,
+                                    state.book.as_ref(),
+                                    &state.cfg,
+                                )
                                 .ok();
                             fs_target = 0;
                         }
@@ -699,8 +698,13 @@ fn main() {
                     }
                 } else if fs_target == 0 {
                     if state.session.chapter_idx > 0 {
-                        state.session
-                            .go_to_chapter(state.session.chapter_idx - 1, state.book.as_ref(), &state.cfg)
+                        state
+                            .session
+                            .go_to_chapter(
+                                state.session.chapter_idx - 1,
+                                state.book.as_ref(),
+                                &state.cfg,
+                            )
                             .ok();
                         fs_target = state.session.reader.page_count().saturating_sub(1);
                     }
@@ -812,32 +816,37 @@ fn main() {
                                         win_h as u32,
                                     ));
                                     window = Window::new("ereader_ui", &settings);
-                                    state.cfg = cfg_from_scene(&mut state.scene, &state.theme,
-                                                               state.body_font,
-                                                               state.bold_font,
-                                                               hw.font_size());
+                                    state.cfg = cfg_from_scene(
+                                        &mut state.scene,
+                                        &state.theme,
+                                        state.body_font,
+                                        state.bold_font,
+                                        hw.font_size(),
+                                    );
                                     state.session.reader.relayout(&state.cfg);
                                     state.update_content(&hw);
                                 }
                             } else if input.source == FONT_SIZE_ID {
                                 hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
-                                state.cfg = cfg_from_scene(&mut state.scene, &state.theme,
-                                                           state.body_font,
-                                                           state.bold_font, hw.font_size());
+                                state.cfg = cfg_from_scene(
+                                    &mut state.scene,
+                                    &state.theme,
+                                    state.body_font,
+                                    state.bold_font,
+                                    hw.font_size(),
+                                );
                                 state.session.reader.relayout(&state.cfg);
                                 state.update_content(&hw);
                             } else if input.source == BACKLIGHT_ID {
                                 handle_backlight_action(cmd, &mut hw);
                             }
                         }
-                        handle_click_action(&mut hw,
-                                            &input,
-                                            &mut state
-                        );
+                        handle_click_action(&mut hw, &input, &mut state);
                         if input.source == DEEP_CLEAN_ID {
                             // no-op in simulator
                         } else if input.source == LIBRARY_READ_BUTTON_ID {
-                            let filename = state.scene
+                            let filename = state
+                                .scene
                                 .get_view_mut(&LIBRARY_LIST_ID)
                                 .and_then(|v| v.get_state::<ListState>())
                                 .and_then(|s| s.items.get(s.selected).cloned());
@@ -872,13 +881,14 @@ fn init_app_state(hw: &dyn HardwareAccess) -> AppState {
 
     let pre_cfg = cfg_from_scene(&mut pre_scene, &theme, body_font, bold_font, hw.font_size());
     let pre_book = Box::new(HtmlBook::from_vec(WELCOME_HTML.to_vec()));
-    let mut pre_session = BookSession::new(pre_book.as_ref(), &pre_cfg).expect("BookSession init failed");
+    let mut pre_session =
+        BookSession::new(pre_book.as_ref(), &pre_cfg).expect("BookSession init failed");
 
     AppState {
         partial_refresh_count: 0,
         current_filename: String::from("__welcome__"),
         last_interaction: Instant::now(),
-        cfg:pre_cfg,
+        cfg: pre_cfg,
         book: pre_book,
         session: pre_session,
         scene: pre_scene,
@@ -890,7 +900,11 @@ fn init_app_state(hw: &dyn HardwareAccess) -> AppState {
 
 fn update_battery_labels(scene: &mut Scene, hw: &dyn HardwareAccess) {
     let info = hw.battery_info();
-    let status = if info.is_charging { "Charging" } else { "Not charging" };
+    let status = if info.is_charging {
+        "Charging"
+    } else {
+        "Not charging"
+    };
     if let Some(v) = scene.get_view_mut(&BATTERY_BUTTON_ID) {
         v.title = format!("{}%", info.percent);
     }
@@ -905,14 +919,13 @@ fn update_battery_labels(scene: &mut Scene, hw: &dyn HardwareAccess) {
     }
 }
 
-fn handle_click_action(hw: &mut dyn HardwareAccess,
-                       input: &InputResult,
-                       state: &mut AppState) {
+fn handle_click_action(hw: &mut dyn HardwareAccess, input: &InputResult, state: &mut AppState) {
     if input.source == BATTERY_BUTTON_ID {
         update_battery_labels(&mut state.scene, hw);
         state.scene.mark_layout_dirty_view(&BATTERY_DIALOG_ID);
+        state.last_interaction = Instant::now();
     }
-    if input.source == ViewId::new("sync_time") {
+    if input.source == SYNC_TIME_BUTTON_ID {
         let t = hw.current_time_secs();
         if let Some(view) = state.scene.get_view_mut(&ViewId::new("time")) {
             view.title = format_time_utc(t);
@@ -949,7 +962,6 @@ fn handle_click_action(hw: &mut dyn HardwareAccess,
     }
     if input.source == LIBRARY_LIST_ID {
         state.last_interaction = Instant::now();
-        // scene.mark_dirty_view(&LIBRARY_DIALOG_ID);
     }
 }
 
@@ -958,7 +970,6 @@ fn handle_backlight_action(cmd: &String, hw: &mut dyn HardwareAccess) {
     hw.save_settings();
 }
 
-
 fn calc_font_size(font_size: FontSize) -> f32 {
     match font_size {
         FontSize::Small => UI_FONT_SIZE_SMALL,
@@ -966,7 +977,6 @@ fn calc_font_size(font_size: FontSize) -> f32 {
         FontSize::Large => UI_FONT_SIZE_LARGE,
     }
 }
-
 
 // ── ESP path ──────────────────────────────────────────────────────────────────
 #[cfg(feature = "esp")]
@@ -1023,7 +1033,8 @@ impl<'a> Rgb565ToGray4<'a> {
             self.orientation.logical_to_phys(lx1, ly1),
             self.orientation.logical_to_phys(lx1, ly2.saturating_sub(1)),
             self.orientation.logical_to_phys(lx2.saturating_sub(1), ly1),
-            self.orientation.logical_to_phys(lx2.saturating_sub(1), ly2.saturating_sub(1)),
+            self.orientation
+                .logical_to_phys(lx2.saturating_sub(1), ly2.saturating_sub(1)),
         ];
         let px = corners.iter().map(|c| c.0).min().unwrap_or(0);
         let py = corners.iter().map(|c| c.1).min().unwrap_or(0);
@@ -1306,7 +1317,7 @@ async fn main(spawner: Spawner) -> ! {
     // periodically.  E-paper capacitive field coupling from repeated partial
     // waveform passes slowly darkens white areas adjacent to the dirty rect;
     // a full refresh resets all pixels to a clean state.
-    let mut state:AppState = init_app_state(&hw);
+    let mut state: AppState = init_app_state(&hw);
     sync_settings_ui(&mut state.scene, font_idx, bl_idx, ori_idx);
 
     // On sleep wakeup, try to reopen the SD card book the user was reading.
@@ -1335,8 +1346,12 @@ async fn main(spawner: Spawner) -> ! {
 
     state.session = if saved_chapter > 0 || saved_anchor > 0 {
         BookSession::restore(state.book.as_ref(), &state.cfg, saved_chapter, saved_anchor)
-            .unwrap_or_else(|_| BookSession::new(state.book.as_ref(), &state.cfg).expect("epub \
-            load"))
+            .unwrap_or_else(|_| {
+                BookSession::new(state.book.as_ref(), &state.cfg).expect(
+                    "epub \
+            load",
+                )
+            })
     } else {
         BookSession::new(state.book.as_ref(), &state.cfg).expect("epub load")
     };
@@ -1453,9 +1468,13 @@ async fn main(spawner: Spawner) -> ! {
                     if forward {
                         if fs_target + 1 >= state.session.reader.page_count() {
                             if state.session.chapter_idx + 1 < state.session.chapter_count() {
-                                state.session
-                                    .go_to_chapter(state.session.chapter_idx + 1, state.book.as_ref(),
-                                                   &state.cfg)
+                                state
+                                    .session
+                                    .go_to_chapter(
+                                        state.session.chapter_idx + 1,
+                                        state.book.as_ref(),
+                                        &state.cfg,
+                                    )
                                     .ok();
                                 fs_target = 0;
                             }
@@ -1464,9 +1483,13 @@ async fn main(spawner: Spawner) -> ! {
                         }
                     } else if fs_target == 0 {
                         if state.session.chapter_idx > 0 {
-                            state.session
-                                .go_to_chapter(state.session.chapter_idx - 1, state.book.as_ref(), &state
-                                    .cfg)
+                            state
+                                .session
+                                .go_to_chapter(
+                                    state.session.chapter_idx - 1,
+                                    state.book.as_ref(),
+                                    &state.cfg,
+                                )
                                 .ok();
                             fs_target = state.session.reader.page_count().saturating_sub(1);
                         }
@@ -1488,8 +1511,8 @@ async fn main(spawner: Spawner) -> ! {
                 if !dirty_rect.is_empty() {
                     let (sw, sh) = hw.orientation().logical_size();
                     let needs_full = dirty_rect.size.w >= sw && dirty_rect.size.h >= sh;
-                    let force_full = !needs_full
-                        && state.partial_refresh_count >= PARTIAL_REFRESH_FULL_INTERVAL;
+                    let force_full =
+                        !needs_full && state.partial_refresh_count >= PARTIAL_REFRESH_FULL_INTERVAL;
                     if needs_full || force_full {
                         bridge.display.fill(0x0F).unwrap();
                         bridge.display.flush(DrawMode::WhiteOnBlack).unwrap();
@@ -1531,8 +1554,11 @@ async fn main(spawner: Spawner) -> ! {
                 state.nav_prev_page(&mut hw);
             }
             just_woke = false;
-            hw.save_bookmark(&state.current_filename, state.session.chapter_idx, state.session.reader
-                .anchor_byte);
+            hw.save_bookmark(
+                &state.current_filename,
+                state.session.chapter_idx,
+                state.session.reader.anchor_byte,
+            );
             state.last_interaction = Instant::now();
         }
 
@@ -1551,8 +1577,8 @@ async fn main(spawner: Spawner) -> ! {
             // Periodic full refresh: repeated partial waveform passes accumulate field
             // coupling that slowly darkens white areas adjacent to the dirty rect.
             // Every PARTIAL_REFRESH_FULL_INTERVAL partial refreshes we force a full clear.
-            let force_full = !needs_full_refresh
-                && state.partial_refresh_count >= PARTIAL_REFRESH_FULL_INTERVAL;
+            let force_full =
+                !needs_full_refresh && state.partial_refresh_count >= PARTIAL_REFRESH_FULL_INTERVAL;
             if needs_full_refresh || force_full {
                 bridge.display.fill(0x0F).unwrap();
                 bridge.display.flush(DrawMode::WhiteOnBlack).unwrap();
@@ -1585,8 +1611,13 @@ async fn main(spawner: Spawner) -> ! {
                     if let Some(OutputAction::Command(ref cmd)) = input.action {
                         if input.source == FONT_SIZE_ID {
                             hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
-                            state.cfg = cfg_from_scene(&mut state.scene, &state.theme, state
-                                .body_font, state.bold_font, hw.font_size());
+                            state.cfg = cfg_from_scene(
+                                &mut state.scene,
+                                &state.theme,
+                                state.body_font,
+                                state.bold_font,
+                                hw.font_size(),
+                            );
                             state.session.reader.relayout(&state.cfg);
                             state.update_content(&hw);
                             hw.save_settings();
@@ -1597,8 +1628,13 @@ async fn main(spawner: Spawner) -> ! {
                             bridge.orientation = hw.orientation();
                             let (new_w, new_h) = hw.orientation().logical_size();
                             state.scene.resize(Bounds::new(0, 0, new_w, new_h));
-                            state.cfg = cfg_from_scene(&mut state.scene, &state.theme, state
-                                .body_font, state.bold_font, hw.font_size());
+                            state.cfg = cfg_from_scene(
+                                &mut state.scene,
+                                &state.theme,
+                                state.body_font,
+                                state.bold_font,
+                                hw.font_size(),
+                            );
                             state.session.reader.relayout(&state.cfg);
                             state.update_content(&hw);
                             hw.save_settings();
@@ -1623,7 +1659,8 @@ async fn main(spawner: Spawner) -> ! {
                         state.partial_refresh_count = 0;
                         state.scene.mark_dirty_all();
                     } else if input.source == LIBRARY_READ_BUTTON_ID {
-                        let filename = state.scene
+                        let filename = state
+                            .scene
                             .get_view_mut(&LIBRARY_LIST_ID)
                             .and_then(|v| v.get_state::<ListState>())
                             .and_then(|s| s.items.get(s.selected).cloned());
@@ -1745,14 +1782,9 @@ mod tests {
             let render_pad_total = 24u32; // pad_y (12) top + pad_y (12) bottom
             let expected = content_h.saturating_sub(render_pad_total);
             assert_eq!(
-                cfg.screen_height,
-                expected,
+                cfg.screen_height, expected,
                 "FontSize::{:?}: layout uses {} px but render has {} px available ({} - {})",
-                font_size,
-                cfg.screen_height,
-                expected,
-                content_h,
-                render_pad_total,
+                font_size, cfg.screen_height, expected, content_h, render_pad_total,
             );
         }
     }
@@ -1794,5 +1826,4 @@ mod tests {
             );
         }
     }
-
 }

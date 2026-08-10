@@ -308,7 +308,11 @@ impl HardwareAccess for SimHardware {
     }
 
     fn battery_info(&self) -> BatteryInfo {
-        BatteryInfo { percent: 85, voltage_mv: 4050, is_charging: false }
+        BatteryInfo {
+            percent: 85,
+            voltage_mv: 4050,
+            is_charging: false,
+        }
     }
 }
 
@@ -519,7 +523,11 @@ pub fn load_cold_boot_position() -> (usize, usize) {
 #[cfg(feature = "esp")]
 pub fn save_last_filename(filename: &str) {
     let bytes = filename.as_bytes();
-    let len = if filename.starts_with("__") { 0 } else { bytes.len().min(64) };
+    let len = if filename.starts_with("__") {
+        0
+    } else {
+        bytes.len().min(64)
+    };
     flash_save_u32(50, len as u32);
     for i in 0..((len + 3) / 4) {
         let mut chunk = [0u8; 4];
@@ -696,11 +704,17 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
 
     fn enter_light_sleep(&mut self) {
         self.bl_ch.set_duty(0).unwrap();
-        self.btn_prev.wakeup_enable(true, WakeEvent::LowLevel).unwrap();
-        self.btn_next.wakeup_enable(true, WakeEvent::LowLevel).unwrap();
+        self.btn_prev
+            .wakeup_enable(true, WakeEvent::LowLevel)
+            .unwrap();
+        self.btn_next
+            .wakeup_enable(true, WakeEvent::LowLevel)
+            .unwrap();
         let gpio_src = GpioWakeupSource::new();
         self.rtc.sleep_light(&[&gpio_src]);
-        self.bl_ch.set_duty(BL_DUTY[self.backlight as usize]).unwrap();
+        self.bl_ch
+            .set_duty(BL_DUTY[self.backlight as usize])
+            .unwrap();
     }
 
     fn save_bookmark(&mut self, filename: &str, chapter_idx: usize, anchor_byte: usize) {
@@ -895,7 +909,11 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
     }
 
     fn battery_info(&self) -> BatteryInfo {
-        BatteryInfo { percent: 85, voltage_mv: 4050, is_charging: false }
+        BatteryInfo {
+            percent: 85,
+            voltage_mv: 4050,
+            is_charging: false,
+        }
     }
 }
 

@@ -6,18 +6,18 @@ use alloc::{boxed::Box, string::String, vec::Vec};
 
 use crate::book::{Book, HtmlBook, TxtBook};
 use crate::bookview::{layout_cfg, update_content, CONTENT_ID};
+use crate::epub::EpubArchive;
 use crate::font::font_px_for;
 use crate::hardware::{FontSize, HardwareAccess};
 use crate::layout::LayoutConfig;
 use crate::reader::BookSession;
-#[cfg(feature = "simulator")]
-use std::time::Instant;
 #[cfg(feature = "esp")]
 use embassy_time::{with_timeout, Duration, Instant, Timer as EmbassyTimer};
 use fontdue::Font;
 use iris_ui::scene::{layout_scene, Scene};
 use iris_ui::Theme;
-use crate::epub::EpubArchive;
+#[cfg(feature = "simulator")]
+use std::time::Instant;
 
 pub struct AppState {
     pub partial_refresh_count: u32,
@@ -53,7 +53,6 @@ impl AppState {
         }
         self.update_content(hw);
     }
-
 }
 
 pub fn book_from_data(filename: &str, data: Vec<u8>) -> Box<dyn Book> {
@@ -86,6 +85,11 @@ pub fn cfg_from_scene(
     let bounds = scene
         .get_view_bounds(&CONTENT_ID)
         .expect("content view not in scene");
-    layout_cfg(body_font, bold_font, font_size, bounds.size.w, bounds.size.h)
+    layout_cfg(
+        body_font,
+        bold_font,
+        font_size,
+        bounds.size.w,
+        bounds.size.h,
+    )
 }
-
