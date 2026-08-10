@@ -69,6 +69,10 @@ const UI_FONT_SIZE_SMALL: f32 = 16.0;
 const UI_FONT_SIZE_MEDIUM: f32 = 20.0;
 const UI_FONT_SIZE_LARGE: f32 = 24.0;
 
+static FONT_BYTES: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Regular.ttf");
+static BODY_FONT_BYTES: &[u8] = include_bytes!("../fonts/NoticiaText-Regular.ttf");
+static BOLD_FONT_BYTES: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Bold.ttf");
+
 fn handle_click(event: &mut GuiEvent) {
     if event.target == &ViewId::new("settings") {
         event.scene.show_view(&DIALOG_ID);
@@ -85,94 +89,6 @@ fn handle_click(event: &mut GuiEvent) {
     } else if event.target == &ViewId::new("error_dismiss") {
         event.scene.hide_view(&ERROR_DIALOG_ID);
         event.scene.mark_dirty_all();
-    }
-}
-
-/// Sync the settings dialog toggle groups to reflect the actual loaded settings.
-/// make_scene() hardcodes default selections; call this after loading persisted values.
-fn sync_settings_ui(scene: &mut Scene, font_idx: usize, bl_idx: usize, ori_idx: usize) {
-    for (id, idx) in [
-        (FONT_SIZE_ID.clone(), font_idx),
-        (BACKLIGHT_ID, bl_idx),
-        (ORIENTATION_ID, ori_idx),
-    ] {
-        if let Some(v) = scene.get_view_mut(&id) {
-            if let Some(s) = v.get_state::<SelectOneOfState>() {
-                s.selected = idx;
-            }
-        }
-    }
-}
-
-fn make_truncating_label(name: &ViewId, title: &str) -> View {
-    View {
-        name: name.clone(),
-        title: title.into(),
-        h_flex: Grow,
-        v_flex: Shrink,
-        layout: Some(|e| {
-            let space_w = e.space.w;
-            if let Some(view) = e.scene.get_view_mut(e.target) {
-                let font = e.theme.font;
-                let ch = font.char_height();
-                view.bounds.size.w = space_w;
-                view.bounds.size.h = ch + (ch / 2) * 2;
-            }
-        }),
-        draw: Some(|e| {
-            let font = e.theme.font;
-            let style = iris_ui::gfx::TextStyle::new(font, &e.theme.standard.text);
-            let pad = font.char_width();
-            let available = (e.view.bounds.size.w - pad * 2).max(0);
-            if font.str_width(&e.view.title) <= available {
-                e.ctx.fill_text(&e.view.bounds, &e.view.title, &style);
-            } else {
-                let ellipsis_w = font.str_width("...");
-                let max_text_w = (available - ellipsis_w).max(0);
-                let mut truncated = String::new();
-                let mut used = 0i32;
-                for c in e.view.title.chars() {
-                    let mut buf = [0u8; 4];
-                    let cw = font.str_width(c.encode_utf8(&mut buf));
-                    if used + cw > max_text_w {
-                        break;
-                    }
-                    truncated.push(c);
-                    used += cw;
-                }
-                truncated.push_str("…");
-                e.ctx.fill_text(&e.view.bounds, &truncated, &style);
-            }
-        }),
-        ..Default::default()
-    }
-}
-
-fn make_h_spacer(id: &ViewId) -> View {
-    View {
-        name: id.clone(),
-        h_flex: Grow,
-        h_align: Center,
-        v_flex: Shrink,
-        v_align: Center,
-        bounds: Bounds::new(0, 0, 10, 10),
-        visible: true,
-        title: "spacer".into(),
-        draw: Some(|e| {
-            // e.ctx.stroke_rect(&e.view.bounds, &e.theme.panel.text);
-        }),
-        input: None,
-        layout: Some(|e| {
-            if let Some(view) = e.scene.get_view_mut(&e.target) {
-                if view.h_flex == Grow {
-                    view.bounds.size.w = e.space.w;
-                }
-                if view.v_flex == Grow {
-                    view.bounds.size.h = e.space.h;
-                }
-            }
-        }),
-        state: None,
     }
 }
 
@@ -246,7 +162,7 @@ fn make_scene(body_font: &'static Font, bold_font: &'static Font, w: i32, h: i32
     {
         let topbar_id = ViewId::new("topbar");
         scene.add_view_to_parent(make_button(&LIBRARY_BUTTON_ID, "Library"), &topbar_id);
-        scene.add_view_to_parent(make_h_spacer(&ViewId::new("spacer1")), &topbar_id);
+        scene.add_view_to_parent(h_spacer::make_h_spacer(&ViewId::new("spacer1")), &topbar_id);
         scene.add_view_to_parent(make_label(&ViewId::new("time"), "--:-- --"), &topbar_id);
         scene.add_view_to_parent(make_button(&BATTERY_BUTTON_ID, "85%"), &topbar_id);
         scene.add_view_to_parent(
@@ -298,7 +214,7 @@ fn make_scene(body_font: &'static Font, bold_font: &'static Font, w: i32, h: i32
         let bottombar_id = ViewId::new("bottombar");
         scene.add_view_to_parent(make_button(&PREV_PAGE_ID, "< Prev"), &bottombar_id);
         scene.add_view_to_parent(
-            make_truncating_label(&ViewId::new("booktitle"), "Sherlock Holmes"),
+            truncating_label::make_truncating_label(&ViewId::new("booktitle"), "Sherlock Holmes"),
             &bottombar_id,
         );
 
@@ -540,10 +456,6 @@ fn format_time_utc(unix_secs: u64) -> String {
     format!("{}:{:02} {}", h12, m, ampm)
 }
 
-static FONT_BYTES: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Regular.ttf");
-static BODY_FONT_BYTES: &[u8] = include_bytes!("../fonts/NoticiaText-Regular.ttf");
-static BOLD_FONT_BYTES: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Bold.ttf");
-
 /// Parse both theme fonts and leak them into `'static` memory.
 /// Works on both std (simulator) and no_std+alloc (ESP) since both provide `Box`.
 fn load_fonts() -> (&'static Font, &'static Font, &'static Font) {
@@ -655,72 +567,20 @@ fn main() {
     state.update_content(&hw);
 
     // Fast-scroll hold state (Up/Down arrow keys).
-    let mut fs_forward = false;
-    let mut fs_pressed_at: Option<Instant> = None;
-    let mut fs_active = false;
-    let mut fs_target: usize = 0;
-    let mut fs_last_step = Instant::now();
+
+    let mut fast = FastPaging {
+        fs_active: false,
+        fs_target: 0usize,
+        fs_last_step: Instant::now(),
+        fs_pressed_at: None,
+        forward: false,
+    };
+
 
     state.scene.mark_layout_dirty();
     'sim_running: loop {
         // Advance fast-scroll page counter while a direction key is held.
-        if let Some(pressed_at) = fs_pressed_at {
-            if !fs_active && pressed_at.elapsed().as_millis() >= 1000 {
-                fs_active = true;
-                fs_target = state.session.reader.current_page;
-                fs_last_step = Instant::now();
-                update_fast_scroll_label(
-                    &mut state.scene,
-                    state.session.chapter_idx,
-                    state.session.chapter_count(),
-                    fs_target,
-                    state.session.reader.page_count(),
-                );
-                state.scene.show_view(&FAST_SCROLL_PANEL_ID);
-                state.scene.mark_layout_dirty();
-            }
-            if fs_active && fs_last_step.elapsed().as_millis() >= 200 {
-                if fs_forward {
-                    if fs_target + 1 >= state.session.reader.page_count() {
-                        if state.session.chapter_idx + 1 < state.session.chapter_count() {
-                            state
-                                .session
-                                .go_to_chapter(
-                                    state.session.chapter_idx + 1,
-                                    state.book.as_ref(),
-                                    &state.cfg,
-                                )
-                                .ok();
-                            fs_target = 0;
-                        }
-                    } else {
-                        fs_target += 1;
-                    }
-                } else if fs_target == 0 {
-                    if state.session.chapter_idx > 0 {
-                        state
-                            .session
-                            .go_to_chapter(
-                                state.session.chapter_idx - 1,
-                                state.book.as_ref(),
-                                &state.cfg,
-                            )
-                            .ok();
-                        fs_target = state.session.reader.page_count().saturating_sub(1);
-                    }
-                } else {
-                    fs_target -= 1;
-                }
-                fs_last_step = Instant::now();
-                update_fast_scroll_label(
-                    &mut state.scene,
-                    state.session.chapter_idx,
-                    state.session.chapter_count(),
-                    fs_target,
-                    state.session.reader.page_count(),
-                );
-            }
-        }
+        handle_update_label(&mut state, &mut fast);
 
         if (!state.scene.dirty_rect.is_empty()) {
             info!("clip rect {}", state.scene.dirty_rect);
@@ -767,20 +627,14 @@ fn main() {
                     repeat: false,
                     ..
                 } => {
-                    if fs_pressed_at.is_none() {
-                        fs_forward = true;
-                        fs_pressed_at = Some(Instant::now());
-                    }
+                    fast.start_forward();
                 }
                 SimulatorEvent::KeyDown {
                     keycode: Keycode::Up,
                     repeat: false,
                     ..
                 } => {
-                    if fs_pressed_at.is_none() {
-                        fs_forward = false;
-                        fs_pressed_at = Some(Instant::now());
-                    }
+                    fast.start_backward();
                 }
                 SimulatorEvent::KeyUp {
                     keycode: Keycode::Up,
@@ -790,14 +644,7 @@ fn main() {
                     keycode: Keycode::Down,
                     ..
                 } => {
-                    if fs_active {
-                        state.session.reader.go_to_page(fs_target);
-                        state.update_content(&hw);
-                        state.scene.hide_view(&FAST_SCROLL_PANEL_ID);
-                        state.scene.mark_dirty_all();
-                    }
-                    fs_pressed_at = None;
-                    fs_active = false;
+                    fast.end(&mut state, &mut hw);
                 }
                 SimulatorEvent::MouseButtonUp { point, .. } => {
                     if let Some(input) =
@@ -1102,6 +949,7 @@ use ereader::appstate::{book_from_data, cfg_from_scene, AppState};
 use ereader::bookview::{draw_book_content, layout_cfg, update_content, BookState, CONTENT_ID};
 #[cfg(feature = "esp")]
 use ereader::hardware::rtc_store_read;
+use ereader::{h_spacer, truncating_label};
 #[cfg(feature = "esp")]
 use esp_hal::{
     gpio::{Input, InputConfig, Pull},
@@ -1318,6 +1166,22 @@ async fn main(spawner: Spawner) -> ! {
     // waveform passes slowly darkens white areas adjacent to the dirty rect;
     // a full refresh resets all pixels to a clean state.
     let mut state: AppState = init_app_state(&hw);
+
+    /// Sync the settings dialog toggle groups to reflect the actual loaded settings.
+    /// make_scene() hardcodes default selections; call this after loading persisted values.
+    fn sync_settings_ui(scene: &mut Scene, font_idx: usize, bl_idx: usize, ori_idx: usize) {
+        for (id, idx) in [
+            (FONT_SIZE_ID.clone(), font_idx),
+            (BACKLIGHT_ID, bl_idx),
+            (ORIENTATION_ID, ori_idx),
+        ] {
+            if let Some(v) = scene.get_view_mut(&id) {
+                if let Some(s) = v.get_state::<SelectOneOfState>() {
+                    s.selected = idx;
+                }
+            }
+        }
+    }
     sync_settings_ui(&mut state.scene, font_idx, bl_idx, ori_idx);
 
     // On sleep wakeup, try to reopen the SD card book the user was reading.
@@ -1421,6 +1285,14 @@ async fn main(spawner: Spawner) -> ! {
     }
     let _ = seed;
 
+    let mut fast = FastPaging {
+        fs_active: false,
+        fs_target: 0usize,
+        fs_last_step: Instant::now(),
+        fs_pressed_at: None,
+        forward: false,
+    };
+
     'esp_running: loop {
         // Physical button handling: BOOT (GPIO0) = prev, GPIO38 = next.
         // Short press → single page turn. Hold > 1 s → fast-scroll mode: a
@@ -1434,11 +1306,6 @@ async fn main(spawner: Spawner) -> ! {
             None
         };
         if let Some(forward) = btn_pressed {
-            let pressed_at = Instant::now();
-            let mut fs_active = false;
-            let mut fs_target = 0usize;
-            let mut fs_last_step = Instant::now();
-
             loop {
                 let still_held = if forward {
                     hw.button_next_pressed()
@@ -1449,62 +1316,13 @@ async fn main(spawner: Spawner) -> ! {
                     break;
                 }
 
-                if !fs_active && pressed_at.elapsed().as_millis() >= 1000 {
-                    fs_active = true;
-                    fs_target = state.session.reader.current_page;
-                    fs_last_step = Instant::now();
-                    update_fast_scroll_label(
-                        &mut state.scene,
-                        state.session.chapter_idx,
-                        state.session.chapter_count(),
-                        fs_target,
-                        state.session.reader.page_count(),
-                    );
-                    state.scene.show_view(&FAST_SCROLL_PANEL_ID);
-                    state.scene.mark_layout_dirty();
+                if(forward) {
+                    fast.start_forward()
+                } else {
+                    fast.start_backward()
                 }
 
-                if fs_active && fs_last_step.elapsed().as_millis() >= 200 {
-                    if forward {
-                        if fs_target + 1 >= state.session.reader.page_count() {
-                            if state.session.chapter_idx + 1 < state.session.chapter_count() {
-                                state
-                                    .session
-                                    .go_to_chapter(
-                                        state.session.chapter_idx + 1,
-                                        state.book.as_ref(),
-                                        &state.cfg,
-                                    )
-                                    .ok();
-                                fs_target = 0;
-                            }
-                        } else {
-                            fs_target += 1;
-                        }
-                    } else if fs_target == 0 {
-                        if state.session.chapter_idx > 0 {
-                            state
-                                .session
-                                .go_to_chapter(
-                                    state.session.chapter_idx - 1,
-                                    state.book.as_ref(),
-                                    &state.cfg,
-                                )
-                                .ok();
-                            fs_target = state.session.reader.page_count().saturating_sub(1);
-                        }
-                    } else {
-                        fs_target -= 1;
-                    }
-                    fs_last_step = Instant::now();
-                    update_fast_scroll_label(
-                        &mut state.scene,
-                        state.session.chapter_idx,
-                        state.session.chapter_count(),
-                        fs_target,
-                        state.session.reader.page_count(),
-                    );
-                }
+                handle_update_label(&mut state, &mut fast);
 
                 // Redraw only the panel while held (partial refresh).
                 let dirty_rect = state.scene.dirty_rect.clone();
@@ -1541,9 +1359,9 @@ async fn main(spawner: Spawner) -> ! {
                 EmbassyTimer::after(Duration::from_millis(10)).await;
             }
 
-            if fs_active {
+            if fast.fs_active {
                 state.scene.hide_view(&FAST_SCROLL_PANEL_ID);
-                state.session.reader.go_to_page(fs_target);
+                state.session.reader.go_to_page(fast.fs_target);
                 state.update_content(&hw);
                 state.scene.mark_dirty_all();
             } else if just_woke {
@@ -1738,6 +1556,96 @@ async fn main(spawner: Spawner) -> ! {
     }
 }
 
+fn handle_update_label(mut state: &mut AppState, mut fast: &mut FastPaging) {
+    if let Some(fs_pressed_at) = fast.fs_pressed_at {
+        if !fast.fs_active && fs_pressed_at.elapsed().as_millis() >= 1000 {
+            fast.fs_active = true;
+            fast.fs_target = state.session.reader.current_page;
+            fast.fs_last_step = Instant::now();
+            update_fast_scroll_label(
+                &mut state.scene,
+                state.session.chapter_idx,
+                state.session.chapter_count(),
+                fast.fs_target,
+                state.session.reader.page_count(),
+            );
+            state.scene.show_view(&FAST_SCROLL_PANEL_ID);
+            state.scene.mark_layout_dirty();
+        }
+    }
+
+    if fast.fs_active && fast.fs_last_step.elapsed().as_millis() >= 200 {
+        if fast.forward {
+            if fast.fs_target + 1 >= state.session.reader.page_count() {
+                if state.session.chapter_idx + 1 < state.session.chapter_count() {
+                    state
+                        .session
+                        .go_to_chapter(
+                            state.session.chapter_idx + 1,
+                            state.book.as_ref(),
+                            &state.cfg,
+                        )
+                        .ok();
+                    fast.fs_target = 0;
+                }
+            } else {
+                fast.fs_target += 1;
+            }
+        } else if fast.fs_target == 0 {
+            if state.session.chapter_idx > 0 {
+                state
+                    .session
+                    .go_to_chapter(
+                        state.session.chapter_idx - 1,
+                        state.book.as_ref(),
+                        &state.cfg,
+                    )
+                    .ok();
+                fast.fs_target = state.session.reader.page_count().saturating_sub(1);
+            }
+        } else {
+            fast.fs_target -= 1;
+        }
+        fast.fs_last_step = Instant::now();
+        update_fast_scroll_label(
+            &mut state.scene,
+            state.session.chapter_idx,
+            state.session.chapter_count(),
+            fast.fs_target,
+            state.session.reader.page_count(),
+        );
+    }
+}
+
+
+struct FastPaging {
+    fs_active: bool,
+    fs_target: usize,
+    fs_last_step: Instant,
+    fs_pressed_at: Option<Instant>,
+    forward: bool,
+}
+
+impl FastPaging {
+    pub(crate) fn start_backward(&mut self) {
+        self.forward = false;
+        self.fs_pressed_at = Some(Instant::now());
+    }
+    pub(crate) fn start_forward(&mut self) {
+        self.forward = true;
+        self.fs_pressed_at = Some(Instant::now());
+    }
+    pub(crate) fn end(&mut self, state: &mut AppState, hw: &mut dyn HardwareAccess) {
+        if self.fs_active {
+            state.session.reader.go_to_page(self.fs_target);
+            state.update_content(hw);
+            state.scene.hide_view(&FAST_SCROLL_PANEL_ID);
+            state.scene.mark_dirty_all();
+        }
+        self.fs_active = false;
+        self.fs_pressed_at = None;
+    }
+}
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(all(test, feature = "simulator"))]
