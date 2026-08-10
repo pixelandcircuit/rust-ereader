@@ -11,3 +11,4 @@ pub mod font;
 pub mod hardware;
 pub mod layout;
 pub mod reader;
+pub mod appstate;

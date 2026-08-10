@@ -207,21 +207,6 @@ fn layout_fast_scroll_panel(e: &mut LayoutEvent) {
     }
 }
 
-/// Run a layout pass and build a LayoutConfig from the real content view bounds.
-/// Must be called whenever the scene size or UI font changes.
-fn cfg_from_scene(
-    scene: &mut Scene,
-    theme: &Theme,
-    body_font: &'static Font,
-    bold_font: &'static Font,
-    font_size: FontSize,
-) -> LayoutConfig {
-    layout_scene(scene, theme);
-    let bounds = scene
-        .get_view_bounds(&CONTENT_ID)
-        .expect("content view not in scene");
-    layout_cfg(body_font, bold_font, font_size, bounds.size.w, bounds.size.h)
-}
 
 fn update_fast_scroll_label(
     scene: &mut Scene,
@@ -612,78 +597,42 @@ fn make_theme(font: &'static Font, bold_font: &'static Font) -> Theme {
     }
 }
 
-struct AppState {
-    partial_refresh_count: u32,
-    current_filename: String,
-    last_interaction: Instant,
-    cfg: LayoutConfig,
-    book: Box<dyn Book>,
-    session: BookSession,
-    scene: Scene,
-    bold_font: &'static Font,
-    body_font: &'static Font,
-    theme: Theme,
-}
-
-impl AppState {
-    fn update_content(&mut self, hw: &dyn HardwareAccess) {
-        update_content(&mut self.scene, &self.session, font_px_for(hw.font_size()));
-    }
-
-    fn nav_prev_page(&mut self, hw: &mut dyn HardwareAccess) {
-        if self.session.reader.current_page == 0 {
-            self.session.prev_chapter(&*self.book, &self.cfg).ok();
-        } else {
-            self.session.reader.turn_page(false);
-        }
-        self.update_content(hw);
-    }
-    fn nav_next_page(&mut self, hw: &mut dyn HardwareAccess) {
-        if self.session.reader.current_page + 1 >= self.session.reader.page_count() {
-            self.session.next_chapter(&*self.book, &self.cfg).ok();
-        } else {
-            self.session.reader.turn_page(true);
-        }
-        self.update_content(hw);
-    }
-    fn load_book(&mut self, hw: &mut dyn HardwareAccess, filename: &String) {
-        if let Some(data) = hw.load_book_file(&filename) {
-            hw.save_bookmark(
-                &self.current_filename,
-                self.session.chapter_idx,
-                self.session.reader.anchor_byte,
-            );
-            let new_book = book_from_data(&filename, data);
-            self.cfg = cfg_from_scene(&mut self.scene, &self.theme, self.body_font, self
-                .bold_font, hw.font_size());
-            let new_session = match hw.load_bookmark(&filename) {
-                Some((ch_idx, anchor)) => BookSession::restore(
-                    new_book.as_ref(),
-                    &self.cfg,
-                    ch_idx,
-                    anchor,
-                )
-                    .or_else(|_| BookSession::new(new_book.as_ref(), &self.cfg)),
-                None => BookSession::new(new_book.as_ref(), &self.cfg),
-            };
-            hide_loading_dialog(&mut self.scene);
-            if let Ok(s) = new_session {
-                self.current_filename = filename.clone();
-                self.session = s;
-                self.book = new_book;
-                self.update_content(hw);
-                if let Some(v) = self.scene.get_view_mut(&ViewId::new("booktitle")) {
-                    v.title = filename.clone();
-                }
-            } else {
-                show_error_dialog(&mut self.scene, &filename);
+fn load_book(state: &mut AppState, hw: &mut dyn HardwareAccess, filename: &String) {
+    if let Some(data) = hw.load_book_file(&filename) {
+        hw.save_bookmark(
+            &state.current_filename,
+            state.session.chapter_idx,
+            state.session.reader.anchor_byte,
+        );
+        let new_book = book_from_data(&filename, data);
+        state.cfg = cfg_from_scene(&mut state.scene, &state.theme, state.body_font, state
+            .bold_font, hw.font_size());
+        let new_session = match hw.load_bookmark(&filename) {
+            Some((ch_idx, anchor)) => BookSession::restore(
+                new_book.as_ref(),
+                &state.cfg,
+                ch_idx,
+                anchor,
+            )
+                .or_else(|_| BookSession::new(new_book.as_ref(), &state.cfg)),
+            None => BookSession::new(new_book.as_ref(), &state.cfg),
+        };
+        hide_loading_dialog(&mut state.scene);
+        if let Ok(s) = new_session {
+            state.current_filename = filename.clone();
+            state.session = s;
+            state.book = new_book;
+            state.update_content(hw);
+            if let Some(v) = state.scene.get_view_mut(&ViewId::new("booktitle")) {
+                v.title = filename.clone();
             }
         } else {
-            hide_loading_dialog(&mut self.scene);
-            show_error_dialog(&mut self.scene, &filename);
+            show_error_dialog(&mut state.scene, &filename);
         }
+    } else {
+        hide_loading_dialog(&mut state.scene);
+        show_error_dialog(&mut state.scene, &filename);
     }
-
 }
 
 #[cfg(feature = "simulator")]
@@ -692,6 +641,7 @@ fn main() {
     use embedded_graphics_simulator::{
         sdl2::Keycode, OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
     };
+    use ereader::appstate::AppState;
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
@@ -903,7 +853,7 @@ fn main() {
                                     draw_scene(&mut state.scene, &mut ctx, &state.theme);
                                     window.update(&display);
                                 }
-                                state.load_book(&mut hw, &filename);
+                                load_book(&mut state, &mut hw, &filename);
                             }
                         }
                     }
@@ -1008,22 +958,6 @@ fn handle_backlight_action(cmd: &String, hw: &mut dyn HardwareAccess) {
     hw.save_settings();
 }
 
-fn book_from_data(filename: &str, data: Vec<u8>) -> Box<dyn Book> {
-    let lower = filename.to_ascii_lowercase();
-    if lower.ends_with(".html") || lower.ends_with(".htm") {
-        Box::new(HtmlBook::from_vec(data))
-    } else if lower.ends_with(".txt") {
-        Box::new(TxtBook::from_vec(data))
-    } else {
-        match EpubArchive::from_vec(data) {
-            Ok(epub) => Box::new(epub),
-            Err(e) => {
-                log::warn!("failed to open epub {}: {:?}", filename, e);
-                Box::new(TxtBook::from_vec(b"[Could not open file]".to_vec()))
-            }
-        }
-    }
-}
 
 fn calc_font_size(font_size: FontSize) -> f32 {
     match font_size {
@@ -1153,6 +1087,7 @@ use embassy_net::{
 };
 #[cfg(feature = "esp")]
 use embassy_time::{with_timeout, Duration, Instant, Timer as EmbassyTimer};
+use ereader::appstate::{book_from_data, cfg_from_scene, AppState};
 use ereader::bookview::{draw_book_content, layout_cfg, update_content, BookState, CONTENT_ID};
 #[cfg(feature = "esp")]
 use ereader::hardware::rtc_store_read;
@@ -1710,7 +1645,7 @@ async fn main(spawner: Spawner) -> ! {
                                 bridge.flush_region(&dirty, DrawMode::BlackOnWhite);
                                 state.partial_refresh_count += 1;
                             }
-                            state.load_book(&mut hw, &filename);
+                            load_book(&mut state, &mut hw, &filename);
                         }
                         state.last_interaction = Instant::now();
                     } else {
@@ -1772,8 +1707,8 @@ async fn main(spawner: Spawner) -> ! {
 mod tests {
     use super::*;
     use ereader::bookview::{layout_cfg, CONTENT_ID};
-    use ereader::hardware::FontSize;
     use ereader::font::line_height;
+    use ereader::hardware::FontSize;
     use iris_ui::scene::layout_scene;
 
     fn make_test_fonts() -> (&'static Font, &'static Font, &'static Font) {

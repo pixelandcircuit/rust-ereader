@@ -12,7 +12,6 @@ use alloc::string::String;
 use embedded_graphics_core::pixelcolor::{Rgb565, RgbColor};
 use fontdue::Font;
 use iris_ui::geom::Bounds;
-use iris_ui::gfx::DrawingContext;
 use iris_ui::scene::Scene;
 use iris_ui::view::ViewId;
 use iris_ui::DrawEvent;
