@@ -162,6 +162,14 @@ impl Orientation {
     }
 }
 
+// ── Battery ───────────────────────────────────────────────────────────────────
+
+pub struct BatteryInfo {
+    pub percent: u8,
+    pub voltage_mv: u32,
+    pub is_charging: bool,
+}
+
 // ── Trait ─────────────────────────────────────────────────────────────────────
 
 pub trait HardwareAccess {
@@ -169,6 +177,7 @@ pub trait HardwareAccess {
     fn backlight_level(&self) -> BacklightLevel;
     fn orientation(&self) -> Orientation;
     fn current_time_secs(&self) -> u64;
+    fn battery_info(&self) -> BatteryInfo;
 
     fn set_font_size(&mut self, size: FontSize);
     fn set_backlight_level(&mut self, level: BacklightLevel);
@@ -296,6 +305,10 @@ impl HardwareAccess for SimHardware {
 
     fn load_book_file(&self, name: &str) -> Option<Vec<u8>> {
         std::fs::read(format!("library/{name}")).ok()
+    }
+
+    fn battery_info(&self) -> BatteryInfo {
+        BatteryInfo { percent: 85, voltage_mv: 4050, is_charging: false }
     }
 }
 
@@ -879,6 +892,10 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
         let mut buf = alloc::vec![0u8; f.length() as usize];
         f.read(&mut buf).ok()?;
         Some(buf)
+    }
+
+    fn battery_info(&self) -> BatteryInfo {
+        BatteryInfo { percent: 85, voltage_mv: 4050, is_charging: false }
     }
 }
 

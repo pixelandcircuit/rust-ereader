@@ -48,6 +48,9 @@ const LIBRARY_BUTTON_ID: ViewId = ViewId::new("library");
 const LIBRARY_LIST_ID: ViewId = ViewId::new("lib_list");
 const LIBRARY_READ_BUTTON_ID: ViewId = ViewId::new("library_read");
 const LIBRARY_CLOSE_BUTTON_ID: ViewId = ViewId::new("library_close");
+const BATTERY_BUTTON_ID: ViewId = ViewId::new("battery");
+const BATTERY_DIALOG_ID: ViewId = ViewId::new("battery_dialog");
+const BATTERY_CLOSE_ID: ViewId = ViewId::new("battery_close");
 const ERROR_DIALOG_ID: ViewId = ViewId::new("error_dialog");
 const LOADING_DIALOG_ID: ViewId = ViewId::new("loading_dialog");
 const FAST_SCROLL_PANEL_ID: ViewId = ViewId::new("fast_scroll_panel");
@@ -73,6 +76,10 @@ fn handle_click(event: &mut GuiEvent) {
         event.scene.show_view(&LIBRARY_DIALOG_ID);
     } else if event.target == &LIBRARY_CLOSE_BUTTON_ID {
         event.scene.hide_view(&LIBRARY_DIALOG_ID);
+    } else if event.target == &BATTERY_BUTTON_ID {
+        event.scene.show_view(&BATTERY_DIALOG_ID);
+    } else if event.target == &BATTERY_CLOSE_ID {
+        event.scene.hide_view(&BATTERY_DIALOG_ID);
     } else if event.target == &ViewId::new("error_dismiss") {
         event.scene.hide_view(&ERROR_DIALOG_ID);
         event.scene.mark_dirty_all();
@@ -255,7 +262,7 @@ fn make_scene(body_font: &'static Font, bold_font: &'static Font, w: i32, h: i32
         scene.add_view_to_parent(make_button(&LIBRARY_BUTTON_ID, "Library"), &topbar_id);
         scene.add_view_to_parent(make_h_spacer(&ViewId::new("spacer1")), &topbar_id);
         scene.add_view_to_parent(make_label(&ViewId::new("time"), "--:-- --"), &topbar_id);
-        scene.add_view_to_parent(make_label(&ViewId::new("battery"), "85%"), &topbar_id);
+        scene.add_view_to_parent(make_button(&BATTERY_BUTTON_ID, "85%"), &topbar_id);
         scene.add_view_to_parent(make_full_button(&ViewId::new("settings"), "Settings",
                                                   "settings", false),&topbar_id);
         let topbar = make_panel(&topbar_id)
@@ -481,6 +488,42 @@ fn make_scene(body_font: &'static Font, bold_font: &'static Font, w: i32, h: i32
             &LOADING_DIALOG_ID,
         );
         scene.add_view_to_root(loading_panel);
+    }
+
+    // ── Battery dialog (hidden; shown when battery button tapped) ─────────────
+    {
+        let batt_panel = make_panel(&BATTERY_DIALOG_ID)
+            .with_layout(Some(layout_centered_dialog))
+            .with_h_flex(Flex::Fixed)
+            .with_v_flex(Flex::Shrink)
+            .with_size(320, 0)
+            .with_visible(false)
+            .with_state(Some(Box::new(PanelState {
+                border_visible: true,
+                gap: 8,
+                padding: Insets::new_same(12),
+            })));
+        scene.add_view_to_parent(
+            make_label(&ViewId::new("batt_title"), "Battery"),
+            &BATTERY_DIALOG_ID,
+        );
+        scene.add_view_to_parent(
+            make_label(&ViewId::new("batt_percent"), "Charge: 85%"),
+            &BATTERY_DIALOG_ID,
+        );
+        scene.add_view_to_parent(
+            make_label(&ViewId::new("batt_voltage"), "Voltage: 4050 mV"),
+            &BATTERY_DIALOG_ID,
+        );
+        scene.add_view_to_parent(
+            make_label(&ViewId::new("batt_status"), "Status: Not charging"),
+            &BATTERY_DIALOG_ID,
+        );
+        scene.add_view_to_parent(
+            make_button(&BATTERY_CLOSE_ID, "Dismiss"),
+            &BATTERY_DIALOG_ID,
+        );
+        scene.add_view_to_root(batt_panel);
     }
 
     // ── Fast-scroll overlay (hidden; shows page indicator while button held) ──
@@ -895,9 +938,30 @@ fn init_app_state(hw: &dyn HardwareAccess) -> AppState {
     }
 }
 
+fn update_battery_labels(scene: &mut Scene, hw: &dyn HardwareAccess) {
+    let info = hw.battery_info();
+    let status = if info.is_charging { "Charging" } else { "Not charging" };
+    if let Some(v) = scene.get_view_mut(&BATTERY_BUTTON_ID) {
+        v.title = format!("{}%", info.percent);
+    }
+    if let Some(v) = scene.get_view_mut(&ViewId::new("batt_percent")) {
+        v.title = format!("Charge: {}%", info.percent);
+    }
+    if let Some(v) = scene.get_view_mut(&ViewId::new("batt_voltage")) {
+        v.title = format!("Voltage: {} mV", info.voltage_mv);
+    }
+    if let Some(v) = scene.get_view_mut(&ViewId::new("batt_status")) {
+        v.title = format!("Status: {}", status);
+    }
+}
+
 fn handle_click_action(hw: &mut dyn HardwareAccess,
                        input: &InputResult,
                        state: &mut AppState) {
+    if input.source == BATTERY_BUTTON_ID {
+        update_battery_labels(&mut state.scene, hw);
+        state.scene.mark_layout_dirty_view(&BATTERY_DIALOG_ID);
+    }
     if input.source == ViewId::new("sync_time") {
         let t = hw.current_time_secs();
         if let Some(view) = state.scene.get_view_mut(&ViewId::new("time")) {

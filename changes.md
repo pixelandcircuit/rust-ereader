@@ -1,5 +1,12 @@
 # Changes
 
+## 2026-08-10
+
+Battery info dialog: tapping the battery percentage in the top bar now opens a dialog showing charge percentage, voltage, and charging status, with a Dismiss button to close it.
+
+- `src/hardware.rs`: Added `BatteryInfo` struct (`percent`, `voltage_mv`, `is_charging`) and `battery_info()` method to the `HardwareAccess` trait. Both `SimHardware` and `EspHardware` return stub values (85%, 4050 mV, not charging) as placeholder until real ADC reading is wired up.
+- `examples/ereader_ui.rs`: Added `BATTERY_BUTTON_ID`, `BATTERY_DIALOG_ID`, `BATTERY_CLOSE_ID` constants. Changed the battery top-bar label to a `make_button` so it receives tap events. Added a centered `battery_dialog` panel with percent/voltage/status labels and a Dismiss button. Added `update_battery_labels()` helper that refreshes dialog labels from `hw.battery_info()` on each open. Wired click handlers for show/hide.
+
 ## 2026-08-08
 
 Two-tier inactivity sleep: light sleep at 60 s, deep sleep at 60 min.
