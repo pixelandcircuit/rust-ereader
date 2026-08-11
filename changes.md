@@ -1,5 +1,13 @@
 # Changes
 
+## 2026-08-11 16:30
+
+Fix ESP OOM crash when loading 5 body fonts.
+
+Root cause: each NoticiaText font uses ~2.1 MB of PSRAM in fontdue (many complex bezier curves → large `Vec<Line>` in `Geometry::finalize`). After loading 4 fonts only 2 MB remained — not enough for the 5th font's peak allocation during parsing. The 16 KB subset fonts (Alegreya etc.) have the opposite problem: missing glyphs for ebook use.
+
+- `examples/ereader_ui.rs`: Drop `BODY_BOLD_FONT_BYTES` and `BODY_ITALIC_FONT_BYTES`; `load_fonts()` now parses only `NoticiaText-Regular` and shares the single `&'static Font` for all three body roles (`body`, `body_bold`, `body_italic`). Total PSRAM drops from ~6.4 MB to ~4.2 MB, leaving ~4 MB free. Bold/italic text renders in the regular weight until compact full-coverage bold/italic TTFs (~30–60 KB) are available. Added a one-line heap-capacity log after allocator init.
+
 ## 2026-08-11 15:45
 
 Fix library dialog height: dialog was collapsing to just label + buttons because the embedded list uses content-based sizing (height = items × row_height), returning 0 when empty.

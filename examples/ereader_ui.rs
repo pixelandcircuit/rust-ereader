@@ -72,8 +72,6 @@ const UI_FONT_SIZE_LARGE: f32 = 24.0;
 static FONT_BYTES: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Regular.ttf");
 static FONT_BOLD_BYTES: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Bold.ttf");
 static BODY_FONT_BYTES: &[u8] = include_bytes!("../fonts/NoticiaText-Regular.ttf");
-static BODY_BOLD_FONT_BYTES: &[u8] = include_bytes!("../fonts/NoticiaText-Bold.ttf");
-static BODY_ITALIC_FONT_BYTES: &[u8] = include_bytes!("../fonts/NoticiaText-Italic.ttf");
 
 fn handle_click(event: &mut GuiEvent) {
     if event.target == &ViewId::new("settings") {
@@ -447,6 +445,11 @@ fn format_time_utc(unix_secs: u64) -> String {
 
 /// Parse all fonts and leak them into `'static` memory.
 /// Works on both std (simulator) and no_std+alloc (ESP) since both provide `Box`.
+///
+/// Only one body font is parsed; body_bold and body_italic alias it. NoticiaText's
+/// bold and italic variants each consume ~2.1 MB of PSRAM, and loading all three
+/// exhausts the 8 MB PSRAM before the 5th font finishes parsing. Full-coverage
+/// compact bold/italic fonts (~30–60 KB TTF) would allow separate faces here.
 fn load_fonts() -> AppFonts {
     let ui = Box::leak(Box::new(
         fontdue::Font::from_bytes(FONT_BYTES, fontdue::FontSettings::default())
@@ -460,20 +463,12 @@ fn load_fonts() -> AppFonts {
         fontdue::Font::from_bytes(BODY_FONT_BYTES, fontdue::FontSettings::default())
             .expect("NoticiaText-Regular parse failed"),
     ));
-    let body_bold = Box::leak(Box::new(
-        fontdue::Font::from_bytes(BODY_BOLD_FONT_BYTES, fontdue::FontSettings::default())
-            .expect("NoticiaText-Bold parse failed"),
-    ));
-    let body_italic = Box::leak(Box::new(
-        fontdue::Font::from_bytes(BODY_ITALIC_FONT_BYTES, fontdue::FontSettings::default())
-            .expect("NoticiaText-Italic parse failed"),
-    ));
     AppFonts {
         ui,
         ui_bold,
         body,
-        body_bold,
-        body_italic,
+        body_bold: body,
+        body_italic: body,
     }
 }
 
@@ -1066,6 +1061,12 @@ async fn main(spawner: Spawner) -> ! {
     );
     // SRAM heap required by the WiFi stack (must be separate from PSRAM).
     esp_alloc::heap_allocator!(size: 72 * 1024);
+    {
+        use esp_alloc::MemoryCapability;
+        let psram_free = esp_alloc::HEAP.free_caps(MemoryCapability::External.into());
+        let sram_free = esp_alloc::HEAP.free_caps(MemoryCapability::Internal.into());
+        log::info!("heap init: psram_free={} sram_free={}", psram_free, sram_free);
+    }
 
     // Must run before any EmbassyTimer use and before esp_radio::wifi::new.
     let timg0 = TimerGroup::new(peripherals.TIMG0);
