@@ -1,5 +1,12 @@
 # Changes
 
+## 2026-08-11 15:45
+
+Fix library dialog height: dialog was collapsing to just label + buttons because the embedded list uses content-based sizing (height = items × row_height), returning 0 when empty.
+
+- `rust-embedded-gui/src/list_view.rs`: `layout_list` now respects `v_flex: Grow` — when set, the list fills the available space passed from its parent (`e.space.h`) instead of sizing to content. Shrink behavior (size = items × 2 × char_height) is unchanged.
+- `examples/ereader_ui.rs`: Library dialog changed from `v_flex: Shrink, size: (440, 0)` to `v_flex: Fixed, size: (440, 400)`. A Shrink parent with a Grow child is a circular dependency (parent wants to size to fit children, child wants to fill parent); Fixed resolves this by giving the Grow list a concrete container height to fill.
+
 ## 2026-08-11
 
 Bold and italic rendering for HTML/EPUB content.

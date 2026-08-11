@@ -43,12 +43,13 @@ use Align::Center;
 
 const WELCOME_HTML: &[u8] = include_bytes!("welcome.html");
 
-const DIALOG_ID: ViewId = ViewId::new("dialog");
+const SETTINGS_DIALOG_ID: ViewId = ViewId::new("settings_dialog");
 const LIBRARY_DIALOG_ID: ViewId = ViewId::new("library_dialog");
 const LIBRARY_BUTTON_ID: ViewId = ViewId::new("library");
 const LIBRARY_LIST_ID: ViewId = ViewId::new("lib_list");
 const LIBRARY_READ_BUTTON_ID: ViewId = ViewId::new("library_read");
 const LIBRARY_CLOSE_BUTTON_ID: ViewId = ViewId::new("library_close");
+const SETTINGS_BUTTON_ID: ViewId = ViewId::new("settings");
 const BATTERY_BUTTON_ID: ViewId = ViewId::new("battery");
 const BATTERY_DIALOG_ID: ViewId = ViewId::new("battery_dialog");
 const BATTERY_CLOSE_ID: ViewId = ViewId::new("battery_close");
@@ -77,9 +78,9 @@ static BODY_ITALIC_FONT_BYTES: &[u8] = include_bytes!("../fonts/NoticiaText-Ital
 
 fn handle_click(event: &mut GuiEvent) {
     if event.target == &ViewId::new("settings") {
-        event.scene.show_view(&DIALOG_ID);
+        event.scene.show_view(&SETTINGS_DIALOG_ID);
     } else if event.target == &ViewId::new("dialog_close") {
-        event.scene.hide_view(&DIALOG_ID);
+        event.scene.hide_view(&SETTINGS_DIALOG_ID);
     } else if event.target == &LIBRARY_BUTTON_ID {
         event.scene.show_view(&LIBRARY_DIALOG_ID);
     } else if event.target == &LIBRARY_CLOSE_BUTTON_ID {
@@ -148,10 +149,7 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
         scene.add_view_to_parent(h_spacer::make_h_spacer(&ViewId::new("spacer1")), &topbar_id);
         scene.add_view_to_parent(make_label(&ViewId::new("time"), "--:-- --"), &topbar_id);
         scene.add_view_to_parent(make_button(&BATTERY_BUTTON_ID, "85%"), &topbar_id);
-        scene.add_view_to_parent(
-            make_full_button(&ViewId::new("settings"), "Settings", "settings", false),
-            &topbar_id,
-        );
+        scene.add_view_to_parent( make_full_button(&SETTINGS_BUTTON_ID, "Settings", "settings", false),  &topbar_id );
         let topbar = make_panel(&topbar_id)
             .with_layout(Some(layout_hbox))
             .with_h_flex(Flex::Grow)
@@ -222,10 +220,10 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
 
     // --- settings dialog --------------------
     {
-        let dialog_panel = make_panel(&DIALOG_ID)
+        let settings_panel = make_panel(&SETTINGS_DIALOG_ID)
             .with_layout(Some(layout_centered_dialog))
-            .with_h_flex(Flex::Fixed)
-            .with_v_flex(Flex::Shrink)
+            .with_h_flex(Fixed)
+            .with_v_flex(Shrink)
             .with_size(440, 0)
             .with_visible(false)
             .with_state(Some(Box::new(PanelState {
@@ -236,55 +234,55 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
         // ── Settings dialog (hidden, drawn last so it appears on top) ────────────
         scene.add_view_to_parent(
             make_label(&ViewId::new("dlg_title"), "Settings"),
-            &DIALOG_ID,
+            &SETTINGS_DIALOG_ID,
         );
         scene.add_view_to_parent(
             make_label(&ViewId::new("dlg_font_lbl"), "Font Size"),
-            &DIALOG_ID,
+            &SETTINGS_DIALOG_ID,
         );
         scene.add_view_to_parent(
             make_toggle_group(&FONT_SIZE_ID, vec!["Small", "Medium", "Large"], 1),
-            &DIALOG_ID,
+            &SETTINGS_DIALOG_ID,
         );
         scene.add_view_to_parent(
             make_label(&ViewId::new("dlg_bl_lbl"), "Backlight"),
-            &DIALOG_ID,
+            &SETTINGS_DIALOG_ID,
         );
         scene.add_view_to_parent(
             make_toggle_group(&BACKLIGHT_ID, vec!["Off", "Low", "High"], 2),
-            &DIALOG_ID,
+            &SETTINGS_DIALOG_ID,
         );
         scene.add_view_to_parent(
             make_label(&ViewId::new("dlg_orient_lbl"), "Orientation"),
-            &DIALOG_ID,
+            &SETTINGS_DIALOG_ID,
         );
         scene.add_view_to_parent(
             make_toggle_group(&ORIENTATION_ID, vec!["Port", "Land", "R.Port", "R.Land"], 0),
-            &DIALOG_ID,
+            &SETTINGS_DIALOG_ID,
         );
         scene.add_view_to_parent(
             make_button(&ViewId::new("sync_time"), "Sync Time"),
-            &DIALOG_ID,
+            &SETTINGS_DIALOG_ID,
         );
-        scene.add_view_to_parent(make_button(&DEEP_CLEAN_ID, "Clean Screen"), &DIALOG_ID);
+        scene.add_view_to_parent(make_button(&DEEP_CLEAN_ID, "Clean Screen"), &SETTINGS_DIALOG_ID);
         scene.add_view_to_parent(
             make_label(&ViewId::new("dlg_battery"), "Battery: 85%  (Charging)"),
-            &DIALOG_ID,
+            &SETTINGS_DIALOG_ID,
         );
         scene.add_view_to_parent(
             make_button(&ViewId::new("dialog_close"), "Close"),
-            &DIALOG_ID,
+            &SETTINGS_DIALOG_ID,
         );
-        scene.add_view_to_root(dialog_panel);
+        scene.add_view_to_root(settings_panel);
     }
 
     // ── Library dialog (hidden, shown when Library button pressed) ───────────
     {
         let lib_panel = make_panel(&LIBRARY_DIALOG_ID)
             .with_layout(Some(layout_centered_dialog))
-            .with_h_flex(Flex::Fixed)
-            .with_v_flex(Flex::Grow)
-            .with_size(440, 0)
+            .with_h_flex(Fixed)
+            .with_v_flex(Fixed)
+            .with_size(440, 400)
             .with_visible(false)
             .with_state(Some(Box::new(PanelState {
                 border_visible: true,
@@ -351,7 +349,7 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
     {
         let loading_panel = make_panel(&LOADING_DIALOG_ID)
             .with_layout(Some(layout_centered_dialog))
-            .with_h_flex(Flex::Fixed)
+            .with_h_flex(Fixed)
             .with_v_flex(Flex::Shrink)
             .with_size(320, 0)
             .with_visible(false)
@@ -371,7 +369,7 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
     {
         let batt_panel = make_panel(&BATTERY_DIALOG_ID)
             .with_layout(Some(layout_centered_dialog))
-            .with_h_flex(Flex::Fixed)
+            .with_h_flex(Fixed)
             .with_v_flex(Flex::Shrink)
             .with_size(320, 0)
             .with_visible(false)
@@ -967,7 +965,7 @@ use iris_ui::view::Flex::Grow;
 use log::info;
 #[cfg(feature = "esp")]
 use static_cell::StaticCell;
-use Flex::Shrink;
+use Flex::{Fixed, Shrink};
 
 // WiFi credentials — set WIFI_SSID and WIFI_PASS at build time.
 #[cfg(feature = "esp")]
