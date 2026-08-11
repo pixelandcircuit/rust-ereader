@@ -327,7 +327,7 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
             &lib_btn_row_id,
         );
         scene.add_view_to_parent(
-            make_button(&LIBRARY_READ_BUTTON_ID, "Read"),
+            make_full_button(&LIBRARY_READ_BUTTON_ID, "Read","read",true),
             &lib_btn_row_id,
         );
         let lib_btn_row = make_panel(&lib_btn_row_id)
