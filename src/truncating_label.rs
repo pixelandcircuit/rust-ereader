@@ -4,7 +4,6 @@ extern crate alloc;
 #[cfg(feature = "esp")]
 use alloc::{boxed::Box, string::String, vec::Vec};
 
-use iris_ui::gfx::DrawingContext;
 use iris_ui::view::Flex::{Grow, Shrink};
 use iris_ui::view::{View, ViewId};
 

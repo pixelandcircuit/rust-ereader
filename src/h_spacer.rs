@@ -13,9 +13,7 @@ pub fn make_h_spacer(id: &ViewId) -> View {
         bounds: Bounds::new(0, 0, 10, 10),
         visible: true,
         title: "spacer".into(),
-        draw: Some(|e| {
-            // e.ctx.stroke_rect(&e.view.bounds, &e.theme.panel.text);
-        }),
+        draw: None,
         input: None,
         layout: Some(|e| {
             if let Some(view) = e.scene.get_view_mut(&e.target) {

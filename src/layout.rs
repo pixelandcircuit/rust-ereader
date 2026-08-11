@@ -208,7 +208,7 @@ pub fn layout_chapter(text: &str, cfg: &LayoutConfig) -> Layout {
         while pos < total && bytes[pos] != b' ' && bytes[pos] != b'\n' {
             let wb = bytes[pos];
             // Inline style sentinels within a word: switch style, contribute 0 width.
-            if wb >= 4 && wb <= 7 {
+            if (4..=7).contains(&wb) {
                 match wb {
                     4 => in_bold = true,
                     5 => in_bold = false,

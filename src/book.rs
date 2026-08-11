@@ -167,41 +167,36 @@ fn on_open(name: &str, out: &mut String) {
         push_blank_line(out);
         let level = name.as_bytes()[1].saturating_sub(b'0').clamp(1, 6);
         out.push(char::from(level.min(3)));
-    } else if name.eq_ignore_ascii_case("br") {
-        push_newline(out);
-    } else if name.eq_ignore_ascii_case("li") {
-        push_newline(out);
-        out.push_str("• ");
-    } else if name.eq_ignore_ascii_case("hr") {
-        push_newline(out);
-        out.push_str("────────────────────");
-        push_newline(out);
-    } else if name.eq_ignore_ascii_case("b") || name.eq_ignore_ascii_case("strong") {
-        out.push('\x04');
-    } else if name.eq_ignore_ascii_case("em") || name.eq_ignore_ascii_case("i") {
-        out.push('\x06');
+        return;
+    }
+    match name.to_ascii_lowercase().as_str() {
+        "br" => push_newline(out),
+        "li" => {
+            push_newline(out);
+            out.push_str("• ");
+        }
+        "hr" => {
+            push_newline(out);
+            out.push_str("────────────────────");
+            push_newline(out);
+        }
+        "b" | "strong" => out.push('\x04'),
+        "em" | "i" => out.push('\x06'),
+        _ => {}
     }
 }
 
 fn on_close(name: &str, out: &mut String) {
     if is_heading(name) {
         push_blank_line(out);
-    } else if name.eq_ignore_ascii_case("p")
-        || name.eq_ignore_ascii_case("blockquote")
-        || name.eq_ignore_ascii_case("ul")
-        || name.eq_ignore_ascii_case("ol")
-    {
-        push_blank_line(out);
-    } else if name.eq_ignore_ascii_case("div")
-        || name.eq_ignore_ascii_case("td")
-        || name.eq_ignore_ascii_case("th")
-        || name.eq_ignore_ascii_case("tr")
-    {
-        push_newline(out);
-    } else if name.eq_ignore_ascii_case("b") || name.eq_ignore_ascii_case("strong") {
-        out.push('\x05');
-    } else if name.eq_ignore_ascii_case("em") || name.eq_ignore_ascii_case("i") {
-        out.push('\x07');
+        return;
+    }
+    match name.to_ascii_lowercase().as_str() {
+        "p" | "blockquote" | "ul" | "ol" => push_blank_line(out),
+        "div" | "td" | "th" | "tr" => push_newline(out),
+        "b" | "strong" => out.push('\x05'),
+        "em" | "i" => out.push('\x07'),
+        _ => {}
     }
 }
 

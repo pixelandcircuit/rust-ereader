@@ -65,9 +65,7 @@ const PREV_PAGE_ID: ViewId = ViewId::new("prev_page");
 const NEXT_PAGE_ID: ViewId = ViewId::new("next_page");
 const SYNC_TIME_BUTTON_ID: ViewId = ViewId::new("sync_time");
 
-const UI_FONT_SIZE_SMALL: f32 = 16.0;
-const UI_FONT_SIZE_MEDIUM: f32 = 20.0;
-const UI_FONT_SIZE_LARGE: f32 = 24.0;
+const UI_FONT_SIZE: f32 = 20.0;
 
 static FONT_BYTES: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Regular.ttf");
 static FONT_BOLD_BYTES: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Bold.ttf");
@@ -491,11 +489,11 @@ fn make_theme(fonts: &AppFonts) -> Theme {
             text: Rgb565::BLACK,
         },
         font: FontKind::TrueType {
-            size: UI_FONT_SIZE_MEDIUM,
+            size: UI_FONT_SIZE,
             font: fonts.ui,
         },
         bold_font: FontKind::TrueType {
-            size: UI_FONT_SIZE_MEDIUM,
+            size: UI_FONT_SIZE,
             font: fonts.ui_bold,
         },
     }
@@ -819,13 +817,6 @@ fn handle_backlight_action(cmd: &String, hw: &mut dyn HardwareAccess) {
     hw.save_settings();
 }
 
-fn calc_font_size(font_size: FontSize) -> f32 {
-    match font_size {
-        FontSize::Small => UI_FONT_SIZE_SMALL,
-        FontSize::Medium => UI_FONT_SIZE_MEDIUM,
-        FontSize::Large => UI_FONT_SIZE_LARGE,
-    }
-}
 
 // ── ESP path ──────────────────────────────────────────────────────────────────
 #[cfg(feature = "esp")]

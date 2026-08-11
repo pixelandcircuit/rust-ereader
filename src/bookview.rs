@@ -142,16 +142,16 @@ pub fn layout_cfg(
 /// correct font for each character's advance width. Returns `(line, rest,
 /// new_in_bold, new_in_italic)` where the booleans reflect the style state at
 /// the start of `rest` (end of `line`).
-fn next_ttf_line<'a>(
+fn next_ttf_line(
     fonts: AppFonts,
-    text: &'a str,
+    text: &str,
     max_px: i32,
     font_px: f32,
     heading_font_px: f32,
     in_heading: bool,
     mut in_bold: bool,
     mut in_italic: bool,
-) -> (&'a str, &'a str, bool, bool) {
+) -> (&str, &str, bool, bool) {
     let mut cursor = 0.0f32;
     let mut last_space: Option<usize> = None;
     // Style state saved at last word-break opportunity.
