@@ -164,10 +164,22 @@ fn next_ttf_line<'a>(
             return (text[..i].trim_end(), after, in_bold, in_italic);
         }
         match c as u32 {
-            0x04 => { in_bold = true; continue; }
-            0x05 => { in_bold = false; continue; }
-            0x06 => { in_italic = true; continue; }
-            0x07 => { in_italic = false; continue; }
+            0x04 => {
+                in_bold = true;
+                continue;
+            }
+            0x05 => {
+                in_bold = false;
+                continue;
+            }
+            0x06 => {
+                in_italic = true;
+                continue;
+            }
+            0x07 => {
+                in_italic = false;
+                continue;
+            }
             _ => {}
         }
         let active_font = if in_heading {
@@ -241,7 +253,11 @@ fn render_ttf_text(
     let mut in_heading = is_heading_sentinel(text);
     let mut in_bold = false;
     let mut in_italic = false;
-    let mut current_font = if in_heading { fonts.ui_bold } else { fonts.body };
+    let mut current_font = if in_heading {
+        fonts.ui_bold
+    } else {
+        fonts.body
+    };
     let mut current_px = if in_heading { heading_font_px } else { font_px };
     let mut line_h = line_height(current_font, current_px) + 4;
     let mut baseline = cy + pad_y + line_height(current_font, current_px);
@@ -282,11 +298,19 @@ fn render_ttf_text(
                         } else {
                             fonts.body
                         };
-                        x = draw_str(seg_font, seg, x, baseline, current_px, 15, &mut |px, py, g4| {
-                            if px >= cx && px < cx + cw && py >= cy && py < cy + ch {
-                                put_pixel(px, py, g4);
-                            }
-                        });
+                        x = draw_str(
+                            seg_font,
+                            seg,
+                            x,
+                            baseline,
+                            current_px,
+                            15,
+                            &mut |px, py, g4| {
+                                if px >= cx && px < cx + cw && py >= cy && py < cy + ch {
+                                    put_pixel(px, py, g4);
+                                }
+                            },
+                        );
                     }
                     match b {
                         4 => seg_bold = true,
@@ -311,11 +335,19 @@ fn render_ttf_text(
                 } else {
                     fonts.body
                 };
-                draw_str(seg_font, seg, x, baseline, current_px, 15, &mut |px, py, g4| {
-                    if px >= cx && px < cx + cw && py >= cy && py < cy + ch {
-                        put_pixel(px, py, g4);
-                    }
-                });
+                draw_str(
+                    seg_font,
+                    seg,
+                    x,
+                    baseline,
+                    current_px,
+                    15,
+                    &mut |px, py, g4| {
+                        if px >= cx && px < cx + cw && py >= cy && py < cy + ch {
+                            put_pixel(px, py, g4);
+                        }
+                    },
+                );
             }
         }
 
@@ -331,7 +363,11 @@ fn render_ttf_text(
             in_italic = false;
             in_heading = is_heading_sentinel(remaining);
             remaining = strip_heading_sentinel(remaining);
-            current_font = if in_heading { fonts.ui_bold } else { fonts.body };
+            current_font = if in_heading {
+                fonts.ui_bold
+            } else {
+                fonts.body
+            };
             current_px = if in_heading { heading_font_px } else { font_px };
             line_h = line_height(current_font, current_px) + 4;
         } else {

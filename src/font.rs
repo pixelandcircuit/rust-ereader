@@ -5,10 +5,10 @@ use alloc::boxed::Box;
 /// All font faces used by the app, bundled so they can be threaded through
 /// the call stack without growing every function signature individually.
 pub struct AppFonts {
-    pub ui:          &'static fontdue::Font,
-    pub ui_bold:     &'static fontdue::Font,
-    pub body:        &'static fontdue::Font,
-    pub body_bold:   &'static fontdue::Font,
+    pub ui: &'static fontdue::Font,
+    pub ui_bold: &'static fontdue::Font,
+    pub body: &'static fontdue::Font,
+    pub body_bold: &'static fontdue::Font,
     pub body_italic: &'static fontdue::Font,
 }
 

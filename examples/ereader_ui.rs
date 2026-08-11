@@ -32,7 +32,7 @@ use ereader::reader::BookSession;
 use iris_ui::button::{make_button, make_full_button};
 use iris_ui::device::EmbeddedDrawingContext;
 use iris_ui::geom::{Bounds, Insets, Point as GPoint};
-use iris_ui::label::make_label;
+use iris_ui::label::{make_header_label, make_label};
 use iris_ui::layouts::{layout_centered_dialog, layout_hbox, layout_vbox};
 use iris_ui::list_view::{make_list_view, ListState};
 use iris_ui::scene::{click_at, draw_scene, layout_scene, Scene};
@@ -149,7 +149,10 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
         scene.add_view_to_parent(h_spacer::make_h_spacer(&ViewId::new("spacer1")), &topbar_id);
         scene.add_view_to_parent(make_label(&ViewId::new("time"), "--:-- --"), &topbar_id);
         scene.add_view_to_parent(make_button(&BATTERY_BUTTON_ID, "85%"), &topbar_id);
-        scene.add_view_to_parent( make_full_button(&SETTINGS_BUTTON_ID, "Settings", "settings", false),  &topbar_id );
+        scene.add_view_to_parent(
+            make_full_button(&SETTINGS_BUTTON_ID, "Settings", "settings", false),
+            &topbar_id,
+        );
         let topbar = make_panel(&topbar_id)
             .with_layout(Some(layout_hbox))
             .with_h_flex(Flex::Grow)
@@ -233,11 +236,11 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
             })));
         // ── Settings dialog (hidden, drawn last so it appears on top) ────────────
         scene.add_view_to_parent(
-            make_label(&ViewId::new("dlg_title"), "Settings"),
+            make_header_label(&ViewId::new("dlg_title"), "Settings").with_h_align(Start),
             &SETTINGS_DIALOG_ID,
         );
         scene.add_view_to_parent(
-            make_label(&ViewId::new("dlg_font_lbl"), "Font Size"),
+            make_label(&ViewId::new("dlg_font_lbl"), "Font Size").with_h_align(Start),
             &SETTINGS_DIALOG_ID,
         );
         scene.add_view_to_parent(
@@ -245,7 +248,7 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
             &SETTINGS_DIALOG_ID,
         );
         scene.add_view_to_parent(
-            make_label(&ViewId::new("dlg_bl_lbl"), "Backlight"),
+            make_label(&ViewId::new("dlg_bl_lbl"), "Backlight").with_h_align(Start),
             &SETTINGS_DIALOG_ID,
         );
         scene.add_view_to_parent(
@@ -253,26 +256,44 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
             &SETTINGS_DIALOG_ID,
         );
         scene.add_view_to_parent(
-            make_label(&ViewId::new("dlg_orient_lbl"), "Orientation"),
+            make_label(&ViewId::new("dlg_orient_lbl"), "Orientation").with_h_align(Start),
             &SETTINGS_DIALOG_ID,
         );
         scene.add_view_to_parent(
             make_toggle_group(&ORIENTATION_ID, vec!["Port", "Land", "R.Port", "R.Land"], 0),
             &SETTINGS_DIALOG_ID,
         );
+
+        let row2 = make_panel(&ViewId::new("row2"))
+            .with_h_flex(Grow)
+            .with_layout(Some(layout_hbox))
+            .with_state(Some(Box::new(PanelState {
+                border_visible: false,
+                gap: 8,
+                padding: Insets::new_same(0),
+            })));
         scene.add_view_to_parent(
             make_button(&ViewId::new("sync_time"), "Sync Time"),
-            &SETTINGS_DIALOG_ID,
+            &row2.name,
         );
-        scene.add_view_to_parent(make_button(&DEEP_CLEAN_ID, "Clean Screen"), &SETTINGS_DIALOG_ID);
+        scene.add_view_to_parent(make_button(&DEEP_CLEAN_ID, "Clean Screen"), &row2.name);
+        scene.add_view_to_parent(row2, &SETTINGS_DIALOG_ID);
+
+        let row3 = make_panel(&ViewId::new("row3"))
+            .with_h_flex(Grow)
+            .with_layout(Some(layout_hbox))
+            .with_state(Some(Box::new(PanelState {
+                border_visible: false,
+                gap: 8,
+                padding: Insets::new_same(0),
+            })));
+
+        scene.add_view_to_parent(make_h_spacer(&ViewId::new("spacer1")), &row3.name);
         scene.add_view_to_parent(
-            make_label(&ViewId::new("dlg_battery"), "Battery: 85%  (Charging)"),
-            &SETTINGS_DIALOG_ID,
+            make_full_button(&ViewId::new("dialog_close"), "Close", "close", true),
+            &row3.name,
         );
-        scene.add_view_to_parent(
-            make_button(&ViewId::new("dialog_close"), "Close"),
-            &SETTINGS_DIALOG_ID,
-        );
+        scene.add_view_to_parent(row3, &SETTINGS_DIALOG_ID);
         scene.add_view_to_root(settings_panel);
     }
 
@@ -459,7 +480,13 @@ fn load_fonts() -> AppFonts {
         fontdue::Font::from_bytes(BODY_ITALIC_FONT_BYTES, fontdue::FontSettings::default())
             .expect("NoticiaText-Italic parse failed"),
     ));
-    AppFonts { ui, ui_bold, body, body_bold, body_italic }
+    AppFonts {
+        ui,
+        ui_bold,
+        body,
+        body_bold,
+        body_italic,
+    }
 }
 
 fn make_theme(fonts: &AppFonts) -> Theme {
@@ -469,8 +496,8 @@ fn make_theme(fonts: &AppFonts) -> Theme {
             text: Rgb565::BLACK,
         },
         accented: ViewStyle {
-            fill: Rgb565::WHITE,
-            text: Rgb565::BLACK,
+            fill: Rgb565::BLACK,
+            text: Rgb565::WHITE,
         },
         selected: ViewStyle {
             fill: Rgb565::BLACK,
@@ -939,6 +966,7 @@ use embassy_net::{
 use embassy_time::{with_timeout, Duration, Instant, Timer as EmbassyTimer};
 use ereader::appstate::{book_from_data, cfg_from_scene, AppState};
 use ereader::bookview::{draw_book_content, layout_cfg, update_content, BookState, CONTENT_ID};
+use ereader::h_spacer::make_h_spacer;
 #[cfg(feature = "esp")]
 use ereader::hardware::rtc_store_read;
 use ereader::{h_spacer, truncating_label};
@@ -958,9 +986,11 @@ use esp_hal::{
 };
 #[cfg(feature = "esp")]
 use esp_radio::wifi::{sta::StationConfig, Config, ControllerConfig, Interface};
+use fontdue::layout::HorizontalAlign;
 use fontdue::Font;
 use iris_ui::input::{InputResult, OutputAction};
 use iris_ui::panel::{make_panel, PanelState};
+use iris_ui::view::Align::Start;
 use iris_ui::view::Flex::Grow;
 use log::info;
 #[cfg(feature = "esp")]
