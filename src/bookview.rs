@@ -136,6 +136,23 @@ pub fn layout_cfg(
     }
 }
 
+fn select_font(
+    fonts: AppFonts,
+    in_heading: bool,
+    in_bold: bool,
+    in_italic: bool,
+) -> &'static fontdue::Font {
+    if in_heading {
+        fonts.ui_bold
+    } else if in_bold {
+        fonts.body_bold
+    } else if in_italic {
+        fonts.body_italic
+    } else {
+        fonts.body
+    }
+}
+
 /// Word-wrap one line of text to fit `max_px` pixels wide.
 ///
 /// Tracks inline bold/italic style via sentinel bytes (\x04–\x07) and uses the
@@ -182,15 +199,7 @@ fn next_ttf_line(
             }
             _ => {}
         }
-        let active_font = if in_heading {
-            fonts.ui_bold
-        } else if in_bold {
-            fonts.body_bold
-        } else if in_italic {
-            fonts.body_italic
-        } else {
-            fonts.body
-        };
+        let active_font = select_font(fonts, in_heading, in_bold, in_italic);
         let px = if in_heading { heading_font_px } else { font_px };
         let adv = char_advance(active_font, c, px);
         if cursor + adv > max_px as f32 + 0.5 {
@@ -238,6 +247,11 @@ fn render_ttf_text(
     let cw = bounds.size.w;
     let ch = bounds.size.h;
     let max_px = cw - pad_x * 2;
+    let mut clipped = |px: i32, py: i32, g4: u8| {
+        if px >= cx && px < cx + cw && py >= cy && py < cy + ch {
+            put_pixel(px, py, g4);
+        }
+    };
 
     fn is_heading_sentinel(s: &str) -> bool {
         s.as_bytes().first().map_or(false, |&b| b >= 1 && b <= 3)
@@ -289,28 +303,8 @@ fn render_ttf_text(
                     // Flush segment before this sentinel.
                     if i > seg_start {
                         let seg = &line[seg_start..i];
-                        let seg_font = if in_heading {
-                            fonts.ui_bold
-                        } else if seg_bold {
-                            fonts.body_bold
-                        } else if seg_italic {
-                            fonts.body_italic
-                        } else {
-                            fonts.body
-                        };
-                        x = draw_str(
-                            seg_font,
-                            seg,
-                            x,
-                            baseline,
-                            current_px,
-                            15,
-                            &mut |px, py, g4| {
-                                if px >= cx && px < cx + cw && py >= cy && py < cy + ch {
-                                    put_pixel(px, py, g4);
-                                }
-                            },
-                        );
+                        let font = select_font(fonts, in_heading, seg_bold, seg_italic);
+                        x = draw_str(font, seg, x, baseline, current_px, 15, &mut clipped);
                     }
                     match b {
                         4 => seg_bold = true,
@@ -326,28 +320,8 @@ fn render_ttf_text(
             // line if there were no sentinels).
             if seg_start < line.len() {
                 let seg = &line[seg_start..];
-                let seg_font = if in_heading {
-                    fonts.ui_bold
-                } else if seg_bold {
-                    fonts.body_bold
-                } else if seg_italic {
-                    fonts.body_italic
-                } else {
-                    fonts.body
-                };
-                draw_str(
-                    seg_font,
-                    seg,
-                    x,
-                    baseline,
-                    current_px,
-                    15,
-                    &mut |px, py, g4| {
-                        if px >= cx && px < cx + cw && py >= cy && py < cy + ch {
-                            put_pixel(px, py, g4);
-                        }
-                    },
-                );
+                let font = select_font(fonts, in_heading, seg_bold, seg_italic);
+                draw_str(font, seg, x, baseline, current_px, 15, &mut clipped);
             }
         }
 
