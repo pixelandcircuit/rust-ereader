@@ -56,8 +56,7 @@ const BATTERY_CLOSE_ID: ViewId = ViewId::new("battery_close");
 const ERROR_DIALOG_ID: ViewId = ViewId::new("error_dialog");
 const LOADING_DIALOG_ID: ViewId = ViewId::new("loading_dialog");
 const FAST_SCROLL_PANEL_ID: ViewId = ViewId::new("fast_scroll_panel");
-const FAST_SCROLL_W: i32 = 300;
-const FAST_SCROLL_H: i32 = 80;
+const FAST_SCROLL_LABEL_ID: ViewId = ViewId::new("fast_scroll_label");
 const ORIENTATION_ID: ViewId = ViewId::new("orientation");
 const BACKLIGHT_ID: ViewId = ViewId::new("backlight");
 const FONT_SIZE_ID: ViewId = ViewId::new("font_size");
@@ -115,17 +114,6 @@ fn show_loading_dialog(scene: &mut Scene, filename: &str) {
 fn hide_loading_dialog(scene: &mut Scene) {
     scene.hide_view(&LOADING_DIALOG_ID);
     scene.mark_dirty_view(&LOADING_DIALOG_ID);
-}
-
-fn layout_fast_scroll_panel(e: &mut LayoutEvent) {
-    if let Some(v) = e.scene.get_view_mut(&e.target) {
-        v.bounds = Bounds::new(
-            (e.space.w - FAST_SCROLL_W) / 2,
-            (e.space.h - FAST_SCROLL_H) / 2,
-            FAST_SCROLL_W,
-            FAST_SCROLL_H,
-        );
-    }
 }
 
 fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
@@ -391,7 +379,7 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
         let batt_panel = make_panel(&BATTERY_DIALOG_ID)
             .with_layout(Some(layout_centered_dialog))
             .with_h_flex(Fixed)
-            .with_v_flex(Flex::Shrink)
+            .with_v_flex(Shrink)
             .with_size(320, 0)
             .with_visible(false)
             .with_state(Some(Box::new(PanelState {
@@ -425,15 +413,15 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
     // ── Fast-scroll overlay (hidden; shows page indicator while button held) ──
     {
         let fs_panel = make_panel(&FAST_SCROLL_PANEL_ID)
-            .with_layout(Some(layout_fast_scroll_panel))
+            .with_layout(Some(layout_centered_dialog))
             .with_visible(false)
             .with_state(Some(Box::new(PanelState {
                 border_visible: true,
                 gap: 0,
-                padding: Insets::new_same(10),
+                padding: Insets::new_same(0),
             })));
         scene.add_view_to_parent(
-            make_label(&ViewId::new("fast_scroll_label"), "Page 0 / 0"),
+            make_label(&FAST_SCROLL_LABEL_ID, "Ch 1/1 Page 0 / 0"),
             &FAST_SCROLL_PANEL_ID,
         );
         scene.add_view_to_root(fs_panel);
@@ -1679,7 +1667,7 @@ fn update_fast_scroll_label(
     page: usize,
     page_count: usize,
 ) {
-    if let Some(v) = scene.get_view_mut(&ViewId::new("fast_scroll_label")) {
+    if let Some(v) = scene.get_view_mut(&FAST_SCROLL_LABEL_ID) {
         v.title = format!(
             "Ch {}/{} · Pg {}/{}",
             chapter + 1,
