@@ -1,5 +1,14 @@
 # Changes
 
+## 2026-08-11
+
+Unified hold-based page navigation: regular page turns now fire on button/key release rather than press, and all nav keys share the same hold-duration logic as the fast-paging keys.
+
+- `examples/ereader_ui.rs`:
+  - **`FastPaging::end()`**: extended to handle the short-press case — if `fs_pressed_at` was set but `fs_active` is false (held < 1 s), calls `nav_prev_page` or `nav_next_page` on release, using the stored `forward` direction. Added `cancel()` method for the just-woke case (resets state without navigation).
+  - **Simulator key events**: Left, Backspace, and Up all call `start_backward()` on KeyDown; Right, Space, and Down all call `start_forward()` on KeyDown. KeyUp for each group calls `fast.end()`, which now handles both fast-paging navigation and regular single-page turns. Removed the old immediate-nav-on-KeyDown handlers for Left/Backspace/Right/Space.
+  - **ESP button loop**: `start_forward/backward` is now called once before the hold loop (only when not `just_woke`), fixing a bug where calling it every 10 ms iteration reset `fs_pressed_at` and prevented the 1 s threshold from ever being reached (fast paging never triggered on hardware). After the loop, replaced inline `if fast.fs_active / else if just_woke / else nav` block with `fast.cancel()` (just-woke path) or `fast.end()` (normal path).
+
 ## 2026-08-10
 
 Battery info dialog: tapping the battery percentage in the top bar now opens a dialog showing charge percentage, voltage, and charging status, with a Dismiss button to close it.

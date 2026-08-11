@@ -577,6 +577,7 @@ fn main() {
             match event {
                 SimulatorEvent::Quit => break 'sim_running,
                 // Keyboard shortcuts: arrow keys / Space simulate physical buttons.
+                // Hold ≥1 s → fast-paging dialog; short press → regular nav on key-up.
                 SimulatorEvent::KeyDown {
                     keycode: Keycode::Left,
                     repeat: false,
@@ -586,8 +587,13 @@ fn main() {
                     keycode: Keycode::Backspace,
                     repeat: false,
                     ..
+                }
+                | SimulatorEvent::KeyDown {
+                    keycode: Keycode::Up,
+                    repeat: false,
+                    ..
                 } => {
-                    state.nav_prev_page(&mut hw);
+                    fast.start_backward();
                 }
                 SimulatorEvent::KeyDown {
                     keycode: Keycode::Right,
@@ -598,26 +604,34 @@ fn main() {
                     keycode: Keycode::Space,
                     repeat: false,
                     ..
-                } => {
-                    state.nav_next_page(&mut hw);
                 }
-                // Fast-scroll: hold Up or Down for >1 s to scan pages without rendering content.
-                SimulatorEvent::KeyDown {
+                | SimulatorEvent::KeyDown {
                     keycode: Keycode::Down,
                     repeat: false,
                     ..
                 } => {
                     fast.start_forward();
                 }
-                SimulatorEvent::KeyDown {
+                SimulatorEvent::KeyUp {
+                    keycode: Keycode::Left,
+                    ..
+                }
+                | SimulatorEvent::KeyUp {
+                    keycode: Keycode::Backspace,
+                    ..
+                }
+                | SimulatorEvent::KeyUp {
                     keycode: Keycode::Up,
-                    repeat: false,
                     ..
                 } => {
-                    fast.start_backward();
+                    fast.end(&mut state, &mut hw);
                 }
                 SimulatorEvent::KeyUp {
-                    keycode: Keycode::Up,
+                    keycode: Keycode::Right,
+                    ..
+                }
+                | SimulatorEvent::KeyUp {
+                    keycode: Keycode::Space,
                     ..
                 }
                 | SimulatorEvent::KeyUp {
@@ -1286,6 +1300,13 @@ async fn main(spawner: Spawner) -> ! {
             None
         };
         if let Some(forward) = btn_pressed {
+            if !just_woke {
+                if forward {
+                    fast.start_forward();
+                } else {
+                    fast.start_backward();
+                }
+            }
             loop {
                 let still_held = if forward {
                     hw.button_next_pressed()
@@ -1294,12 +1315,6 @@ async fn main(spawner: Spawner) -> ! {
                 };
                 if !still_held {
                     break;
-                }
-
-                if (forward) {
-                    fast.start_forward()
-                } else {
-                    fast.start_backward()
                 }
 
                 fast.handle_update_label(&mut state);
@@ -1339,17 +1354,11 @@ async fn main(spawner: Spawner) -> ! {
                 EmbassyTimer::after(Duration::from_millis(10)).await;
             }
 
-            if fast.fs_active {
-                state.scene.hide_view(&FAST_SCROLL_PANEL_ID);
-                state.session.reader.go_to_page(fast.fs_target);
-                state.update_content(&hw);
-                state.scene.mark_dirty_all();
-            } else if just_woke {
+            if just_woke {
                 // First press after light sleep: consume as wake-only, no page turn.
-            } else if forward {
-                state.nav_next_page(&mut hw);
+                fast.cancel();
             } else {
-                state.nav_prev_page(&mut hw);
+                fast.end(&mut state, &mut hw);
             }
             just_woke = false;
             hw.save_bookmark(
@@ -1554,12 +1563,24 @@ impl FastPaging {
         self.fs_pressed_at = Some(Instant::now());
     }
     pub(crate) fn end(&mut self, state: &mut AppState, hw: &mut dyn HardwareAccess) {
-        if self.fs_active {
-            state.session.reader.go_to_page(self.fs_target);
-            state.update_content(hw);
-            state.scene.hide_view(&FAST_SCROLL_PANEL_ID);
-            state.scene.mark_dirty_all();
+        if self.fs_pressed_at.is_some() {
+            if self.fs_active {
+                state.session.reader.go_to_page(self.fs_target);
+                state.update_content(hw);
+                state.scene.hide_view(&FAST_SCROLL_PANEL_ID);
+                state.scene.mark_dirty_all();
+            } else {
+                if self.forward {
+                    state.nav_next_page(hw);
+                } else {
+                    state.nav_prev_page(hw);
+                }
+            }
         }
+        self.fs_active = false;
+        self.fs_pressed_at = None;
+    }
+    pub(crate) fn cancel(&mut self) {
         self.fs_active = false;
         self.fs_pressed_at = None;
     }
