@@ -7,13 +7,12 @@ use alloc::{boxed::Box, string::String, vec::Vec};
 use crate::book::{Book, HtmlBook, TxtBook};
 use crate::bookview::{layout_cfg, update_content, CONTENT_ID};
 use crate::epub::EpubArchive;
-use crate::font::font_px_for;
+use crate::font::{font_px_for, AppFonts};
 use crate::hardware::{FontSize, HardwareAccess};
 use crate::layout::LayoutConfig;
 use crate::reader::BookSession;
 #[cfg(feature = "esp")]
 use embassy_time::{with_timeout, Duration, Instant, Timer as EmbassyTimer};
-use fontdue::Font;
 use iris_ui::scene::{layout_scene, Scene};
 use iris_ui::Theme;
 #[cfg(feature = "simulator")]
@@ -27,8 +26,7 @@ pub struct AppState {
     pub book: Box<dyn Book>,
     pub session: BookSession,
     pub scene: Scene,
-    pub bold_font: &'static Font,
-    pub body_font: &'static Font,
+    pub fonts: AppFonts,
     pub theme: Theme,
 }
 
@@ -77,19 +75,12 @@ pub fn book_from_data(filename: &str, data: Vec<u8>) -> Box<dyn Book> {
 pub fn cfg_from_scene(
     scene: &mut Scene,
     theme: &Theme,
-    body_font: &'static Font,
-    bold_font: &'static Font,
+    fonts: &AppFonts,
     font_size: FontSize,
 ) -> LayoutConfig {
     layout_scene(scene, theme);
     let bounds = scene
         .get_view_bounds(&CONTENT_ID)
         .expect("content view not in scene");
-    layout_cfg(
-        body_font,
-        bold_font,
-        font_size,
-        bounds.size.w,
-        bounds.size.h,
-    )
+    layout_cfg(fonts, font_size, bounds.size.w, bounds.size.h)
 }

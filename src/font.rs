@@ -2,6 +2,23 @@ use crate::hardware::FontSize;
 #[cfg(feature = "esp")]
 use alloc::boxed::Box;
 
+/// All font faces used by the app, bundled so they can be threaded through
+/// the call stack without growing every function signature individually.
+pub struct AppFonts {
+    pub ui:          &'static fontdue::Font,
+    pub ui_bold:     &'static fontdue::Font,
+    pub body:        &'static fontdue::Font,
+    pub body_bold:   &'static fontdue::Font,
+    pub body_italic: &'static fontdue::Font,
+}
+
+impl Copy for AppFonts {}
+impl Clone for AppFonts {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
 /// Draw `text` with its baseline at (start_x, baseline_y).
 /// `bg` is the background Gray4 value (15 = white). Returns the x position after the last glyph.
 /// `draw` receives (x: i32, y: i32, gray4: u8) for each non-transparent pixel.

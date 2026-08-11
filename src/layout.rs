@@ -42,6 +42,10 @@ pub struct LayoutConfig {
     pub margin_x: u32,      // horizontal margin on each side
     pub margin_y: u32,      // vertical margin on each side
     pub font: FontMetrics,
+    /// Optional metrics for inline bold spans (\x04/\x05 sentinels).
+    pub bold_font: Option<FontMetrics>,
+    /// Optional metrics for inline italic spans (\x06/\x07 sentinels).
+    pub italic_font: Option<FontMetrics>,
     /// Optional metrics for heading paragraphs (introduced by \x01–\x03 sentinels).
     /// `None` leaves headings measured and rendered identically to body text.
     pub heading_font: Option<FontMetrics>,
@@ -84,12 +88,22 @@ pub fn layout_chapter(text: &str, cfg: &LayoutConfig) -> Layout {
 
     // ── ASCII glyph width caches ──────────────────────────────────────────────
     let mut gcache = [0u32; 128];
+    let mut bcache = [0u32; 128];
+    let mut icache = [0u32; 128];
     let mut hcache = [0u32; 128];
     {
         let mut buf = [0u8; 4];
         for b in 32u8..127u8 {
             let s = char::from(b).encode_utf8(&mut buf);
             gcache[b as usize] = (cfg.font.measure)(s);
+            bcache[b as usize] = cfg
+                .bold_font
+                .as_ref()
+                .map_or(gcache[b as usize], |bf| (bf.measure)(s));
+            icache[b as usize] = cfg
+                .italic_font
+                .as_ref()
+                .map_or(gcache[b as usize], |itf| (itf.measure)(s));
             hcache[b as usize] = cfg
                 .heading_font
                 .as_ref()
@@ -116,6 +130,8 @@ pub fn layout_chapter(text: &str, cfg: &LayoutConfig) -> Layout {
     let mut pos = 0usize;
     let mut pending_space = false;
     let mut in_heading = false;
+    let mut in_bold = false;
+    let mut in_italic = false;
     let mut current_line_h = body_line_h;
 
     macro_rules! next_line {
@@ -145,6 +161,8 @@ pub fn layout_chapter(text: &str, cfg: &LayoutConfig) -> Layout {
             pending_space = false;
             if double {
                 in_heading = false;
+                in_bold = false;
+                in_italic = false;
                 current_line_h = body_line_h;
             }
             pos += skip;
@@ -155,6 +173,19 @@ pub fn layout_chapter(text: &str, cfg: &LayoutConfig) -> Layout {
         if b >= 1 && b <= 3 {
             in_heading = true;
             current_line_h = heading_line_h;
+            pos += 1;
+            continue;
+        }
+
+        // ── Inline style sentinels (\x04–\x07) ────────────────────────────────
+        if b >= 4 && b <= 7 {
+            match b {
+                4 => in_bold = true,
+                5 => in_bold = false,
+                6 => in_italic = true,
+                7 => in_italic = false,
+                _ => {}
+            }
             pos += 1;
             continue;
         }
@@ -176,9 +207,25 @@ pub fn layout_chapter(text: &str, cfg: &LayoutConfig) -> Layout {
 
         while pos < total && bytes[pos] != b' ' && bytes[pos] != b'\n' {
             let wb = bytes[pos];
+            // Inline style sentinels within a word: switch style, contribute 0 width.
+            if wb >= 4 && wb <= 7 {
+                match wb {
+                    4 => in_bold = true,
+                    5 => in_bold = false,
+                    6 => in_italic = true,
+                    7 => in_italic = false,
+                    _ => {}
+                }
+                pos += 1;
+                continue;
+            }
             if wb < 128 {
                 word_px += if in_heading {
                     hcache[wb as usize]
+                } else if in_bold {
+                    bcache[wb as usize]
+                } else if in_italic {
+                    icache[wb as usize]
                 } else {
                     gcache[wb as usize]
                 };
@@ -193,6 +240,16 @@ pub fn layout_chapter(text: &str, cfg: &LayoutConfig) -> Layout {
                     cfg.heading_font.as_ref().map_or_else(
                         || (cfg.font.measure)(&text[cs..pos]),
                         |hf| (hf.measure)(&text[cs..pos]),
+                    )
+                } else if in_bold {
+                    cfg.bold_font.as_ref().map_or_else(
+                        || (cfg.font.measure)(&text[cs..pos]),
+                        |bf| (bf.measure)(&text[cs..pos]),
+                    )
+                } else if in_italic {
+                    cfg.italic_font.as_ref().map_or_else(
+                        || (cfg.font.measure)(&text[cs..pos]),
+                        |itf| (itf.measure)(&text[cs..pos]),
                     )
                 } else {
                     (cfg.font.measure)(&text[cs..pos])
@@ -250,6 +307,8 @@ mod tests {
                 space_width_px: char_px,
                 measure: Box::new(move |s: &str| s.chars().count() as u32 * char_px),
             },
+            bold_font: None,
+            italic_font: None,
             heading_font: None,
         }
     }

@@ -15,7 +15,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::RgbColor;
 use ereader::book::{Book, HtmlBook, TxtBook};
 use ereader::epub::EpubArchive;
-use ereader::font::font_px_for;
+use ereader::font::{font_px_for, AppFonts};
 #[cfg(feature = "simulator")]
 use ereader::hardware::SimHardware;
 
@@ -70,8 +70,10 @@ const UI_FONT_SIZE_MEDIUM: f32 = 20.0;
 const UI_FONT_SIZE_LARGE: f32 = 24.0;
 
 static FONT_BYTES: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Regular.ttf");
+static FONT_BOLD_BYTES: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Bold.ttf");
 static BODY_FONT_BYTES: &[u8] = include_bytes!("../fonts/NoticiaText-Regular.ttf");
-static BOLD_FONT_BYTES: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Bold.ttf");
+static BODY_BOLD_FONT_BYTES: &[u8] = include_bytes!("../fonts/NoticiaText-Bold.ttf");
+static BODY_ITALIC_FONT_BYTES: &[u8] = include_bytes!("../fonts/NoticiaText-Italic.ttf");
 
 fn handle_click(event: &mut GuiEvent) {
     if event.target == &ViewId::new("settings") {
@@ -125,7 +127,7 @@ fn layout_fast_scroll_panel(e: &mut LayoutEvent) {
     }
 }
 
-fn make_scene(body_font: &'static Font, bold_font: &'static Font, w: i32, h: i32) -> Scene {
+fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
     let mut scene = Scene::new_with_bounds(Bounds::new(0, 0, w, h));
     scene.set_focus_enabled(false);
     let main_id = ViewId::new("main");
@@ -176,8 +178,7 @@ fn make_scene(body_font: &'static Font, bold_font: &'static Font, w: i32, h: i32
             state: Some(Box::new(BookState {
                 text: String::new(),
                 font_px: 22.0,
-                font: body_font,
-                heading_font: bold_font,
+                fonts,
                 heading_font_px: 22.0 * 1.4,
             })),
             ..Default::default()
@@ -437,25 +438,33 @@ fn format_time_utc(unix_secs: u64) -> String {
     format!("{}:{:02} {}", h12, m, ampm)
 }
 
-/// Parse both theme fonts and leak them into `'static` memory.
+/// Parse all fonts and leak them into `'static` memory.
 /// Works on both std (simulator) and no_std+alloc (ESP) since both provide `Box`.
-fn load_fonts() -> (&'static Font, &'static Font, &'static Font) {
-    let font = Box::leak(Box::new(
+fn load_fonts() -> AppFonts {
+    let ui = Box::leak(Box::new(
         fontdue::Font::from_bytes(FONT_BYTES, fontdue::FontSettings::default())
             .expect("AtkinsonHyperlegible-Regular parse failed"),
     ));
-    let bold = Box::leak(Box::new(
-        fontdue::Font::from_bytes(BOLD_FONT_BYTES, fontdue::FontSettings::default())
-            .expect("NoticiaText-Bold parse failed"),
+    let ui_bold = Box::leak(Box::new(
+        fontdue::Font::from_bytes(FONT_BOLD_BYTES, fontdue::FontSettings::default())
+            .expect("AtkinsonHyperlegible-Bold parse failed"),
     ));
     let body = Box::leak(Box::new(
         fontdue::Font::from_bytes(BODY_FONT_BYTES, fontdue::FontSettings::default())
             .expect("NoticiaText-Regular parse failed"),
     ));
-    (font, bold, body)
+    let body_bold = Box::leak(Box::new(
+        fontdue::Font::from_bytes(BODY_BOLD_FONT_BYTES, fontdue::FontSettings::default())
+            .expect("NoticiaText-Bold parse failed"),
+    ));
+    let body_italic = Box::leak(Box::new(
+        fontdue::Font::from_bytes(BODY_ITALIC_FONT_BYTES, fontdue::FontSettings::default())
+            .expect("NoticiaText-Italic parse failed"),
+    ));
+    AppFonts { ui, ui_bold, body, body_bold, body_italic }
 }
 
-fn make_theme(font: &'static Font, bold_font: &'static Font) -> Theme {
+fn make_theme(fonts: &AppFonts) -> Theme {
     Theme {
         standard: ViewStyle {
             fill: Rgb565::WHITE,
@@ -475,11 +484,11 @@ fn make_theme(font: &'static Font, bold_font: &'static Font) -> Theme {
         },
         font: FontKind::TrueType {
             size: UI_FONT_SIZE_MEDIUM,
-            font,
+            font: fonts.ui,
         },
         bold_font: FontKind::TrueType {
             size: UI_FONT_SIZE_MEDIUM,
-            font: bold_font,
+            font: fonts.ui_bold,
         },
     }
 }
@@ -492,13 +501,7 @@ fn load_book(state: &mut AppState, hw: &mut dyn HardwareAccess, filename: &Strin
             state.session.reader.anchor_byte,
         );
         let new_book = book_from_data(&filename, data);
-        state.cfg = cfg_from_scene(
-            &mut state.scene,
-            &state.theme,
-            state.body_font,
-            state.bold_font,
-            hw.font_size(),
-        );
+        state.cfg = cfg_from_scene(&mut state.scene, &state.theme, &state.fonts, hw.font_size());
         let new_session = match hw.load_bookmark(&filename) {
             Some((ch_idx, anchor)) => {
                 BookSession::restore(new_book.as_ref(), &state.cfg, ch_idx, anchor)
@@ -660,8 +663,7 @@ fn main() {
                                     state.cfg = cfg_from_scene(
                                         &mut state.scene,
                                         &state.theme,
-                                        state.body_font,
-                                        state.bold_font,
+                                        &state.fonts,
                                         hw.font_size(),
                                     );
                                     state.session.reader.relayout(&state.cfg);
@@ -672,8 +674,7 @@ fn main() {
                                 state.cfg = cfg_from_scene(
                                     &mut state.scene,
                                     &state.theme,
-                                    state.body_font,
-                                    state.bold_font,
+                                    &state.fonts,
                                     hw.font_size(),
                                 );
                                 state.session.reader.relayout(&state.cfg);
@@ -715,14 +716,14 @@ fn main() {
 }
 
 fn init_app_state(hw: &dyn HardwareAccess) -> AppState {
-    let (win_w, mut win_h) = hw.orientation().logical_size();
-    let (font, bold_font, body_font) = load_fonts();
-    let mut pre_scene = make_scene(body_font, bold_font, win_w, win_h);
-    let theme = make_theme(font, bold_font);
+    let (win_w, win_h) = hw.orientation().logical_size();
+    let fonts = load_fonts();
+    let mut pre_scene = make_scene(fonts, win_w, win_h);
+    let theme = make_theme(&fonts);
 
-    let pre_cfg = cfg_from_scene(&mut pre_scene, &theme, body_font, bold_font, hw.font_size());
+    let pre_cfg = cfg_from_scene(&mut pre_scene, &theme, &fonts, hw.font_size());
     let pre_book = Box::new(HtmlBook::from_vec(WELCOME_HTML.to_vec()));
-    let mut pre_session =
+    let pre_session =
         BookSession::new(pre_book.as_ref(), &pre_cfg).expect("BookSession init failed");
 
     AppState {
@@ -733,9 +734,8 @@ fn init_app_state(hw: &dyn HardwareAccess) -> AppState {
         book: pre_book,
         session: pre_session,
         scene: pre_scene,
-        bold_font: bold_font,
-        body_font: body_font,
-        theme: theme,
+        fonts,
+        theme,
     }
 }
 
@@ -1421,8 +1421,7 @@ async fn main(spawner: Spawner) -> ! {
                             state.cfg = cfg_from_scene(
                                 &mut state.scene,
                                 &state.theme,
-                                state.body_font,
-                                state.bold_font,
+                                &state.fonts,
                                 hw.font_size(),
                             );
                             state.session.reader.relayout(&state.cfg);
@@ -1438,8 +1437,7 @@ async fn main(spawner: Spawner) -> ! {
                             state.cfg = cfg_from_scene(
                                 &mut state.scene,
                                 &state.theme,
-                                state.body_font,
-                                state.bold_font,
+                                &state.fonts,
                                 hw.font_size(),
                             );
                             state.session.reader.relayout(&state.cfg);
@@ -1674,7 +1672,7 @@ mod tests {
     use ereader::hardware::FontSize;
     use iris_ui::scene::layout_scene;
 
-    fn make_test_fonts() -> (&'static Font, &'static Font, &'static Font) {
+    fn make_test_fonts() -> AppFonts {
         load_fonts()
     }
 
@@ -1689,12 +1687,12 @@ mod tests {
     /// view bounds, then checks that invariant for every FontSize.
     #[test]
     fn layout_cfg_height_matches_content_view() {
-        let (ui_font, bold_font, body_font) = make_test_fonts();
+        let fonts = make_test_fonts();
         let w = 960i32;
         let h = 540i32;
 
-        let mut scene = make_scene(body_font, bold_font, w, h);
-        let mut theme = make_theme(ui_font, bold_font);
+        let mut scene = make_scene(fonts, w, h);
+        let theme = make_theme(&fonts);
         layout_scene(&mut scene, &theme);
 
         let content_bounds = scene
@@ -1704,7 +1702,7 @@ mod tests {
         let content_h = content_bounds.size.h as u32;
 
         for font_size in [FontSize::Small, FontSize::Medium, FontSize::Large] {
-            let cfg = layout_cfg(body_font, bold_font, font_size, content_w, content_h as i32);
+            let cfg = layout_cfg(&fonts, font_size, content_w, content_h as i32);
             let render_pad_total = 24u32; // pad_y (12) top + pad_y (12) bottom
             let expected = content_h.saturating_sub(render_pad_total);
             assert_eq!(
@@ -1719,12 +1717,12 @@ mod tests {
     /// fit within the content view without clipping.
     #[test]
     fn page_line_count_fits_in_content_view() {
-        let (ui_font, bold_font, body_font) = make_test_fonts();
+        let fonts = make_test_fonts();
         let w = 960i32;
         let h = 540i32;
 
-        let mut scene = make_scene(body_font, bold_font, w, h);
-        let mut theme = make_theme(ui_font, bold_font);
+        let mut scene = make_scene(fonts, w, h);
+        let theme = make_theme(&fonts);
         layout_scene(&mut scene, &theme);
 
         let content_bounds = scene
@@ -1735,9 +1733,9 @@ mod tests {
         let render_usable = content_h.saturating_sub(24); // top+bottom pad_y
 
         for font_size in [FontSize::Small, FontSize::Medium, FontSize::Large] {
-            let cfg = layout_cfg(body_font, bold_font, font_size, content_w, content_h as i32);
+            let cfg = layout_cfg(&fonts, font_size, content_w, content_h as i32);
             let font_px = ereader::font::font_px_for(font_size);
-            let line_h = line_height(body_font, font_px) as u32 + 4; // matches render_ttf_text
+            let line_h = line_height(fonts.body, font_px) as u32 + 4; // matches render_ttf_text
             let layout_lines = cfg.screen_height / line_h;
             let render_lines = render_usable / line_h;
             assert!(

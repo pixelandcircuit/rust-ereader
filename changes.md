@@ -2,6 +2,17 @@
 
 ## 2026-08-11
 
+Bold and italic rendering for HTML/EPUB content.
+
+- `src/font.rs`: Added `AppFonts` struct grouping all five font faces (`ui`, `ui_bold`, `body`, `body_bold`, `body_italic`). It is `Copy` so it can be threaded through call stacks cheaply.
+- `examples/ereader_ui.rs`: Added `BODY_BOLD_FONT_BYTES` (NoticiaText-Bold) and `BODY_ITALIC_FONT_BYTES` (NoticiaText-Italic) static arrays. `load_fonts()` now returns `AppFonts` instead of a 3-tuple. `make_scene()`, `make_theme()`, and `init_app_state()` all updated to use `AppFonts`; `AppState.fonts` replaces the old `bold_font`/`body_font` fields. All `cfg_from_scene()` call sites updated.
+- `src/appstate.rs`: `AppState` now holds `fonts: AppFonts` instead of individual font fields. `cfg_from_scene()` takes `&AppFonts` instead of two separate font parameters.
+- `src/bookview.rs`: `BookState` now holds `fonts: AppFonts`. `layout_cfg()` takes `&AppFonts` and builds `bold_font` and `italic_font` `FontMetrics` entries for the new `LayoutConfig` fields. `next_ttf_line()` tracks `in_bold`/`in_italic` state across sentinel bytes and uses the correct font for per-character advance widths. `render_ttf_text()` draws each line in segments, flushing and switching fonts at each `\x04`–`\x07` sentinel.
+- `src/layout.rs`: `LayoutConfig` gains `bold_font: Option<FontMetrics>` and `italic_font: Option<FontMetrics>`. `layout_chapter()` builds `bcache`/`icache` alongside `gcache`/`hcache`, tracks `in_bold`/`in_italic` state (reset at paragraph breaks), handles inline sentinels as zero-width style switches, and selects the right cache per character for accurate line-break widths.
+- `src/epub.rs`: `apply_tag()` now emits `\x04`/`\x05` around `<b>`/`<strong>` and `\x06`/`\x07` around `<em>`/`<i>`.
+- `src/book.rs`: `on_open()`/`on_close()` emit the same sentinels for HTML files.
+- `src/reader.rs`: test `fixed_cfg()` updated with the new `bold_font: None, italic_font: None` fields.
+
 Unified hold-based page navigation: regular page turns now fire on button/key release rather than press, and all nav keys share the same hold-duration logic as the fast-paging keys.
 
 - `examples/ereader_ui.rs`:

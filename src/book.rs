@@ -176,6 +176,10 @@ fn on_open(name: &str, out: &mut String) {
         push_newline(out);
         out.push_str("────────────────────");
         push_newline(out);
+    } else if name.eq_ignore_ascii_case("b") || name.eq_ignore_ascii_case("strong") {
+        out.push('\x04');
+    } else if name.eq_ignore_ascii_case("em") || name.eq_ignore_ascii_case("i") {
+        out.push('\x06');
     }
 }
 
@@ -194,6 +198,10 @@ fn on_close(name: &str, out: &mut String) {
         || name.eq_ignore_ascii_case("tr")
     {
         push_newline(out);
+    } else if name.eq_ignore_ascii_case("b") || name.eq_ignore_ascii_case("strong") {
+        out.push('\x05');
+    } else if name.eq_ignore_ascii_case("em") || name.eq_ignore_ascii_case("i") {
+        out.push('\x07');
     }
 }
 

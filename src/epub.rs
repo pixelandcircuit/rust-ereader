@@ -640,6 +640,14 @@ fn apply_tag(
             }
         }
 
+        "b" | "strong" => {
+            out.push(if closing { '\x05' } else { '\x04' });
+        }
+
+        "em" | "i" => {
+            out.push(if closing { '\x07' } else { '\x06' });
+        }
+
         _ => {}
     }
 }
