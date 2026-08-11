@@ -125,25 +125,6 @@ fn layout_fast_scroll_panel(e: &mut LayoutEvent) {
     }
 }
 
-fn update_fast_scroll_label(
-    scene: &mut Scene,
-    chapter: usize,
-    chapter_count: usize,
-    page: usize,
-    page_count: usize,
-) {
-    if let Some(v) = scene.get_view_mut(&ViewId::new("fast_scroll_label")) {
-        v.title = format!(
-            "Ch {}/{} · Pg {}/{}",
-            chapter + 1,
-            chapter_count,
-            page + 1,
-            page_count
-        );
-    }
-    scene.mark_dirty_view(&FAST_SCROLL_PANEL_ID);
-}
-
 fn make_scene(body_font: &'static Font, bold_font: &'static Font, w: i32, h: i32) -> Scene {
     let mut scene = Scene::new_with_bounds(Bounds::new(0, 0, w, h));
     scene.set_focus_enabled(false);
@@ -576,11 +557,10 @@ fn main() {
         forward: false,
     };
 
-
     state.scene.mark_layout_dirty();
     'sim_running: loop {
         // Advance fast-scroll page counter while a direction key is held.
-        handle_update_label(&mut state, &mut fast);
+        fast.handle_update_label(&mut state);
 
         if (!state.scene.dirty_rect.is_empty()) {
             info!("clip rect {}", state.scene.dirty_rect);
@@ -1316,13 +1296,13 @@ async fn main(spawner: Spawner) -> ! {
                     break;
                 }
 
-                if(forward) {
+                if (forward) {
                     fast.start_forward()
                 } else {
                     fast.start_backward()
                 }
 
-                handle_update_label(&mut state, &mut fast);
+                fast.handle_update_label(&mut state);
 
                 // Redraw only the panel while held (partial refresh).
                 let dirty_rect = state.scene.dirty_rect.clone();
@@ -1556,68 +1536,6 @@ async fn main(spawner: Spawner) -> ! {
     }
 }
 
-fn handle_update_label(mut state: &mut AppState, mut fast: &mut FastPaging) {
-    if let Some(fs_pressed_at) = fast.fs_pressed_at {
-        if !fast.fs_active && fs_pressed_at.elapsed().as_millis() >= 1000 {
-            fast.fs_active = true;
-            fast.fs_target = state.session.reader.current_page;
-            fast.fs_last_step = Instant::now();
-            update_fast_scroll_label(
-                &mut state.scene,
-                state.session.chapter_idx,
-                state.session.chapter_count(),
-                fast.fs_target,
-                state.session.reader.page_count(),
-            );
-            state.scene.show_view(&FAST_SCROLL_PANEL_ID);
-            state.scene.mark_layout_dirty();
-        }
-    }
-
-    if fast.fs_active && fast.fs_last_step.elapsed().as_millis() >= 200 {
-        if fast.forward {
-            if fast.fs_target + 1 >= state.session.reader.page_count() {
-                if state.session.chapter_idx + 1 < state.session.chapter_count() {
-                    state
-                        .session
-                        .go_to_chapter(
-                            state.session.chapter_idx + 1,
-                            state.book.as_ref(),
-                            &state.cfg,
-                        )
-                        .ok();
-                    fast.fs_target = 0;
-                }
-            } else {
-                fast.fs_target += 1;
-            }
-        } else if fast.fs_target == 0 {
-            if state.session.chapter_idx > 0 {
-                state
-                    .session
-                    .go_to_chapter(
-                        state.session.chapter_idx - 1,
-                        state.book.as_ref(),
-                        &state.cfg,
-                    )
-                    .ok();
-                fast.fs_target = state.session.reader.page_count().saturating_sub(1);
-            }
-        } else {
-            fast.fs_target -= 1;
-        }
-        fast.fs_last_step = Instant::now();
-        update_fast_scroll_label(
-            &mut state.scene,
-            state.session.chapter_idx,
-            state.session.chapter_count(),
-            fast.fs_target,
-            state.session.reader.page_count(),
-        );
-    }
-}
-
-
 struct FastPaging {
     fs_active: bool,
     fs_target: usize,
@@ -1645,6 +1563,85 @@ impl FastPaging {
         self.fs_active = false;
         self.fs_pressed_at = None;
     }
+    pub(crate) fn handle_update_label(&mut self, mut state: &mut AppState) {
+        if let Some(fs_pressed_at) = self.fs_pressed_at {
+            if !self.fs_active && fs_pressed_at.elapsed().as_millis() >= 1000 {
+                self.fs_active = true;
+                self.fs_target = state.session.reader.current_page;
+                self.fs_last_step = Instant::now();
+                update_fast_scroll_label(
+                    &mut state.scene,
+                    state.session.chapter_idx,
+                    state.session.chapter_count(),
+                    self.fs_target,
+                    state.session.reader.page_count(),
+                );
+                state.scene.show_view(&FAST_SCROLL_PANEL_ID);
+                state.scene.mark_layout_dirty();
+            }
+        }
+
+        if self.fs_active && self.fs_last_step.elapsed().as_millis() >= 200 {
+            if self.forward {
+                if self.fs_target + 1 >= state.session.reader.page_count() {
+                    if state.session.chapter_idx + 1 < state.session.chapter_count() {
+                        state
+                            .session
+                            .go_to_chapter(
+                                state.session.chapter_idx + 1,
+                                state.book.as_ref(),
+                                &state.cfg,
+                            )
+                            .ok();
+                        self.fs_target = 0;
+                    }
+                } else {
+                    self.fs_target += 1;
+                }
+            } else if self.fs_target == 0 {
+                if state.session.chapter_idx > 0 {
+                    state
+                        .session
+                        .go_to_chapter(
+                            state.session.chapter_idx - 1,
+                            state.book.as_ref(),
+                            &state.cfg,
+                        )
+                        .ok();
+                    self.fs_target = state.session.reader.page_count().saturating_sub(1);
+                }
+            } else {
+                self.fs_target -= 1;
+            }
+            self.fs_last_step = Instant::now();
+            update_fast_scroll_label(
+                &mut state.scene,
+                state.session.chapter_idx,
+                state.session.chapter_count(),
+                self.fs_target,
+                state.session.reader.page_count(),
+            );
+        }
+    }
+}
+
+fn update_fast_scroll_label(
+    scene: &mut Scene,
+    chapter: usize,
+    chapter_count: usize,
+    page: usize,
+    page_count: usize,
+) {
+    if let Some(v) = scene.get_view_mut(&ViewId::new("fast_scroll_label")) {
+        v.title = format!(
+            "Ch {}/{} · Pg {}/{}",
+            chapter + 1,
+            chapter_count,
+            page + 1,
+            page_count
+        );
+    }
+    scene.mark_dirty_view(&FAST_SCROLL_PANEL_ID);
 }
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
