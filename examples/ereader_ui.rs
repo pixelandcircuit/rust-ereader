@@ -1358,31 +1358,24 @@ async fn main(spawner: Spawner) -> ! {
 
                 fast.handle_update_label(&mut state);
 
-                // During fast paging we only repaint the small counter panel.
-                // Quality doesn't matter — the full screen gets a proper refresh
-                // on button release.  Always use 4-frame waveforms so the counter
-                // updates as quickly as possible.
-                let dirty_rect = state.scene.dirty_rect.clone();
-                if !dirty_rect.is_empty() {
-                    let (sw, sh) = hw.orientation().logical_size();
-                    let is_full = dirty_rect.size.w >= sw && dirty_rect.size.h >= sh;
-                    if is_full {
-                        bridge.display.fill(0x0F).unwrap();
-                        bridge.display.flush(DrawMode::FastClear).unwrap();
-                    } else {
-                        bridge.flush_region(&dirty_rect, DrawMode::FastClear);
-                    }
+                // During fast paging we only ever repaint the small counter panel.
+                // If mark_layout_dirty() was called (first show of the panel), the
+                // dirty_rect is the full screen — we don't need that.  Run layout
+                // first so the panel has its centred global bounds, then rederive
+                // the dirty rect from the panel alone.
+                if !state.scene.dirty_rect.is_empty() {
+                    layout_scene(&mut state.scene, &state.theme);
+                    state.scene.dirty_rect = Bounds::new_empty();
+                    state.scene.mark_dirty_view(&FAST_SCROLL_PANEL_ID);
+                    let panel_rect = state.scene.dirty_rect.clone();
+
+                    bridge.flush_region(&panel_rect, DrawMode::FastClear);
                     {
                         let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
-                        ctx.clip = dirty_rect;
-                        layout_scene(&mut state.scene, &state.theme);
+                        ctx.clip = panel_rect;
                         draw_scene(&mut state.scene, &mut ctx, &state.theme);
                     }
-                    if is_full {
-                        bridge.flush_with_mode(DrawMode::Fast);
-                    } else {
-                        bridge.flush_region(&dirty_rect, DrawMode::Fast);
-                    }
+                    bridge.flush_region(&panel_rect, DrawMode::Fast);
                 }
 
                 EmbassyTimer::after(Duration::from_millis(10)).await;

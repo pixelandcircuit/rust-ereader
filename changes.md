@@ -1,5 +1,17 @@
 # Changes
 
+## 2026-08-12 13:30
+
+Skip full-screen clear on fast-paging panel first show.
+
+When the fast-scroll panel first appears, `mark_layout_dirty()` was setting
+`dirty_rect` to the full scene bounds, triggering a full-screen FastClear + Fast
+waveform pass before the tiny dialog was drawn.  Fixed by running `layout_scene`
+first (so the panel has its computed centred position), then resetting `dirty_rect`
+and calling `mark_dirty_view(&FAST_SCROLL_PANEL_ID)` to rederive bounds from the
+panel alone.  The display is now only refreshed over the panel region on every
+update — no full-screen clear at all during fast paging.
+
 ## 2026-08-12 13:15
 
 Use 4-frame waveforms for fast-paging counter updates.
