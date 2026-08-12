@@ -1,5 +1,30 @@
 # Changes
 
+## 2026-08-12 10:20
+
+Add PSRAM and SRAM free memory display to battery dialog.
+
+- `src/hardware.rs`: Added `MemoryInfo` struct; added `memory_info()` to `HardwareAccess` trait. `SimHardware` returns zeros; `EspHardware` reads `esp_alloc::HEAP.free_caps()` for External (PSRAM) and Internal (SRAM) regions.
+- `examples/ereader_ui.rs`: Added `mem_psram` and `mem_sram` labels to battery dialog; added `fmt_bytes()` helper (formats as KB or MB); `update_battery_labels()` now populates both labels on each open.
+
+## 2026-08-12 09:59
+
+Replace test-subset fonts with full versions from Google Fonts / source.
+
+- `fonts/Alegreya-{Regular,Bold,Italic}.ttf`: replaced 16 KB test subsets with full fonts (~255 KB each).
+- `fonts/AtkinsonHyperlegible-{Regular,Bold,Italic,BoldItalic}.ttf`: updated to current full release; added BoldItalic variant.
+- `fonts/CrimsonPro-{Regular,Bold,Italic,BoldItalic}.ttf`: replaced 13 KB test subsets with full fonts (~107 KB each); added BoldItalic.
+- `fonts/Literata-{Regular,Bold,Italic}.ttf`: replaced 17 KB test subsets with full fonts (~255 KB each).
+- `fonts/NoticiaText-{Regular,Bold,Italic,BoldItalic}.ttf`: updated to current release; added BoldItalic.
+- `fonts/Vollkorn-{Regular,Bold,Italic}.ttf`: replaced 20 KB test subsets with full fonts (~345 KB each).
+
+## 2026-08-12 09:58
+
+Switch body font from NoticiaText to CrimsonText; restore real bold and italic rendering.
+
+- `fonts/`: Added `CrimsonText-Regular.ttf`, `CrimsonText-Bold.ttf`, `CrimsonText-Italic.ttf` from Google Fonts (~105–110 KB each, compact enough to fit all three in PSRAM).
+- `examples/ereader_ui.rs`: Added `BODY_FONT_BOLD_BYTES` and `BODY_FONT_ITALIC_BYTES` statics; `load_fonts()` now parses all three CrimsonText variants into separate `fontdue::Font` instances and wires them into `AppFonts.body_bold` and `AppFonts.body_italic` instead of aliasing to `body`. Bold/italic text in EPUBs now renders visually distinct from regular body text.
+
 ## 2026-08-11 16:30
 
 Fix ESP OOM crash when loading 5 body fonts.

@@ -26,7 +26,7 @@ use std::time::Instant;
 use ereader::hardware::{
     load_cold_boot_position, load_last_filename, load_settings, save_last_filename, EspHardware,
 };
-use ereader::hardware::{BacklightLevel, FontSize, HardwareAccess, Orientation};
+use ereader::hardware::{BacklightLevel, FontSize, HardwareAccess, MemoryInfo, Orientation};
 use ereader::layout::LayoutConfig;
 use ereader::reader::BookSession;
 use iris_ui::button::{make_button, make_full_button};
@@ -67,9 +67,11 @@ const SYNC_TIME_BUTTON_ID: ViewId = ViewId::new("sync_time");
 
 const UI_FONT_SIZE: f32 = 20.0;
 
-static FONT_BYTES: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Regular.ttf");
-static FONT_BOLD_BYTES: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Bold.ttf");
-static BODY_FONT_BYTES: &[u8] = include_bytes!("../fonts/NoticiaText-Regular.ttf");
+static FONT_BYTES: &[u8]             = include_bytes!("../fonts/AtkinsonHyperlegible-Regular.ttf");
+static FONT_BOLD_BYTES: &[u8]        = include_bytes!("../fonts/AtkinsonHyperlegible-Bold.ttf");
+static BODY_FONT_BYTES: &[u8]        = include_bytes!("../fonts/CrimsonText-Regular.ttf");
+static BODY_FONT_BOLD_BYTES: &[u8]   = include_bytes!("../fonts/CrimsonText-Bold.ttf");
+static BODY_FONT_ITALIC_BYTES: &[u8] = include_bytes!("../fonts/CrimsonText-Italic.ttf");
 
 fn handle_click(event: &mut GuiEvent) {
     if event.target == &ViewId::new("settings") {
@@ -400,6 +402,14 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
             &BATTERY_DIALOG_ID,
         );
         scene.add_view_to_parent(
+            make_label(&ViewId::new("mem_psram"), "PSRAM free: --"),
+            &BATTERY_DIALOG_ID,
+        );
+        scene.add_view_to_parent(
+            make_label(&ViewId::new("mem_sram"), "SRAM free: --"),
+            &BATTERY_DIALOG_ID,
+        );
+        scene.add_view_to_parent(
             make_button(&BATTERY_CLOSE_ID, "Dismiss"),
             &BATTERY_DIALOG_ID,
         );
@@ -444,10 +454,9 @@ fn format_time_utc(unix_secs: u64) -> String {
 /// Parse all fonts and leak them into `'static` memory.
 /// Works on both std (simulator) and no_std+alloc (ESP) since both provide `Box`.
 ///
-/// Only one body font is parsed; body_bold and body_italic alias it. NoticiaText's
-/// bold and italic variants each consume ~2.1 MB of PSRAM, and loading all three
-/// exhausts the 8 MB PSRAM before the 5th font finishes parsing. Full-coverage
-/// compact bold/italic fonts (~30–60 KB TTF) would allow separate faces here.
+/// CrimsonText (~105 KB/variant) is used for body text — compact enough that all
+/// three variants (Regular, Bold, Italic) fit in the 8 MB PSRAM alongside the two
+/// Atkinson UI fonts.
 fn load_fonts() -> AppFonts {
     let ui = Box::leak(Box::new(
         fontdue::Font::from_bytes(FONT_BYTES, fontdue::FontSettings::default())
@@ -459,15 +468,17 @@ fn load_fonts() -> AppFonts {
     ));
     let body = Box::leak(Box::new(
         fontdue::Font::from_bytes(BODY_FONT_BYTES, fontdue::FontSettings::default())
-            .expect("NoticiaText-Regular parse failed"),
+            .expect("CrimsonText-Regular parse failed"),
     ));
-    AppFonts {
-        ui,
-        ui_bold,
-        body,
-        body_bold: body,
-        body_italic: body,
-    }
+    let body_bold = Box::leak(Box::new(
+        fontdue::Font::from_bytes(BODY_FONT_BOLD_BYTES, fontdue::FontSettings::default())
+            .expect("CrimsonText-Bold parse failed"),
+    ));
+    let body_italic = Box::leak(Box::new(
+        fontdue::Font::from_bytes(BODY_FONT_ITALIC_BYTES, fontdue::FontSettings::default())
+            .expect("CrimsonText-Italic parse failed"),
+    ));
+    AppFonts { ui, ui_bold, body, body_bold, body_italic }
 }
 
 fn make_theme(fonts: &AppFonts) -> Theme {
@@ -745,13 +756,17 @@ fn init_app_state(hw: &dyn HardwareAccess) -> AppState {
     }
 }
 
+fn fmt_bytes(n: usize) -> String {
+    if n >= 1024 * 1024 {
+        format!("{:.1} MB", n as f32 / (1024.0 * 1024.0))
+    } else {
+        format!("{} KB", n / 1024)
+    }
+}
+
 fn update_battery_labels(scene: &mut Scene, hw: &dyn HardwareAccess) {
     let info = hw.battery_info();
-    let status = if info.is_charging {
-        "Charging"
-    } else {
-        "Not charging"
-    };
+    let status = if info.is_charging { "Charging" } else { "Not charging" };
     if let Some(v) = scene.get_view_mut(&BATTERY_BUTTON_ID) {
         v.title = format!("{}%", info.percent);
     }
@@ -763,6 +778,13 @@ fn update_battery_labels(scene: &mut Scene, hw: &dyn HardwareAccess) {
     }
     if let Some(v) = scene.get_view_mut(&ViewId::new("batt_status")) {
         v.title = format!("Status: {}", status);
+    }
+    let mem = hw.memory_info();
+    if let Some(v) = scene.get_view_mut(&ViewId::new("mem_psram")) {
+        v.title = format!("PSRAM: {} / {} free", fmt_bytes(mem.psram_free_bytes), fmt_bytes(mem.psram_total_bytes));
+    }
+    if let Some(v) = scene.get_view_mut(&ViewId::new("mem_sram")) {
+        v.title = format!("SRAM: {} / {} free", fmt_bytes(mem.sram_free_bytes), fmt_bytes(mem.sram_total_bytes));
     }
 }
 

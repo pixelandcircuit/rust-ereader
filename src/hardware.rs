@@ -170,6 +170,13 @@ pub struct BatteryInfo {
     pub is_charging: bool,
 }
 
+pub struct MemoryInfo {
+    pub psram_free_bytes: usize,
+    pub psram_total_bytes: usize,
+    pub sram_free_bytes: usize,
+    pub sram_total_bytes: usize,
+}
+
 // ── Trait ─────────────────────────────────────────────────────────────────────
 
 pub trait HardwareAccess {
@@ -178,6 +185,7 @@ pub trait HardwareAccess {
     fn orientation(&self) -> Orientation;
     fn current_time_secs(&self) -> u64;
     fn battery_info(&self) -> BatteryInfo;
+    fn memory_info(&self) -> MemoryInfo;
 
     fn set_font_size(&mut self, size: FontSize);
     fn set_backlight_level(&mut self, level: BacklightLevel);
@@ -313,6 +321,10 @@ impl HardwareAccess for SimHardware {
             voltage_mv: 4050,
             is_charging: false,
         }
+    }
+
+    fn memory_info(&self) -> MemoryInfo {
+        MemoryInfo { psram_free_bytes: 0, psram_total_bytes: 0, sram_free_bytes: 0, sram_total_bytes: 0 }
     }
 }
 
@@ -913,6 +925,30 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
             percent: 85,
             voltage_mv: 4050,
             is_charging: false,
+        }
+    }
+
+    fn memory_info(&self) -> MemoryInfo {
+        use esp_alloc::MemoryCapability;
+        let stats = esp_alloc::HEAP.stats();
+        let mut psram_free = 0usize;
+        let mut psram_total = 0usize;
+        let mut sram_free = 0usize;
+        let mut sram_total = 0usize;
+        for region in stats.region_stats.iter().flatten() {
+            if region.capabilities.contains(MemoryCapability::External) {
+                psram_free = region.free;
+                psram_total = region.size;
+            } else if region.capabilities.contains(MemoryCapability::Internal) {
+                sram_free += region.free;
+                sram_total += region.size;
+            }
+        }
+        MemoryInfo {
+            psram_free_bytes: psram_free,
+            psram_total_bytes: psram_total,
+            sram_free_bytes: sram_free,
+            sram_total_bytes: sram_total,
         }
     }
 }
