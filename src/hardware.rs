@@ -164,6 +164,7 @@ impl Orientation {
 
 // ── Battery ───────────────────────────────────────────────────────────────────
 
+#[derive(Clone)]
 pub struct BatteryInfo {
     pub percent: u8,
     pub voltage_mv: u32,
@@ -627,6 +628,7 @@ pub struct EspHardware<'d, C: ChannelIFace<'d, LowSpeed>> {
     rtc: Rtc<'d>,
     btn_prev: Input<'d>,
     btn_next: Input<'d>,
+    cached_battery: BatteryInfo,
 }
 
 #[cfg(feature = "esp")]
@@ -649,7 +651,13 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> EspHardware<'d, C> {
             rtc,
             btn_prev,
             btn_next,
+            cached_battery: BatteryInfo { percent: 0, voltage_mv: 0, is_charging: false },
         }
+    }
+
+    /// Update cached battery state from parsed hardware readings.
+    pub fn update_battery(&mut self, voltage_mv: u32, percent: u8, is_charging: bool) {
+        self.cached_battery = BatteryInfo { percent: percent.min(100), voltage_mv, is_charging };
     }
 }
 
@@ -921,11 +929,7 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
     }
 
     fn battery_info(&self) -> BatteryInfo {
-        BatteryInfo {
-            percent: 85,
-            voltage_mv: 4050,
-            is_charging: false,
-        }
+        self.cached_battery.clone()
     }
 
     fn memory_info(&self) -> MemoryInfo {

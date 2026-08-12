@@ -1,5 +1,16 @@
 # Changes
 
+## 2026-08-12 19:20
+
+Fix battery dialog showing hardcoded 85% / "Not charging".
+
+`EspHardware::battery_info()` was returning hardcoded values. The board has a
+BQ27220 fuel gauge at I2C 0x55 (on the same GPIO39/40 bus as the GT911 touch
+controller). Correct registers: voltage at 0x08 (mV, 16-bit LE), average
+current at 0x14 (mA, signed 16-bit LE), state-of-charge at 0x1E (%, 16-bit).
+`is_charging` is derived from current_ma > 0. The dialog now reads live values
+from the fuel gauge immediately before opening.
+
 ## 2026-08-12 13:30
 
 Skip full-screen clear on fast-paging panel first show.

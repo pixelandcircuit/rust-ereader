@@ -80,11 +80,7 @@ Available fonts in `fonts/`:
 
 | Example | Description |
 |---------|-------------|
-| `ereader_full` | Full application: EPUB reader with touch, backlight, battery display, flash persistence — also runs in the SDL2 simulator (see below) |
 | `ereader_ui` | iris-ui prototype: portrait panel with buttons — also runs in the SDL2 simulator (see below) |
-| `ebook` | Minimal EPUB reader skeleton |
-| `font_compare` | Side-by-side font comparison across six typefaces |
-| `epub_test` | EPUB library smoke test — runs on device **or** locally (see below) |
 
 ## Running examples in the simulator (no device needed)
 

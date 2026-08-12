@@ -1485,6 +1485,15 @@ async fn main(spawner: Spawner) -> ! {
                             hw.save_settings();
                         }
                     }
+                    // Refresh battery from BQ27220 fuel gauge (I2C 0x55).
+                    // Voltage at reg 0x08, AverageCurrent at 0x14, StateOfCharge at 0x1E.
+                    if input.source == BATTERY_BUTTON_ID {
+                        let voltage_mv = bridge.display.i2c_read_u16(0x55, 0x08) as u32;
+                        let current_ma = bridge.display.i2c_read_i16(0x55, 0x14);
+                        let percent = bridge.display.i2c_read_u16(0x55, 0x1E).min(100) as u8;
+                        let is_charging = current_ma > 0;
+                        hw.update_battery(voltage_mv, percent, is_charging);
+                    }
                     handle_click_action(&mut hw, &input, &mut state);
                     if input.source == ViewId::new("sync_time") {
                         info!("sync_time pressed, querying NTP");
