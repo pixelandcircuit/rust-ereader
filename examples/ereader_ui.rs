@@ -745,6 +745,7 @@ fn init_app_state(hw: &dyn HardwareAccess) -> AppState {
 
     AppState {
         partial_refresh_count: 0,
+        full_quality_count: 0,
         current_filename: String::from("__welcome__"),
         last_interaction: Instant::now(),
         cfg: pre_cfg,
@@ -879,6 +880,10 @@ impl<'a> Rgb565ToGray4<'a> {
     }
     fn flush(&mut self) {
         self.display.flush(DrawMode::BlackOnWhite).unwrap();
+    }
+
+    fn flush_with_mode(&mut self, mode: DrawMode) {
+        self.display.flush(mode).unwrap();
     }
 
     /// Apply `mode` waveform to the logical dirty rect only.
@@ -1247,6 +1252,10 @@ async fn main(spawner: Spawner) -> ! {
 
     let mut just_woke = false;
     const PARTIAL_REFRESH_FULL_INTERVAL: u32 = 8;
+    // Full-quality (15-frame) refresh every N full-screen page turns.
+    // In between, use the 4-frame fast waveform.  Increase to reduce flicker;
+    // decrease if ghosting accumulates too quickly.
+    const FULL_QUALITY_INTERVAL: u32 = 5;
 
     // ── WiFi + NTP time sync ──────────────────────────────────────────────────
     // Only sync on cold boot. On deep-sleep wakeup the RTC already holds the
@@ -1356,10 +1365,21 @@ async fn main(spawner: Spawner) -> ! {
                     let needs_full = dirty_rect.size.w >= sw && dirty_rect.size.h >= sh;
                     let force_full =
                         !needs_full && state.partial_refresh_count >= PARTIAL_REFRESH_FULL_INTERVAL;
+                    let use_fast = needs_full
+                        && !force_full
+                        && state.full_quality_count < FULL_QUALITY_INTERVAL;
+                    let (clear_mode, draw_mode) = if use_fast {
+                        (DrawMode::FastClear, DrawMode::Fast)
+                    } else {
+                        (DrawMode::WhiteOnBlack, DrawMode::BlackOnWhite)
+                    };
                     if needs_full || force_full {
                         bridge.display.fill(0x0F).unwrap();
-                        bridge.display.flush(DrawMode::WhiteOnBlack).unwrap();
+                        bridge.display.flush(clear_mode).unwrap();
                         state.partial_refresh_count = 0;
+                        if needs_full {
+                            if use_fast { state.full_quality_count += 1; } else { state.full_quality_count = 0; }
+                        }
                     } else {
                         bridge.clearing_flush_region(&dirty_rect);
                         state.partial_refresh_count += 1;
@@ -1375,7 +1395,7 @@ async fn main(spawner: Spawner) -> ! {
                         draw_scene(&mut state.scene, &mut ctx, &state.theme);
                     }
                     if needs_full || force_full {
-                        bridge.flush();
+                        bridge.flush_with_mode(draw_mode);
                     } else {
                         bridge.flush_region(&dirty_rect, DrawMode::BlackOnWhite);
                     }
@@ -1406,20 +1426,33 @@ async fn main(spawner: Spawner) -> ! {
 
         if was_dirty {
             info!("clip rect {}", state.scene.dirty_rect);
-            // Ghost-clear pass: drives dark pixels to white so the BlackOnWhite draw can
-            // correctly lighten any pixels that changed from dark to light (e.g. deselected
-            // list item, dismissed dialog). Without this, white-target pixels get "no drive"
-            // from the LUT and black display pixels stay black.
-            //
-            // Periodic full refresh: repeated partial waveform passes accumulate field
-            // coupling that slowly darkens white areas adjacent to the dirty rect.
-            // Every PARTIAL_REFRESH_FULL_INTERVAL partial refreshes we force a full clear.
+            // Ghost-clear pass: drives dark pixels to white so the draw pass can
+            // correctly lighten pixels that changed from dark to light.
+            // Periodic full refresh: accumulating field coupling slowly darkens
+            // white areas; every PARTIAL_REFRESH_FULL_INTERVAL partials we force a full.
+            // Fast waveforms (4 frames) are used for page turns; every
+            // FULL_QUALITY_INTERVAL full-screen turns we fall back to 15-frame quality.
             let force_full =
                 !needs_full_refresh && state.partial_refresh_count >= PARTIAL_REFRESH_FULL_INTERVAL;
+            let use_fast = needs_full_refresh
+                && !force_full
+                && state.full_quality_count < FULL_QUALITY_INTERVAL;
+            let (clear_mode, draw_mode) = if use_fast {
+                (DrawMode::FastClear, DrawMode::Fast)
+            } else {
+                (DrawMode::WhiteOnBlack, DrawMode::BlackOnWhite)
+            };
             if needs_full_refresh || force_full {
                 bridge.display.fill(0x0F).unwrap();
-                bridge.display.flush(DrawMode::WhiteOnBlack).unwrap();
+                bridge.display.flush(clear_mode).unwrap();
                 state.partial_refresh_count = 0;
+                if needs_full_refresh {
+                    if use_fast {
+                        state.full_quality_count += 1;
+                    } else {
+                        state.full_quality_count = 0;
+                    }
+                }
             } else {
                 bridge.clearing_flush_region(&dirty_rect);
                 state.partial_refresh_count += 1;
@@ -1435,7 +1468,7 @@ async fn main(spawner: Spawner) -> ! {
                 draw_scene(&mut state.scene, &mut ctx, &state.theme);
             }
             if needs_full_refresh || force_full {
-                bridge.flush();
+                bridge.flush_with_mode(draw_mode);
             } else {
                 bridge.flush_region(&dirty_rect, DrawMode::BlackOnWhite);
             }

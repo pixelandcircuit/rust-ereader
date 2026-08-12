@@ -20,6 +20,9 @@ use std::time::Instant;
 
 pub struct AppState {
     pub partial_refresh_count: u32,
+    /// Counts full-screen page turns since the last full-quality (15-frame) refresh.
+    /// Resets to 0 when a full-quality pass runs.
+    pub full_quality_count: u32,
     pub current_filename: String,
     pub last_interaction: Instant,
     pub cfg: LayoutConfig,

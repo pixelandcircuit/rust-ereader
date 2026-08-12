@@ -1,15 +1,20 @@
-use alloc::{boxed::Box, vec, vec::Vec};
+use alloc::boxed::Box;
 
 use esp_hal::{delay::Delay, peripherals};
 use log::*;
 
 use crate::driver::{ed047tc1, Error, Result};
 
-const CONTRAST_CYCLES_4BPP: &[u16; 15] = &[
-    30, 30, 20, 20, 30, 30, 30, 40, 40, 50, 50, 50, 100, 200, 300,
-];
-const CONTRAST_CYCLES_4BPP_WHITE: &[u16; 15] =
+// Full-quality 15-frame waveforms (GL16 style).
+const CONTRAST_CYCLES_4BPP: &[u16] =
+    &[30, 30, 20, 20, 30, 30, 30, 40, 40, 50, 50, 50, 100, 200, 300];
+const CONTRAST_CYCLES_4BPP_WHITE: &[u16] =
     &[10, 10, 8, 8, 8, 8, 8, 10, 10, 15, 15, 20, 20, 100, 300];
+
+// Fast 4-frame waveforms for page turns.  Concentrate drive energy into fewer
+// cycles at the cost of some ghosting.  Tune on-device if contrast is lacking.
+const CONTRAST_CYCLES_FAST: &[u16] = &[30, 50, 150, 300];
+const CONTRAST_CYCLES_FAST_WHITE: &[u16] = &[15, 20, 80, 200];
 
 /// Display rotation, only 90° increments supported
 #[derive(Clone, Copy, Default)]
@@ -26,6 +31,10 @@ pub enum DrawMode {
     BlackOnWhite,
     WhiteOnWhite,
     WhiteOnBlack,
+    /// 4-frame fast draw pass — pairs with `FastClear` for quick page turns.
+    Fast,
+    /// 4-frame fast ghost-clear pass — use before `Fast` instead of `WhiteOnBlack`.
+    FastClear,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -39,16 +48,22 @@ pub struct Rectangle {
 impl DrawMode {
     fn lut_default(&self) -> u8 {
         match self {
-            Self::BlackOnWhite => 0x55,
-            Self::WhiteOnBlack | Self::WhiteOnWhite => 0xAA,
+            Self::BlackOnWhite | Self::WhiteOnWhite | Self::Fast => 0x55,
+            Self::WhiteOnBlack | Self::FastClear => 0xAA,
         }
     }
 
-    fn contrast_cycles(&self) -> &[u16; 15] {
+    fn contrast_cycles(&self) -> &[u16] {
         match self {
             Self::WhiteOnBlack => CONTRAST_CYCLES_4BPP_WHITE,
             Self::BlackOnWhite | Self::WhiteOnWhite => CONTRAST_CYCLES_4BPP,
+            Self::Fast => CONTRAST_CYCLES_FAST,
+            Self::FastClear => CONTRAST_CYCLES_FAST_WHITE,
         }
+    }
+
+    fn reverse_frames(&self) -> bool {
+        matches!(self, Self::BlackOnWhite | Self::WhiteOnWhite | Self::Fast)
     }
 }
 
@@ -63,6 +78,9 @@ pub struct Display<'a> {
     framebuffer: Box<[u8; FRAMEBUFFER_SIZE]>,
     tainted_rows: [u8; TAINTED_ROWS_SIZE],
     rotation: DisplayRotation,
+    /// Pre-allocated 64 KB waveform LUT; reset at the start of each flush to
+    /// avoid a heap allocation on every page turn.
+    lut: Box<[u8; 1 << 16]>,
 }
 
 impl<'a> Display<'a> {
@@ -88,6 +106,7 @@ impl<'a> Display<'a> {
             framebuffer: Box::new([0xFF; FRAMEBUFFER_SIZE]),
             tainted_rows: [0; TAINTED_ROWS_SIZE],
             rotation: DisplayRotation::default(),
+            lut: Box::new([0u8; 1 << 16]),
         })
     }
 
@@ -357,7 +376,6 @@ impl<'a> Display<'a> {
         self.tainted_rows[index] & (1 << (row % 8)) != 0
     }
 
-    const DRAW_IMAGE_FRAME_COUNT: usize = 15;
     fn draw(&mut self, mode: DrawMode) -> Result<()> {
         // Find the contiguous physical row range that needs updating.
         // Rows outside this range get fast CKV skips to avoid driving untouched pixels.
@@ -377,10 +395,11 @@ impl<'a> Display<'a> {
             return Ok(()); // nothing tainted
         }
 
-        let mut lut = vec![mode.lut_default(); 1 << 16];
+        let frame_count = mode.contrast_cycles().len();
+        self.lut.fill(mode.lut_default());
 
-        for k in 0..Self::DRAW_IMAGE_FRAME_COUNT {
-            update_lut(&mut lut, k, mode);
+        for k in 0..frame_count {
+            update_lut(&mut self.lut[..], k, mode);
             self.skipping = 0;
             self.epd.frame_start()?;
             for y in 0..Self::HEIGHT {
@@ -392,10 +411,14 @@ impl<'a> Display<'a> {
                     self.row_skip(mode.contrast_cycles()[k])?;
                     continue;
                 }
-                let start = y as usize * LINE_BYTES_4BPP;
-                let end = start + LINE_BYTES_4BPP;
-                let buf = prepare_dma_buffer(&self.framebuffer[start..end], &lut);
-                self.epd.set_buffer(buf.as_slice())?;
+                let row_offset = y as usize * LINE_BYTES_4BPP;
+                let mut dma_buf = [0u8; BYTES_PER_LINE];
+                prepare_dma_buffer(
+                    &self.framebuffer[row_offset..row_offset + LINE_BYTES_4BPP],
+                    &self.lut[..],
+                    &mut dma_buf,
+                );
+                self.epd.set_buffer(&dma_buf)?;
                 self.row_write(mode.contrast_cycles()[k])?;
             }
             if self.skipping == 0 {
@@ -417,9 +440,10 @@ impl<'a> Display<'a> {
         let col_start = area.x as usize;
         let col_end = (area.x + area.width).min(Self::WIDTH) as usize;
 
-        let mut lut = vec![mode.lut_default(); 1 << 16];
-        for k in 0..Self::DRAW_IMAGE_FRAME_COUNT {
-            update_lut(&mut lut, k, mode);
+        let frame_count = mode.contrast_cycles().len();
+        self.lut.fill(mode.lut_default());
+        for k in 0..frame_count {
+            update_lut(&mut self.lut[..], k, mode);
             self.skipping = 0;
             self.epd.frame_start()?;
             for y in 0..Self::HEIGHT {
@@ -431,11 +455,15 @@ impl<'a> Display<'a> {
                     self.row_skip(mode.contrast_cycles()[k])?;
                     continue;
                 }
-                let start = y as usize * LINE_BYTES_4BPP;
-                let end = start + LINE_BYTES_4BPP;
-                let mut buf = prepare_dma_buffer(&self.framebuffer[start..end], &lut);
-                mask_dma_columns(&mut buf, col_start, col_end);
-                self.epd.set_buffer(buf.as_slice())?;
+                let row_offset = y as usize * LINE_BYTES_4BPP;
+                let mut dma_buf = [0u8; BYTES_PER_LINE];
+                prepare_dma_buffer(
+                    &self.framebuffer[row_offset..row_offset + LINE_BYTES_4BPP],
+                    &self.lut[..],
+                    &mut dma_buf,
+                );
+                mask_dma_columns(&mut dma_buf, col_start, col_end);
+                self.epd.set_buffer(&dma_buf)?;
                 self.row_write(mode.contrast_cycles()[k])?;
             }
             if self.skipping == 0 {
@@ -471,44 +499,39 @@ fn line_buffer_reorder(data: &mut [u8]) {
     }
 }
 
-fn prepare_dma_buffer(line_data: &[u8], conversion_lut: &[u8]) -> Vec<u8> {
-    let mut epd_input = vec![0u8; BYTES_PER_LINE];
-    let mut wide_epd_input: Vec<u32> = vec![0u32; Display::WIDTH as usize / 16];
-
-    let line_data_16: Vec<u16> = line_data
-        .chunks(2)
-        .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
-        .collect();
-
-    for (j, chunk) in line_data_16.chunks(4).enumerate() {
-        if let [v1, v2, v3, v4] = chunk {
-            let pixel: u32 = (conversion_lut[*v1 as usize] as u32)
-                | (conversion_lut[*v2 as usize] as u32) << 8
-                | (conversion_lut[*v3 as usize] as u32) << 16
-                | (conversion_lut[*v4 as usize] as u32) << 24;
-            wide_epd_input[j] = pixel;
-        }
+/// Convert one row of 4bpp framebuffer data into a DMA waveform buffer.
+/// Writes into `out` (stack-allocated by caller) — no heap allocation.
+fn prepare_dma_buffer(line_data: &[u8], conversion_lut: &[u8], out: &mut [u8; BYTES_PER_LINE]) {
+    // Each 8-byte chunk of line_data holds 4 pixel-pairs (4 × u16 LUT keys).
+    // Each LUT lookup returns one output byte (4 × 2-bit drive codes).
+    for (j, chunk) in line_data.chunks(8).enumerate() {
+        let v1 = u16::from_le_bytes([chunk[0], chunk[1]]);
+        let v2 = u16::from_le_bytes([chunk[2], chunk[3]]);
+        let v3 = u16::from_le_bytes([chunk[4], chunk[5]]);
+        let v4 = u16::from_le_bytes([chunk[6], chunk[7]]);
+        let word: u32 = (conversion_lut[v1 as usize] as u32)
+            | (conversion_lut[v2 as usize] as u32) << 8
+            | (conversion_lut[v3 as usize] as u32) << 16
+            | (conversion_lut[v4 as usize] as u32) << 24;
+        out[j * 4..(j + 1) * 4].copy_from_slice(&word.to_le_bytes());
     }
-
-    for (i, &wide_pixel) in wide_epd_input.iter().enumerate() {
-        epd_input[i * 4..(i + 1) * 4].copy_from_slice(&wide_pixel.to_le_bytes());
-    }
-
     // ED047TC1 expects MSB-first within each byte (bits 6-7 = leftmost pixel).
-    // The LUT produces LSB-first (bits 0-1 = leftmost), so reverse the 2-bit pair order.
-    for byte in epd_input.iter_mut() {
+    // The LUT produces LSB-first (bits 0-1 = leftmost), so reverse each 2-bit pair.
+    for byte in out.iter_mut() {
         let b = *byte;
         *byte = ((b & 0x03) << 6) | ((b & 0x0C) << 2) | ((b & 0x30) >> 2) | ((b & 0xC0) >> 6);
     }
-
-    epd_input
 }
 
+// The waveform LUT maps from a 4-pixel group value to 2-bit drive codes. Reversed
+// modes (BlackOnWhite, Fast) always count DOWN from frame 15, even when running fewer
+// frames — so that white pixels (value 15) are VCOM'd in the very first frame, not
+// frame (frame_count-1). Without this, a 4-frame Fast pass would only cover pixel
+// values 1-4 with VCOM, leaving value-15 (white bg) driving dark the whole time.
+const FULL_FRAME_COUNT: usize = 15;
+
 fn update_lut(conversion_lut: &mut [u8], k: usize, mode: DrawMode) {
-    let k = match mode {
-        DrawMode::BlackOnWhite | DrawMode::WhiteOnWhite => Display::DRAW_IMAGE_FRAME_COUNT - k,
-        DrawMode::WhiteOnBlack => k,
-    };
+    let k = if mode.reverse_frames() { FULL_FRAME_COUNT - k } else { k };
     for l in (k..1 << 16).step_by(16) {
         conversion_lut[l] &= 0xFC;
     }

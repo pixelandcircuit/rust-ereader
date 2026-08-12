@@ -1,5 +1,48 @@
 # Changes
 
+## 2026-08-12 12:45
+
+Fix dark screen on boot caused by incorrect Fast waveform LUT reversal.
+
+`update_lut` was computing `k_eff = frame_count - k` (4 - k for Fast). With only 4
+frames this produced k_eff values 4→1, so white background pixels (value 15) were never
+VCOM'd and kept the default `0x55` (drive-dark) code throughout all Fast frames —
+driving the entire screen dark. Fixed by introducing `FULL_FRAME_COUNT = 15` as the
+fixed reversal offset for all reversed modes (`BlackOnWhite`, `WhiteOnWhite`, `Fast`).
+Fast now produces k_eff 15→12, correctly VCOM-ing white pixels in the very first frame
+while black text pixels (value 0) keep their drive-dark code. The `frame_count` parameter
+was removed from `update_lut` since it was incorrect for the Fast path.
+
+## 2026-08-12 11:30
+
+Speed up e-paper page turns — four independent optimizations.
+
+**Pre-allocate 64 KB waveform LUT** (`src/driver/display.rs`): moved `lut` from a
+per-flush `vec!` allocation into a `Box<[u8; 65536]>` field on `Display`, initialized
+once in `Display::new()`. Eliminates one 64 KB heap allocation on every `flush()` and
+`flush_region()` call.
+
+**Stack-allocate DMA row buffers** (`src/driver/display.rs`): rewrote
+`prepare_dma_buffer` to write into a caller-supplied `&mut [u8; BYTES_PER_LINE]` array
+instead of returning a `Vec<u8>`. The three intermediate `Vec` allocations (epd\_input,
+wide\_epd\_input, line\_data\_16) are eliminated; callers now declare `let mut dma_buf =
+[0u8; BYTES_PER_LINE]` on the stack. Removes up to ~16,200 heap allocations per full
+page turn.
+
+**Fast 4-frame waveforms** (`src/driver/display.rs`): added `DrawMode::Fast` and
+`DrawMode::FastClear` variants backed by new 4-element timing tables
+(`CONTRAST_CYCLES_FAST`, `CONTRAST_CYCLES_FAST_WHITE`). Frame count is now derived from
+`contrast_cycles().len()` instead of a fixed const, so both 4-frame and 15-frame paths
+share the same `draw()` / `flush_region()` code. `update_lut` takes an explicit
+`frame_count` parameter. Tune `CONTRAST_CYCLES_FAST` on-device if contrast is
+insufficient.
+
+**Periodic full-quality refresh** (`examples/ereader_ui.rs`, `src/appstate.rs`): added
+`AppState::full_quality_count`. Full-screen page turns use `FastClear` + `Fast` by
+default; every `FULL_QUALITY_INTERVAL = 5` turns a 15-frame `WhiteOnBlack` +
+`BlackOnWhite` pass runs to clear ghost accumulation. `Rgb565ToGray4::flush_with_mode()`
+added to pass the chosen mode through the bridge.
+
 ## 2026-08-12 10:20
 
 Add PSRAM and SRAM free memory display to battery dialog.
