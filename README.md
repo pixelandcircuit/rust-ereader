@@ -146,8 +146,10 @@ cargo sim --example ereader_ui
 |---------|--------|
 | BOOT button (GPIO0) | Previous page / previous chapter |
 | GPIO38 button | Next page / next chapter |
-| Deep sleep | Enters after 60 s of inactivity; state saved to RTC fast memory |
-| Wake from sleep | Press BOOT button; position and settings restored from RTC (no flash read) |
+| Fast paging | Hold either button > 1 s to enter fast-scroll mode; a counter overlay shows chapter/page; release to jump |
+| Light sleep | Backlight off after 60 s of inactivity; wakes instantly on either button press |
+| Deep sleep | Full ESP32-S3 deep sleep after 60 min of inactivity; reading position saved to RTC fast memory |
+| Wake from deep sleep | Press BOOT button; position and settings restored from RTC (no flash read) |
 | NVS persistence | Font size, backlight, orientation, and position also saved to flash NVS (survives power-off) |
 
 ## Running epub_test locally (no device needed)
