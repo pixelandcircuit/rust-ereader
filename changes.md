@@ -1,5 +1,18 @@
 # Changes
 
+## 2026-08-12 13:15
+
+Use 4-frame waveforms for fast-paging counter updates.
+
+While the user holds a button the fast-paging loop now always uses
+`DrawMode::FastClear` + `DrawMode::Fast` (4+4 frames) instead of the full
+15+15 frame waveform.  For the small counter dialog (~100 active rows) this
+cuts per-update display time from ~158 ms to ~90 ms.  Quality doesn't matter
+during fast paging because the full screen gets a proper 15-frame refresh the
+moment the button is released.  Removed the `partial_refresh_count` and
+`full_quality_count` bookkeeping from the hold loop — those counters are only
+relevant to the main render path.
+
 ## 2026-08-12 12:45
 
 Fix dark screen on boot caused by incorrect Fast waveform LUT reversal.

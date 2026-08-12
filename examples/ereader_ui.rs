@@ -1358,46 +1358,30 @@ async fn main(spawner: Spawner) -> ! {
 
                 fast.handle_update_label(&mut state);
 
-                // Redraw only the panel while held (partial refresh).
+                // During fast paging we only repaint the small counter panel.
+                // Quality doesn't matter — the full screen gets a proper refresh
+                // on button release.  Always use 4-frame waveforms so the counter
+                // updates as quickly as possible.
                 let dirty_rect = state.scene.dirty_rect.clone();
                 if !dirty_rect.is_empty() {
                     let (sw, sh) = hw.orientation().logical_size();
-                    let needs_full = dirty_rect.size.w >= sw && dirty_rect.size.h >= sh;
-                    let force_full =
-                        !needs_full && state.partial_refresh_count >= PARTIAL_REFRESH_FULL_INTERVAL;
-                    let use_fast = needs_full
-                        && !force_full
-                        && state.full_quality_count < FULL_QUALITY_INTERVAL;
-                    let (clear_mode, draw_mode) = if use_fast {
-                        (DrawMode::FastClear, DrawMode::Fast)
-                    } else {
-                        (DrawMode::WhiteOnBlack, DrawMode::BlackOnWhite)
-                    };
-                    if needs_full || force_full {
+                    let is_full = dirty_rect.size.w >= sw && dirty_rect.size.h >= sh;
+                    if is_full {
                         bridge.display.fill(0x0F).unwrap();
-                        bridge.display.flush(clear_mode).unwrap();
-                        state.partial_refresh_count = 0;
-                        if needs_full {
-                            if use_fast { state.full_quality_count += 1; } else { state.full_quality_count = 0; }
-                        }
+                        bridge.display.flush(DrawMode::FastClear).unwrap();
                     } else {
-                        bridge.clearing_flush_region(&dirty_rect);
-                        state.partial_refresh_count += 1;
+                        bridge.flush_region(&dirty_rect, DrawMode::FastClear);
                     }
                     {
                         let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
-                        ctx.clip = if force_full {
-                            Bounds::new(0, 0, sw, sh)
-                        } else {
-                            dirty_rect
-                        };
+                        ctx.clip = dirty_rect;
                         layout_scene(&mut state.scene, &state.theme);
                         draw_scene(&mut state.scene, &mut ctx, &state.theme);
                     }
-                    if needs_full || force_full {
-                        bridge.flush_with_mode(draw_mode);
+                    if is_full {
+                        bridge.flush_with_mode(DrawMode::Fast);
                     } else {
-                        bridge.flush_region(&dirty_rect, DrawMode::BlackOnWhite);
+                        bridge.flush_region(&dirty_rect, DrawMode::Fast);
                     }
                 }
 
