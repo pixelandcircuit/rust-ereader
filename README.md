@@ -76,15 +76,9 @@ Available fonts in `fonts/`:
 - NoticiaText (Regular / Italic / Bold) ← current
 - Vollkorn (Regular / Italic / Bold)
 
-## Examples
-
-| Example | Description |
-|---------|-------------|
-| `ereader_ui` | iris-ui prototype: portrait panel with buttons — also runs in the SDL2 simulator (see below) |
-
 ## Running examples in the simulator (no device needed)
 
-Both `ereader_full` and `ereader_ui` support a desktop SDL2 simulator.
+The example `ereader_ui` supports a desktop SDL2 simulator or the real device.
 
 **Prerequisites** — install SDL2 (only needed once):
 ```sh
