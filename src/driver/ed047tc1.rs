@@ -29,7 +29,7 @@ const PCA_REG_CONFIG1: u8 = 0x07; // port-1 direction
 // ── PCA9555 port-1 bit masks ──────────────────────────────────────────────────
 const PCA_OE: u8 = 0x01; // bit 0 – display output-enable
 const PCA_MODE: u8 = 0x02; // bit 1 – display mode
-                           // bit 2 (STV) is an input on this board and not driven here
+                           // bit 2 – reserved input (no external connection confirmed)
 const PCA_PWRUP: u8 = 0x08; // bit 3 – TPS65185 power-up
 const PCA_VCOM_CTRL: u8 = 0x10; // bit 4 – TPS65185 VCOM control
 const PCA_WAKEUP: u8 = 0x20; // bit 5 – TPS65185 wakeup
@@ -327,6 +327,7 @@ impl<'a> ED047TC1<'a> {
     fn pca_read_port1(&mut self) -> u8 {
         pca_read(&mut self.i2c, PCA_REG_INPUT1)
     }
+
 }
 
 // ── Free-standing I2C helpers ─────────────────────────────────────────────────

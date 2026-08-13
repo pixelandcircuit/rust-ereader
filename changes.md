@@ -1,5 +1,13 @@
 # Changes
 
+## 2026-08-13
+
+Face button (circle below screen) wired up via GT911 key area; press/release logging for all three buttons.
+
+- `src/driver/gt911.rs`: added `read_input()` returning `(Option<(u16,u16)>, bool)` — reads touch point and `have_key` (bit 4 of status) in a single I2C transaction. Added `key_pressed()` for polling the key state inside a hold loop. `read_touch()` now delegates to `read_input()`.
+- `src/driver/display.rs`: added `read_touch_and_key()` and `gt911_key_pressed()` delegating to the GT911 driver.
+- `examples/ereader_ui.rs`: replaced `Option<bool>` button state with a `Btn` enum (`Prev`/`Next`/`Face`). Each loop iteration calls `read_touch_and_key()` once to get both touch and face-button state without a redundant status read. Logs `"BOOT/SIDE/FACE button pressed[wake]"` and `"... released"`. Face button hold loop polls `gt911_key_pressed()` every 10 ms.
+
 ## 2026-08-12 19:20
 
 Fix battery dialog showing hardcoded 85% / "Not charging".

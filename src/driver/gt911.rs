@@ -104,32 +104,38 @@ impl Gt911 {
         id
     }
 
-    /// Returns the (x, y) coordinates of the first active touch point, or None.
-    pub fn read_touch<I: I2c>(&mut self, i2c: &mut I) -> Option<(u16, u16)> {
+    /// Read touch and key state in one status transaction.
+    /// Returns `(touch_point, key_pressed)`. Clears the buffer-ready flag.
+    pub fn read_input<I: I2c>(&mut self, i2c: &mut I) -> (Option<(u16, u16)>, bool) {
         let mut status = [0u8; 1];
-        i2c.write_read(self.addr, &REG_STATUS, &mut status).ok()?;
-
+        let _ = i2c.write_read(self.addr, &REG_STATUS, &mut status);
+        let have_key = status[0] & 0x10 != 0;
         let count = status[0] & 0x0F;
-
-        // Always clear the buffer-ready flag so the GT911 can write new touch
-        // data on the next scan cycle — must happen even when count == 0.
         let _ = i2c.write(self.addr, &[REG_STATUS[0], REG_STATUS[1], 0x00]);
-
         if count == 0 {
-            return None;
+            return (None, have_key);
         }
-
         let mut pt = [0u8; 8];
-        i2c.write_read(self.addr, &REG_TOUCH0, &mut pt).ok()?;
-
-        // Byte layout (empirically verified):
-        // [0]=Y_low [1]=Y_high [2]=X_low [3]=X_high [4]=touch_area_low [5]=touch_area_high
-        // X is in 0..x_max (correct orientation).
-        // Y is physically inverted: raw y=y_max is the physical top of the screen.
+        let _ = i2c.write_read(self.addr, &REG_TOUCH0, &mut pt);
+        // [0]=Y_low [1]=Y_high [2]=X_low [3]=X_high; Y physically inverted.
         let x = u16::from_le_bytes([pt[2], pt[3]]).min(self.x_max);
         let y_raw = u16::from_le_bytes([pt[0], pt[1]]).min(self.y_max);
         let y = self.y_max - y_raw;
-        Some((x, y))
+        (Some((x, y)), have_key)
+    }
+
+    /// Poll just the key state (for hold-loop use). Clears the buffer-ready flag.
+    pub fn key_pressed<I: I2c>(&mut self, i2c: &mut I) -> bool {
+        let mut status = [0u8; 1];
+        let _ = i2c.write_read(self.addr, &REG_STATUS, &mut status);
+        let have_key = status[0] & 0x10 != 0;
+        let _ = i2c.write(self.addr, &[REG_STATUS[0], REG_STATUS[1], 0x00]);
+        have_key
+    }
+
+    /// Returns the (x, y) coordinates of the first active touch point, or None.
+    pub fn read_touch<I: I2c>(&mut self, i2c: &mut I) -> Option<(u16, u16)> {
+        self.read_input(i2c).0
     }
 
     /// Read the raw status register byte without clearing it (for diagnostics only).

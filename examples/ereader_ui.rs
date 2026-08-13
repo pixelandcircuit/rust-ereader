@@ -1326,31 +1326,45 @@ async fn main(spawner: Spawner) -> ! {
         forward: false,
     };
 
+    #[derive(Clone, Copy)]
+    enum Btn { Prev, Next, Face }
+    impl Btn {
+        fn name(self) -> &'static str {
+            match self { Btn::Prev => "BOOT", Btn::Next => "SIDE", Btn::Face => "FACE" }
+        }
+        fn is_forward(self) -> bool { !matches!(self, Btn::Prev) }
+    }
+
     'esp_running: loop {
-        // Physical button handling: BOOT (GPIO0) = prev, GPIO38 = next.
-        // Short press → single page turn. Hold > 1 s → fast-scroll mode: a
-        // small overlay shows the target page number, incrementing every 200 ms.
+        // Read GT911 touch + face-button key state in one I2C transaction so we
+        // don't miss a key event that read_touch would silently discard.
+        let (touch_pt, face_key) = bridge.display.read_touch_and_key(&mut gt911);
+
+        // Physical button handling:
+        //   BOOT (GPIO0)  → prev page
+        //   SIDE (GPIO38) → next page
+        //   FACE (GT911 key area below screen) → next page
+        // Short press → single page turn. Hold > 1 s → fast-scroll mode.
         // The book content only re-renders on release.
-        let btn_pressed = if hw.button_prev_pressed() {
-            Some(false)
+        let btn_pressed: Option<Btn> = if hw.button_prev_pressed() {
+            Some(Btn::Prev)
         } else if hw.button_next_pressed() {
-            Some(true)
+            Some(Btn::Next)
+        } else if face_key {
+            Some(Btn::Face)
         } else {
             None
         };
-        if let Some(forward) = btn_pressed {
+        if let Some(btn) = btn_pressed {
+            log::info!("{} button pressed{}", btn.name(), if just_woke { " (wake)" } else { "" });
             if !just_woke {
-                if forward {
-                    fast.start_forward();
-                } else {
-                    fast.start_backward();
-                }
+                if btn.is_forward() { fast.start_forward(); } else { fast.start_backward(); }
             }
             loop {
-                let still_held = if forward {
-                    hw.button_next_pressed()
-                } else {
-                    hw.button_prev_pressed()
+                let still_held = match btn {
+                    Btn::Prev => hw.button_prev_pressed(),
+                    Btn::Next => hw.button_next_pressed(),
+                    Btn::Face => bridge.display.gt911_key_pressed(&mut gt911),
                 };
                 if !still_held {
                     break;
@@ -1380,6 +1394,7 @@ async fn main(spawner: Spawner) -> ! {
 
                 EmbassyTimer::after(Duration::from_millis(10)).await;
             }
+            log::info!("{} button released", btn.name());
 
             if just_woke {
                 // First press after light sleep: consume as wake-only, no page turn.
@@ -1451,7 +1466,7 @@ async fn main(spawner: Spawner) -> ! {
             }
         }
 
-        if let Some((tx, ty)) = bridge.display.read_touch(&mut gt911) {
+        if let Some((tx, ty)) = touch_pt {
             if !was_touching {
                 let (lx, ly) = hw.orientation().phys_to_logical(tx, ty);
                 if let Some(input) = click_at(&mut state.scene, &handlers, GPoint::new(lx, ly)) {

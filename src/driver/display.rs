@@ -197,6 +197,20 @@ impl<'a> Display<'a> {
         Ok(())
     }
 
+    /// Read touch and face-button key state in one I2C transaction.
+    /// Returns `(touch_point, face_button_pressed)`.
+    pub fn read_touch_and_key(
+        &mut self,
+        gt911: &mut crate::driver::gt911::Gt911,
+    ) -> (Option<(u16, u16)>, bool) {
+        gt911.read_input(self.epd.i2c())
+    }
+
+    /// Poll just the GT911 face-button key state (for use inside a hold loop).
+    pub fn gt911_key_pressed(&mut self, gt911: &mut crate::driver::gt911::Gt911) -> bool {
+        gt911.key_pressed(self.epd.i2c())
+    }
+
     /// Poll the GT911 touch controller for the first active touch point.
     /// Returns `Some((x, y))` when a finger is down, `None` otherwise.
     pub fn read_touch(&mut self, gt911: &mut crate::driver::gt911::Gt911) -> Option<(u16, u16)> {
