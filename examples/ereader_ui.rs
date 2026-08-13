@@ -529,6 +529,7 @@ fn load_book(state: &mut AppState, hw: &mut dyn HardwareAccess, filename: &Strin
         hide_loading_dialog(&mut state.scene);
         if let Ok(s) = new_session {
             state.current_filename = filename.clone();
+            save_last_filename(&filename);
             state.session = s;
             state.book = new_book;
             state.update_content(hw);
@@ -1142,7 +1143,7 @@ async fn main(spawner: Spawner) -> ! {
 
     // On wakeup restore from RTC fast memory (fast, no flash wear); on first
     // boot read persisted settings from NVS flash.
-    let (font_idx, bl_idx, ori_idx, saved_chapter, saved_anchor) = if is_sleep_wakeup {
+    let (font_idx, bl_idx, ori_idx, mut saved_chapter, mut saved_anchor) = if is_sleep_wakeup {
         let anchor = rtc_store_read(0) as usize;
         let packed = rtc_store_read(5);
         let font = (packed & 0xF) as usize;
@@ -1213,28 +1214,30 @@ async fn main(spawner: Spawner) -> ! {
     }
     sync_settings_ui(&mut state.scene, font_idx, bl_idx, ori_idx);
 
-    // On sleep wakeup, try to reopen the SD card book the user was reading.
-    // The filename was saved to NVS just before entering deep sleep.
-    if is_sleep_wakeup {
-        if let Some(last_file) = load_last_filename() {
-            show_loading_dialog(&mut state.scene, &last_file);
+    // On any boot (sleep wakeup or hard reset), reopen the last-read SD card book.
+    // The filename is saved to NVS when a book is opened and again before deep sleep.
+    if let Some(last_file) = load_last_filename() {
+        show_loading_dialog(&mut state.scene, &last_file);
+        {
+            let dirty = state.scene.dirty_rect.clone();
+            bridge.clearing_flush_region(&dirty);
             {
-                let dirty = state.scene.dirty_rect.clone();
-                bridge.clearing_flush_region(&dirty);
-                {
-                    let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
-                    ctx.clip = dirty.clone();
-                    layout_scene(&mut state.scene, &state.theme);
-                    draw_scene(&mut state.scene, &mut ctx, &state.theme);
-                }
-                bridge.flush_region(&dirty, DrawMode::BlackOnWhite);
+                let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
+                ctx.clip = dirty.clone();
+                layout_scene(&mut state.scene, &state.theme);
+                draw_scene(&mut state.scene, &mut ctx, &state.theme);
             }
-            if let Some(data) = hw.load_book_file(&last_file) {
-                state.book = book_from_data(&last_file, data);
-                state.current_filename = last_file;
-            }
-            hide_loading_dialog(&mut state.scene);
+            bridge.flush_region(&dirty, DrawMode::BlackOnWhite);
         }
+        if let Some(data) = hw.load_book_file(&last_file) {
+            state.book = book_from_data(&last_file, data);
+            if let Some((ch, anch)) = hw.load_bookmark(&last_file) {
+                saved_chapter = ch;
+                saved_anchor = anch;
+            }
+            state.current_filename = last_file;
+        }
+        hide_loading_dialog(&mut state.scene);
     }
 
     state.session = if saved_chapter > 0 || saved_anchor > 0 {

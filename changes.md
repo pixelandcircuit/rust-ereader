@@ -1,5 +1,14 @@
 # Changes
 
+## 2026-08-13 (2)
+
+Fix: device forgot which book and position it was at after a hard reset.
+
+Three bugs, all fixed:
+- `examples/ereader_ui.rs`: `save_last_filename()` was only called before deep sleep; now also called when a book is opened so the filename survives a hard reset.
+- `examples/ereader_ui.rs`: `load_last_filename()` was gated on `is_sleep_wakeup`; now called on every boot (cold reset and sleep wakeup alike).
+- `examples/ereader_ui.rs`: on cold boot, `saved_chapter`/`saved_anchor` came from `load_cold_boot_position()` (the embedded book's bookmark), not the SD card book's bookmark. Now after the SD card book is loaded its own bookmark is looked up via `hw.load_bookmark()` and overwrites the position.
+
 ## 2026-08-13
 
 Face button (circle below screen) wired up via GT911 key area; press/release logging for all three buttons.
