@@ -24,6 +24,8 @@ esp = [
     "dep:esp-rtos",
     "dep:embassy-executor",
     "dep:embassy-net",
+    "dep:critical-section",
+    "dep:embassy-sync",
     "dep:embassy-time",
     "dep:static_cell",
     "dep:embedded-sdmmc",
@@ -65,6 +67,8 @@ esp-radio        = { version = "0.18.0", features = ["wifi", "esp32s3"], optiona
 esp-rtos         = { version = "0.3.0",  features = ["esp32s3", "esp-radio", "embassy"], optional = true }
 embassy-executor = { version = "0.10.0", optional = true }
 embassy-net      = { version = "0.8.0",  features = ["dhcpv4", "medium-ethernet", "udp"], optional = true }
+critical-section = { version = "1",      optional = true }
+embassy-sync     = { version = "0.8",    optional = true }
 embassy-time     = { version = "0.5.0",  optional = true }
 static_cell      = { version = "2.1.0",  optional = true }
 embedded-sdmmc   = { version = "0.9",  default-features = false, optional = true }

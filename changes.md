@@ -1,5 +1,20 @@
 # Changes
 
+## 2026-08-14
+
+Add Embassy background tasks for battery polling and WiFi/NTP sync.
+
+- `src/driver/ed047tc1.rs`, `display.rs`, `mod.rs`: Refactored I2C bus out of the display driver. `ED047TC1<'a, I>` and `Display<'a, I>` are now generic over `I: embedded_hal::i2c::I2c`. GPIO39/40 removed from `PinConfig` and `pin_config!` macro; the shared bus is constructed in `main` instead. `DISPLAY_WIDTH`/`DISPLAY_HEIGHT` promoted to module-level constants in `display.rs` to avoid generic-dependent const expressions.
+- `src/driver/graphics.rs`: Updated `DrawTarget` and `OriginDimensions` impls to `Display<'a, I>`.
+- `Cargo.toml`: Added `embassy-sync = "0.8"` and `critical-section = "1"` as explicit optional deps (pinned to match `esp-radio`'s transitive version).
+- `examples/ereader_ui.rs`:
+  - Builds a `static I2C_BUS: StaticCell<critical_section::Mutex<RefCell<I2c<'static, Blocking>>>>` in `main` and hands one `CriticalSectionDevice` handle to the display driver and another to the new `battery_task`.
+  - `battery_task`: `#[embassy_executor::task]` — reads BQ27220 every 10 s, signals `BATTERY_RESULT`.
+  - `wifi_task` + `do_ntp_sync`: `#[embassy_executor::task]` — connects to AP, syncs NTP, disconnects; waits on `WIFI_SYNC_REQUEST` for on-demand re-syncs. Replaces the blocking WiFi/NTP code that previously ran synchronously on boot.
+  - Main loop now `try_take()`s `BATTERY_RESULT` and `WIFI_SYNC_RESULT` each iteration.
+  - `sync_time` button now signals `WIFI_SYNC_REQUEST` (was a commented-out stub).
+  - `Rgb565ToGray4<'a, I>` made generic to propagate the I2C type parameter.
+
 ## 2026-08-13 (2)
 
 Fix: device forgot which book and position it was at after a hard reset.

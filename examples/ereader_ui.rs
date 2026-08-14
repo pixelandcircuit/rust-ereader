@@ -132,7 +132,7 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
     {
         let topbar_id = ViewId::new("topbar");
         scene.add_view_to_parent(make_button(&LIBRARY_BUTTON_ID, "Library"), &topbar_id);
-        scene.add_view_to_parent(h_spacer::make_h_spacer(&ViewId::new("spacer1")), &topbar_id);
+        scene.add_view_to_parent(make_h_spacer(&ViewId::new("spacer1")), &topbar_id);
         scene.add_view_to_parent(make_label(&ViewId::new("time"), "--:-- --"), &topbar_id);
         scene.add_view_to_parent(make_button(&BATTERY_BUTTON_ID, "85%"), &topbar_id);
         scene.add_view_to_parent(
@@ -274,7 +274,7 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
                 padding: Insets::new_same(0),
             })));
 
-        scene.add_view_to_parent(make_h_spacer(&ViewId::new("spacer1")), &row3.name);
+        scene.add_view_to_parent(make_h_spacer(&ViewId::new("spacer2")), &row3.name);
         scene.add_view_to_parent(
             make_full_button(&ViewId::new("dialog_close"), "Close", "close", true),
             &row3.name,
@@ -866,14 +866,14 @@ const DEEP_SLEEP_AFTER_SECS: u64 = 3600;
 /// Converts Rgb565 luminance to 4-bit gray and applies orientation rotation so
 /// the logical coordinate space matches what the user sees.
 #[cfg(feature = "esp")]
-struct Rgb565ToGray4<'a> {
-    display: Display<'a>,
+struct Rgb565ToGray4<'a, I> {
+    display: Display<'a, I>,
     orientation: Orientation,
 }
 
 #[cfg(feature = "esp")]
-impl<'a> Rgb565ToGray4<'a> {
-    fn new(display: Display<'a>, orientation: Orientation) -> Self {
+impl<'a, I: embedded_hal::i2c::I2c> Rgb565ToGray4<'a, I> {
+    fn new(display: Display<'a, I>, orientation: Orientation) -> Self {
         Self {
             display,
             orientation,
@@ -923,13 +923,13 @@ impl<'a> Rgb565ToGray4<'a> {
 }
 
 #[cfg(feature = "esp")]
-impl<'a> embedded_graphics::draw_target::DrawTarget for Rgb565ToGray4<'a> {
+impl<'a, I: embedded_hal::i2c::I2c> embedded_graphics::draw_target::DrawTarget for Rgb565ToGray4<'a, I> {
     type Color = Rgb565;
     type Error = ();
 
-    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
+    fn draw_iter<Iter>(&mut self, pixels: Iter) -> Result<(), Self::Error>
     where
-        I: IntoIterator<Item = embedded_graphics::Pixel<Self::Color>>,
+        Iter: IntoIterator<Item = embedded_graphics::Pixel<Self::Color>>,
     {
         for pix in pixels {
             let r = pix.1.r() as u32;
@@ -950,7 +950,7 @@ impl<'a> embedded_graphics::draw_target::DrawTarget for Rgb565ToGray4<'a> {
 }
 
 #[cfg(feature = "esp")]
-impl<'a> embedded_graphics::geometry::OriginDimensions for Rgb565ToGray4<'a> {
+impl<'a, I: embedded_hal::i2c::I2c> embedded_graphics::geometry::OriginDimensions for Rgb565ToGray4<'a, I> {
     fn size(&self) -> embedded_graphics::geometry::Size {
         let (w, h) = self.orientation.logical_size();
         embedded_graphics::geometry::Size::new(w as u32, h as u32)
@@ -964,6 +964,8 @@ use embassy_net::{
     udp::{PacketMetadata, UdpSocket},
     IpAddress, IpEndpoint, Ipv4Address, Runner, StackResources,
 };
+#[cfg(feature = "esp")]
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 #[cfg(feature = "esp")]
 use embassy_time::{with_timeout, Duration, Instant, Timer as EmbassyTimer};
 use ereader::appstate::{book_from_data, cfg_from_scene, AppState};
@@ -1012,12 +1014,31 @@ const PASSWORD: &str = match option_env!("WIFI_PASS") {
 };
 // Set to false to skip WiFi init and NTP sync entirely (e.g. when no network is available).
 #[cfg(feature = "esp")]
-const ENABLE_WIFI_NTP: bool = false;
+const ENABLE_WIFI_NTP: bool = true;
 
 #[cfg(feature = "esp")]
 const NTP_ADDR: [u8; 4] = [216, 239, 35, 0]; // time.google.com
 #[cfg(feature = "esp")]
 const NTP_UNIX_OFFSET: u64 = 2_208_988_800; // NTP epoch → Unix epoch
+
+#[cfg(feature = "esp")]
+type I2cBus = critical_section::Mutex<
+    core::cell::RefCell<esp_hal::i2c::master::I2c<'static, esp_hal::Blocking>>,
+>;
+#[cfg(feature = "esp")]
+type SharedI2c = embedded_hal_bus::i2c::CriticalSectionDevice<
+    'static,
+    esp_hal::i2c::master::I2c<'static, esp_hal::Blocking>,
+>;
+
+#[cfg(feature = "esp")]
+static BATTERY_RESULT: Signal<CriticalSectionRawMutex, ereader::hardware::BatteryInfo> =
+    Signal::new();
+
+#[cfg(feature = "esp")]
+static WIFI_SYNC_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+#[cfg(feature = "esp")]
+static WIFI_SYNC_RESULT: Signal<CriticalSectionRawMutex, Option<u64>> = Signal::new();
 
 #[cfg(feature = "esp")]
 macro_rules! mk_static {
@@ -1031,6 +1052,75 @@ macro_rules! mk_static {
 #[embassy_executor::task]
 async fn net_task(mut runner: Runner<'static, Interface<'static>>) {
     runner.run().await
+}
+
+#[cfg(feature = "esp")]
+#[embassy_executor::task]
+async fn battery_task(mut i2c: SharedI2c) {
+    use embedded_hal::i2c::I2c as I2cTrait;
+    loop {
+        EmbassyTimer::after(Duration::from_secs(10)).await;
+        let voltage_mv = bq27220_read_u16(&mut i2c, 0x08) as u32;
+        let current_ma = bq27220_read_i16(&mut i2c, 0x14);
+        let percent = bq27220_read_u16(&mut i2c, 0x1E).min(100) as u8;
+        BATTERY_RESULT.signal(ereader::hardware::BatteryInfo {
+            voltage_mv,
+            percent,
+            is_charging: current_ma > 0,
+        });
+        info!("triggered battery refresh");
+    }
+}
+
+#[cfg(feature = "esp")]
+fn bq27220_read_u16<I: embedded_hal::i2c::I2c>(i2c: &mut I, reg: u8) -> u16 {
+    let mut buf = [0u8; 2];
+    let _ = i2c.write_read(0x55, &[reg], &mut buf);
+    u16::from_le_bytes(buf)
+}
+
+#[cfg(feature = "esp")]
+fn bq27220_read_i16<I: embedded_hal::i2c::I2c>(i2c: &mut I, reg: u8) -> i16 {
+    bq27220_read_u16(i2c, reg) as i16
+}
+
+#[cfg(feature = "esp")]
+#[embassy_executor::task]
+async fn wifi_task(
+    mut controller: esp_radio::wifi::WifiController<'static>,
+    stack: embassy_net::Stack<'static>,
+    skip_initial: bool,
+) {
+    if !skip_initial {
+        do_ntp_sync(&mut controller, stack).await;
+    }
+    loop {
+        WIFI_SYNC_REQUEST.wait().await;
+        do_ntp_sync(&mut controller, stack).await;
+    }
+}
+
+#[cfg(feature = "esp")]
+async fn do_ntp_sync(
+    controller: &mut esp_radio::wifi::WifiController<'static>,
+    stack: embassy_net::Stack<'static>,
+) {
+    log::info!("NTP: connecting to '{}' ...", SSID);
+    let result = with_timeout(Duration::from_secs(20), async {
+        if let Err(e) = controller.connect_async().await {
+            log::warn!("NTP: wifi connect failed: {:?}", e);
+            return None;
+        }
+        log::info!("NTP: wifi connected, waiting for DHCP...");
+        stack.wait_config_up().await;
+        log::info!("NTP: DHCP obtained, querying time.google.com...");
+        query_ntp(stack).await
+    })
+    .await;
+    let unix_opt = result.ok().flatten();
+    WIFI_SYNC_RESULT.signal(unix_opt);
+    controller.disconnect_async().await.ok();
+    log::info!("NTP: wifi disconnected");
 }
 
 /// Query time.google.com via NTP and return Unix seconds, or None on error.
@@ -1094,12 +1184,27 @@ async fn main(spawner: Spawner) -> ! {
 
     let rtc = Rtc::new(peripherals.LPWR);
 
+    // Build a shared I2C bus so the battery gauge can be read from a background task.
+    let i2c_raw = esp_hal::i2c::master::I2c::new(
+        peripherals.I2C0,
+        esp_hal::i2c::master::Config::default(),
+    )
+    .expect("I2C init")
+    .with_sda(peripherals.GPIO39)
+    .with_scl(peripherals.GPIO40);
+    static I2C_BUS: StaticCell<I2cBus> = StaticCell::new();
+    let i2c_bus: &'static I2cBus =
+        I2C_BUS.init(critical_section::Mutex::new(core::cell::RefCell::new(i2c_raw)));
+    let display_i2c = embedded_hal_bus::i2c::CriticalSectionDevice::new(i2c_bus);
+    let battery_i2c = embedded_hal_bus::i2c::CriticalSectionDevice::new(i2c_bus);
+    spawner.spawn(battery_task(battery_i2c).expect("battery_task spawn"));
+
     let mut display = Display::new(
         ereader::pin_config!(peripherals),
         peripherals.DMA_CH0,
         peripherals.LCD_CAM,
         peripherals.RMT,
-        peripherals.I2C0,
+        display_i2c,
     )
     .expect("display init");
 
@@ -1260,62 +1365,31 @@ async fn main(spawner: Spawner) -> ! {
     // decrease if ghosting accumulates too quickly.
     const FULL_QUALITY_INTERVAL: u32 = 5;
 
-    // ── WiFi + NTP time sync ──────────────────────────────────────────────────
-    // Only sync on cold boot. On deep-sleep wakeup the RTC already holds the
-    // correct time so there is no need to reconnect WiFi.
+    // ── WiFi + NTP time sync (background task) ───────────────────────────────
+    // wifi_task connects, syncs NTP, then disconnects. It stays alive to handle
+    // future sync requests (e.g. from the sync_time button) via WIFI_SYNC_REQUEST.
     if ENABLE_WIFI_NTP {
+        info!("connecting to WIFI_SSID {} WIFI_PASS {}", SSID, PASSWORD);
         let station_config = Config::Station(
             StationConfig::default()
                 .with_ssid(SSID)
                 .with_password(PASSWORD.into()),
         );
-        let (mut controller, interfaces) = esp_radio::wifi::new(
+        let (controller, interfaces) = esp_radio::wifi::new(
             peripherals.WIFI,
             ControllerConfig::default().with_initial_config(station_config),
         )
         .expect("wifi init");
-
-        if !is_sleep_wakeup {
-            let (stack, runner) = embassy_net::new(
-                interfaces.station,
-                embassy_net::Config::dhcpv4(Default::default()),
-                mk_static!(StackResources<3>, StackResources::<3>::new()),
-                seed,
-            );
-            spawner.spawn(net_task(runner).expect("net_task"));
-
-            log::info!("NTP: connecting to '{}' ...", SSID);
-            let ntp_result = with_timeout(Duration::from_secs(20), async {
-                if let Err(e) = controller.connect_async().await {
-                    log::warn!("NTP: wifi connect failed: {:?}", e);
-                    return None;
-                }
-                log::info!("NTP: wifi connected, waiting for DHCP...");
-                stack.wait_config_up().await;
-                log::info!("NTP: DHCP obtained, querying time.google.com...");
-                query_ntp(stack).await
-            })
-            .await;
-
-            match ntp_result {
-                Ok(Some(unix_secs)) => {
-                    hw.set_current_time_secs(unix_secs);
-                    let time_str = format_time_utc(unix_secs);
-                    if let Some(view) = state.scene.get_view_mut(&ViewId::new("time")) {
-                        view.title = time_str.clone();
-                    }
-                    state.scene.mark_layout_dirty();
-                    log::info!("NTP synced: {}", time_str);
-                }
-                Ok(None) => log::warn!("NTP: query failed (no response or bad packet)"),
-                Err(_) => log::warn!("NTP: timed out after 20 s (SSID: '{}')", SSID),
-            }
-
-            controller.disconnect_async().await.ok();
-            log::info!("NTP: wifi disconnected");
-        } else {
-            log::info!("NTP: skipped (woke from sleep, RTC time retained)");
-        }
+        let (stack, runner) = embassy_net::new(
+            interfaces.station,
+            embassy_net::Config::dhcpv4(Default::default()),
+            mk_static!(StackResources<3>, StackResources::<3>::new()),
+            seed,
+        );
+        spawner.spawn(net_task(runner).expect("net_task spawn"));
+        info!("spawned net_task");
+        spawner.spawn(wifi_task(controller, stack, is_sleep_wakeup).expect("wifi_task spawn"));
+        info!("spawned wifi_task");
     } else {
         log::info!("WiFi/NTP disabled (ENABLE_WIFI_NTP = false)");
     }
@@ -1339,6 +1413,29 @@ async fn main(spawner: Spawner) -> ! {
     }
 
     'esp_running: loop {
+        // Apply background battery reading if a new one has arrived.
+        if let Some(info) = BATTERY_RESULT.try_take() {
+            hw.update_battery(info.voltage_mv, info.percent, info.is_charging);
+            update_battery_labels(&mut state.scene, &hw);
+            // state.scene.mark_layout_dirty();
+        }
+
+        // Apply NTP sync result if wifi_task delivered one.
+        if let Some(unix_opt) = WIFI_SYNC_RESULT.try_take() {
+            match unix_opt {
+                Some(unix_secs) => {
+                    hw.set_current_time_secs(unix_secs);
+                    let time_str = format_time_utc(unix_secs);
+                    if let Some(view) = state.scene.get_view_mut(&ViewId::new("time")) {
+                        view.title = time_str.clone();
+                    }
+                    state.scene.mark_layout_dirty();
+                    log::info!("NTP synced: {}", time_str);
+                }
+                None => log::warn!("NTP: sync failed (no response)"),
+            }
+        }
+
         // Read GT911 touch + face-button key state in one I2C transaction so we
         // don't miss a key event that read_touch would silently discard.
         let (touch_pt, face_key) = bridge.display.read_touch_and_key(&mut gt911);
@@ -1514,17 +1611,12 @@ async fn main(spawner: Spawner) -> ! {
                     }
                     handle_click_action(&mut hw, &input, &mut state);
                     if input.source == ViewId::new("sync_time") {
-                        info!("sync_time pressed, querying NTP");
-                        // if let Some(unix_secs) = query_ntp(stack).await {
-                        //     let time_str = format_time_utc(unix_secs);
-                        //     if let Some(view) = scene.get_view_mut(&ViewId::new("time")) {
-                        //         view.title = time_str.clone();
-                        //     }
-                        //     scene.mark_layout_dirty();
-                        //     info!("time synced: {}", time_str);
-                        // } else {
-                        //     info!("NTP query failed");
-                        // }
+                        if ENABLE_WIFI_NTP {
+                            info!("sync_time pressed — requesting background NTP sync");
+                            WIFI_SYNC_REQUEST.signal(());
+                        } else {
+                            info!("sync_time pressed but WiFi is disabled");
+                        }
                     } else if input.source == DEEP_CLEAN_ID {
                         info!("deep clean started");
                         bridge.display.deep_clean(3).unwrap();
