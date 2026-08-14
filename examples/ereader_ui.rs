@@ -1036,6 +1036,9 @@ static BATTERY_RESULT: Signal<CriticalSectionRawMutex, ereader::hardware::Batter
     Signal::new();
 
 #[cfg(feature = "esp")]
+static TIME_TICK: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+#[cfg(feature = "esp")]
 static WIFI_SYNC_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 #[cfg(feature = "esp")]
 static WIFI_SYNC_RESULT: Signal<CriticalSectionRawMutex, Option<u64>> = Signal::new();
@@ -1052,6 +1055,15 @@ macro_rules! mk_static {
 #[embassy_executor::task]
 async fn net_task(mut runner: Runner<'static, Interface<'static>>) {
     runner.run().await
+}
+
+#[cfg(feature = "esp")]
+#[embassy_executor::task]
+async fn time_task() {
+    loop {
+        EmbassyTimer::after(Duration::from_secs(10)).await;
+        TIME_TICK.signal(());
+    }
 }
 
 #[cfg(feature = "esp")]
@@ -1198,6 +1210,7 @@ async fn main(spawner: Spawner) -> ! {
     let display_i2c = embedded_hal_bus::i2c::CriticalSectionDevice::new(i2c_bus);
     let battery_i2c = embedded_hal_bus::i2c::CriticalSectionDevice::new(i2c_bus);
     spawner.spawn(battery_task(battery_i2c).expect("battery_task spawn"));
+    spawner.spawn(time_task().expect("time_task spawn"));
 
     let mut display = Display::new(
         ereader::pin_config!(peripherals),
@@ -1418,6 +1431,20 @@ async fn main(spawner: Spawner) -> ! {
             hw.update_battery(info.voltage_mv, info.percent, info.is_charging);
             update_battery_labels(&mut state.scene, &hw);
             // state.scene.mark_layout_dirty();
+        }
+
+        // Refresh the time label from the RTC every 10 s (driven by time_task).
+        if TIME_TICK.try_take().is_some() {
+            let unix_secs = hw.current_time_secs();
+            if unix_secs > 0 {
+                let time_str = format_time_utc(unix_secs);
+                if let Some(view) = state.scene.get_view_mut(&ViewId::new("time")) {
+                    if view.title != time_str {
+                        view.title = time_str;
+                        state.scene.mark_dirty_view(&ViewId::new("time"));
+                    }
+                }
+            }
         }
 
         // Apply NTP sync result if wifi_task delivered one.

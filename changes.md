@@ -1,5 +1,11 @@
 # Changes
 
+## 2026-08-14 (2)
+
+Add `time_task` Embassy task to refresh the clock display every 10 seconds.
+
+- `examples/ereader_ui.rs`: Added `static TIME_TICK: Signal` and `time_task` (wakes every 10 s, signals the main loop). Main loop reads `hw.current_time_secs()` from the RTC on each tick and updates the time label only when the formatted string changes, keeping unnecessary redraws to a minimum.
+
 ## 2026-08-14
 
 Add Embassy background tasks for battery polling and WiFi/NTP sync.
