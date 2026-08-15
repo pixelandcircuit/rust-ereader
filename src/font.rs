@@ -81,8 +81,8 @@ fn blend_gray4(coverage: u8, fg_g4: u8, bg_g4: u8) -> u8 {
 /// TTF font size in pixels for each FontSize option.
 pub fn font_px_for(size: FontSize) -> f32 {
     match size {
-        FontSize::Small => 16.0,
-        FontSize::Medium => 22.0,
-        FontSize::Large => 28.0,
+        FontSize::Small => 22.0,
+        FontSize::Medium => 28.0,
+        FontSize::Large => 30.0,
     }
 }

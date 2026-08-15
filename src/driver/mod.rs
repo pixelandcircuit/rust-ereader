@@ -45,8 +45,6 @@ macro_rules! pin_config {
                 leh:     $name.GPIO42,
                 stv:     $name.GPIO45,
                 ckv:     $name.GPIO48,
-                i2c_sda: $name.GPIO39,
-                i2c_scl: $name.GPIO40,
             }
         )*
     }

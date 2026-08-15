@@ -1,8 +1,8 @@
+use embedded_hal::i2c::I2c as I2cTrait;
 use esp_hal::{
     dma::DmaTxBuf,
     dma_buffers,
     gpio::{Level, Output, OutputConfig},
-    i2c::master::{Config as I2cConfig, I2c},
     lcd_cam::{
         lcd::{i8080, i8080::Command},
         LcdCam,
@@ -81,16 +81,13 @@ pub struct PinConfig<'a> {
     pub stv: peripherals::GPIO45<'a>, // STV – start vertical          (GPIO)
     // CKV row-clock (RMT)
     pub ckv: peripherals::GPIO48<'a>,
-    // I2C bus shared by PCA9555 + TPS65185
-    pub i2c_sda: peripherals::GPIO39<'a>,
-    pub i2c_scl: peripherals::GPIO40<'a>,
 }
 
 // ── Main driver struct ────────────────────────────────────────────────────────
 
-pub(crate) struct ED047TC1<'a> {
+pub(crate) struct ED047TC1<'a, I> {
     i8080: Option<i8080::I8080<'a, Blocking>>,
-    i2c: I2c<'a, Blocking>,
+    i2c: I,
     leh: Output<'a>,
     stv: Output<'a>,
     rmt: rmt::Rmt<'a>,
@@ -98,20 +95,14 @@ pub(crate) struct ED047TC1<'a> {
     pca_out1: u8,
 }
 
-impl<'a> ED047TC1<'a> {
+impl<'a, I: I2cTrait> ED047TC1<'a, I> {
     pub(crate) fn new(
         pins: PinConfig<'a>,
         dma: peripherals::DMA_CH0<'a>,
         lcd_cam: peripherals::LCD_CAM<'a>,
         rmt_periph: peripherals::RMT<'a>,
-        i2c_periph: peripherals::I2C0<'a>,
+        mut i2c: I,
     ) -> crate::driver::Result<Self> {
-        // ── I2C ──────────────────────────────────────────────────────────────
-        let mut i2c = I2c::new(i2c_periph, I2cConfig::default())
-            .expect("to create I2C")
-            .with_sda(pins.i2c_sda)
-            .with_scl(pins.i2c_scl);
-
         // PCA9555 init:
         //   port 0 – all outputs, driven high (board-level signals)
         //   port 1 – bits 2/6/7 as inputs, rest outputs, driven low
@@ -314,7 +305,7 @@ impl<'a> ED047TC1<'a> {
 
     // ── I2C bus access (for touch controller sharing) ─────────────────────────
 
-    pub(crate) fn i2c(&mut self) -> &mut I2c<'a, Blocking> {
+    pub(crate) fn i2c(&mut self) -> &mut I {
         &mut self.i2c
     }
 
@@ -332,21 +323,21 @@ impl<'a> ED047TC1<'a> {
 
 // ── Free-standing I2C helpers ─────────────────────────────────────────────────
 
-fn pca_write(i2c: &mut I2c<'_, Blocking>, reg: u8, val: u8) {
+fn pca_write<I: I2cTrait>(i2c: &mut I, reg: u8, val: u8) {
     let _ = i2c.write(PCA9555_ADDR, &[reg, val]);
 }
 
-fn pca_read(i2c: &mut I2c<'_, Blocking>, reg: u8) -> u8 {
+fn pca_read<I: I2cTrait>(i2c: &mut I, reg: u8) -> u8 {
     let mut buf = [0u8; 1];
     let _ = i2c.write_read(PCA9555_ADDR, &[reg], &mut buf);
     buf[0]
 }
 
-fn tps_write(i2c: &mut I2c<'_, Blocking>, reg: u8, val: u8) {
+fn tps_write<I: I2cTrait>(i2c: &mut I, reg: u8, val: u8) {
     let _ = i2c.write(TPS65185_ADDR, &[reg, val]);
 }
 
-fn tps_read(i2c: &mut I2c<'_, Blocking>, reg: u8) -> u8 {
+fn tps_read<I: I2cTrait>(i2c: &mut I, reg: u8) -> u8 {
     let mut buf = [0u8; 1];
     let _ = i2c.write_read(TPS65185_ADDR, &[reg], &mut buf);
     buf[0]

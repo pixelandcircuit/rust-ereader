@@ -1,6 +1,7 @@
 use alloc::boxed::Box;
 
-use esp_hal::{delay::Delay, peripherals};
+use embedded_hal::i2c::I2c as I2cTrait;
+use esp_hal::delay::Delay;
 use log::*;
 
 use crate::driver::{ed047tc1, Error, Result};
@@ -67,13 +68,15 @@ impl DrawMode {
     }
 }
 
-const TAINTED_ROWS_SIZE: usize = Display::HEIGHT as usize / 8 + 1;
-const FRAMEBUFFER_SIZE: usize = (Display::WIDTH / 2) as usize * Display::HEIGHT as usize;
-const BYTES_PER_LINE: usize = Display::WIDTH as usize / 4;
-const LINE_BYTES_4BPP: usize = Display::WIDTH as usize / 2;
+pub const DISPLAY_WIDTH: u16 = 960;
+pub const DISPLAY_HEIGHT: u16 = 540;
+const TAINTED_ROWS_SIZE: usize = DISPLAY_HEIGHT as usize / 8 + 1;
+const FRAMEBUFFER_SIZE: usize = (DISPLAY_WIDTH / 2) as usize * DISPLAY_HEIGHT as usize;
+const BYTES_PER_LINE: usize = DISPLAY_WIDTH as usize / 4;
+const LINE_BYTES_4BPP: usize = DISPLAY_WIDTH as usize / 2;
 
-pub struct Display<'a> {
-    epd: ed047tc1::ED047TC1<'a>,
+pub struct Display<'a, I> {
+    epd: ed047tc1::ED047TC1<'a, I>,
     skipping: u16,
     framebuffer: Box<[u8; FRAMEBUFFER_SIZE]>,
     tainted_rows: [u8; TAINTED_ROWS_SIZE],
@@ -83,22 +86,22 @@ pub struct Display<'a> {
     lut: Box<[u8; 1 << 16]>,
 }
 
-impl<'a> Display<'a> {
-    pub const WIDTH: u16 = 960;
-    pub const HEIGHT: u16 = 540;
+impl<'a, I: I2cTrait> Display<'a, I> {
+    pub const WIDTH: u16 = DISPLAY_WIDTH;
+    pub const HEIGHT: u16 = DISPLAY_HEIGHT;
     pub const BOUNDING_BOX: Rectangle = Rectangle {
         x: 0,
         y: 0,
-        width: Self::WIDTH,
-        height: Self::HEIGHT,
+        width: DISPLAY_WIDTH,
+        height: DISPLAY_HEIGHT,
     };
 
     pub fn new(
         pins: ed047tc1::PinConfig<'a>,
-        dma: peripherals::DMA_CH0<'a>,
-        lcd_cam: peripherals::LCD_CAM<'a>,
-        rmt: peripherals::RMT<'a>,
-        i2c: peripherals::I2C0<'a>,
+        dma: esp_hal::peripherals::DMA_CH0<'a>,
+        lcd_cam: esp_hal::peripherals::LCD_CAM<'a>,
+        rmt: esp_hal::peripherals::RMT<'a>,
+        i2c: I,
     ) -> Result<Self> {
         Ok(Display {
             epd: ed047tc1::ED047TC1::new(pins, dma, lcd_cam, rmt, i2c)?,
@@ -129,13 +132,13 @@ impl<'a> Display<'a> {
     }
 
     pub fn set_pixel(&mut self, x: u16, y: u16, color: u8) -> Result<()> {
-        if x >= Self::WIDTH || y >= Self::HEIGHT {
+        if x >= DISPLAY_WIDTH || y >= DISPLAY_HEIGHT {
             return Err(Error::OutOfBounds);
         }
         if color > 0x0F {
             return Err(Error::InvalidColor);
         }
-        let index: usize = x as usize / 2 + y as usize * (Self::WIDTH as usize / 2);
+        let index: usize = x as usize / 2 + y as usize * (DISPLAY_WIDTH as usize / 2);
         let value = self.framebuffer[index];
         if x % 2 == 1 {
             self.framebuffer[index] = (value & 0x0F) | ((color << 4) & 0xF0);
@@ -161,8 +164,8 @@ impl<'a> Display<'a> {
         if color > 0x0F {
             return Err(Error::InvalidColor);
         }
-        let x_end = (area.x + area.width).min(Self::WIDTH);
-        let y_end = (area.y + area.height).min(Self::HEIGHT);
+        let x_end = (area.x + area.width).min(DISPLAY_WIDTH);
+        let y_end = (area.y + area.height).min(DISPLAY_HEIGHT);
         for y in area.y..y_end {
             for x in area.x..x_end {
                 self.set_pixel(x, y, color).ok();
@@ -340,7 +343,7 @@ impl<'a> Display<'a> {
         line_buffer_reorder(&mut row);
         self.epd.frame_start()?;
 
-        for i in 0..Self::HEIGHT {
+        for i in 0..DISPLAY_HEIGHT {
             if i < area.y {
                 self.row_skip(time)?;
                 continue;
@@ -393,9 +396,9 @@ impl<'a> Display<'a> {
     fn draw(&mut self, mode: DrawMode) -> Result<()> {
         // Find the contiguous physical row range that needs updating.
         // Rows outside this range get fast CKV skips to avoid driving untouched pixels.
-        let mut row_start = Self::HEIGHT;
+        let mut row_start = DISPLAY_HEIGHT;
         let mut row_end = 0u16;
-        for y in 0..Self::HEIGHT {
+        for y in 0..DISPLAY_HEIGHT {
             if self.is_tainted(y) {
                 if y < row_start {
                     row_start = y;
@@ -405,7 +408,7 @@ impl<'a> Display<'a> {
                 }
             }
         }
-        if row_start >= Self::HEIGHT {
+        if row_start >= DISPLAY_HEIGHT {
             return Ok(()); // nothing tainted
         }
 
@@ -416,7 +419,7 @@ impl<'a> Display<'a> {
             update_lut(&mut self.lut[..], k, mode);
             self.skipping = 0;
             self.epd.frame_start()?;
-            for y in 0..Self::HEIGHT {
+            for y in 0..DISPLAY_HEIGHT {
                 if y < row_start || y >= row_end {
                     self.epd.skip()?;
                     continue;
@@ -449,10 +452,10 @@ impl<'a> Display<'a> {
     /// so display content outside the column range is left physically unchanged.
     pub fn flush_region(&mut self, area: Rectangle, mode: DrawMode) -> Result<()> {
         debug!("display flush_region");
-        let row_start = area.y.min(Self::HEIGHT);
-        let row_end = (area.y + area.height).min(Self::HEIGHT);
+        let row_start = area.y.min(DISPLAY_HEIGHT);
+        let row_end = (area.y + area.height).min(DISPLAY_HEIGHT);
         let col_start = area.x as usize;
-        let col_end = (area.x + area.width).min(Self::WIDTH) as usize;
+        let col_end = (area.x + area.width).min(DISPLAY_WIDTH) as usize;
 
         let frame_count = mode.contrast_cycles().len();
         self.lut.fill(mode.lut_default());
@@ -460,7 +463,7 @@ impl<'a> Display<'a> {
             update_lut(&mut self.lut[..], k, mode);
             self.skipping = 0;
             self.epd.frame_start()?;
-            for y in 0..Self::HEIGHT {
+            for y in 0..DISPLAY_HEIGHT {
                 if y < row_start || y >= row_end {
                     // row_skip() writes VCOM for the first two skipped rows then falls
                     // back to CKV-only once the output latch is neutralized.  The raw
@@ -496,7 +499,7 @@ impl<'a> Display<'a> {
 ///   bits 7-6 = column 4*byte_idx+0, bits 5-4 = +1, bits 3-2 = +2, bits 1-0 = +3.
 /// Setting a pair to 0b00 applies VCOM (no drive) to that column.
 fn mask_dma_columns(buf: &mut [u8], col_start: usize, col_end: usize) {
-    for c in 0..Display::WIDTH as usize {
+    for c in 0..DISPLAY_WIDTH as usize {
         if c < col_start || c >= col_end {
             let byte_idx = c / 4;
             let bit_shift = 6 - 2 * (c % 4);

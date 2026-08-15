@@ -1,5 +1,62 @@
 # Changes
 
+## 2026-08-15 (3)
+
+Add timezone setting so the clock displays local time after NTP sync:
+
+- `src/hardware.rs`: Added `utc_offset_minutes: i32` field to both `EspHardware` and `SimHardware`. Added `utc_offset_minutes()` / `set_utc_offset_minutes()` to the `HardwareAccess` trait. Added `KEY_TZ = 13` flash key, `load_tz_offset()` public fn, and `save_settings()` now persists the TZ offset alongside font/backlight/orientation. `load_settings()` returns a 4-tuple including the TZ offset. `EspHardware::new()` accepts the initial offset.
+- `examples/ereader_ui.rs`: Renamed `format_time_utc` → `format_time_local(unix_secs, utc_offset_minutes)`, which applies the signed minute offset before formatting. Added `format_tz_label(minutes)` producing strings like "UTC", "UTC+5:30", "UTC-8". Added a "Time Zone" label and "−" / offset-label / "+" row to the settings dialog (30-minute steps, clamped to −12 h … +14 h). Pressing either button adjusts the offset, saves to flash, updates the TZ label, and immediately re-formats the clock display. TZ offset is loaded from flash at boot (both cold boot and deep-sleep wakeup) and the settings-dialog label is initialised to the saved value. Both simulator and ESP paths handle the TZ buttons. Fixed a bug where the "Sync Time" button updated the time label's text but forgot to mark the view dirty, so the display never repainted.
+
+## 2026-08-15 (2)
+
+Fix OOM when loading large epubs — free old book before allocating new one:
+
+- `examples/ereader_ui.rs`: Replace `state.book` with an empty `TxtBook` immediately when a new book load is requested (before signalling `BOOK_LOAD_REQUEST`). This frees the old epub's heap before the background task allocates the new one, resolving the 296 KB free / 378 KB needed OOM on sherlock_holmes.epub.
+- `examples/ereader_ui.rs`: Removed the redundant `layout_scene` call from the progress-bar partial-flush path (dialog geometry does not change between progress updates; calling `layout_scene` a second time was re-allocating layout buffers unnecessarily).
+- `examples/ereader_ui.rs`: Reduced the pre-read yield from 400 ms to 100 ms.
+- `src/hardware.rs`: Added a heap-free log line before the file buffer allocation in `sd_read_file` for future diagnosis.
+
+## 2026-08-15
+
+Async book loading with progress bar — moved epub loading to a background Embassy task (`book_load_task`) that yields between phases so the main loop can update a progress bar in the loading dialog.
+
+- `src/hardware.rs`: Extracted SD card file reading from `EspHardware::load_book_file` into a public free function `sd_read_file(name)`. The trait method now delegates to it.
+- `examples/ereader_ui.rs`:
+  - Added `ProgressBarState` + `draw_progress_bar` fn + `set_loading_progress` helper.
+  - Added `LOADING_PROGRESS_BAR_ID` constant and a 20 px tall `Grow`-width progress bar view to the loading dialog panel.
+  - Added `BOOK_LOAD_REQUEST`, `BOOK_LOAD_PROGRESS`, `BOOK_LOAD_RESULT` static Signals (ESP-only).
+  - Added `book_load_task`: waits for a filename, signals 5%, reads file (blocking SD I/O), signals 70%, yields 200 ms, then signals the raw bytes as the result.
+  - Spawns `book_load_task` at startup.
+  - Library "Read" button now signals `BOOK_LOAD_REQUEST` instead of calling `load_book` synchronously; filename stored in `pending_load`.
+  - Main loop polls `BOOK_LOAD_PROGRESS` (updates bar) and `BOOK_LOAD_RESULT` (finalises load: parse book, build session, update content).
+
+## 2026-08-14 (3)
+
+Draw sleep grid on light sleep and refresh on wake — before entering light sleep, fills the physical display with a white background and a grid of 30×30 black squares with white 5 px gaps, then flushes to the e-paper panel. After waking, marks the full scene dirty so the next loop iteration does a full redraw back to book content.
+
+- `examples/ereader_ui.rs`: Added grid-drawing block (white background via `fill(0x0F)`, black squares via `fill_region`) in the `LIGHT_SLEEP_AFTER_SECS` branch. Added `state.scene.mark_dirty_all()` after `enter_light_sleep()` returns to trigger a full-screen refresh on wake.
+
+## 2026-08-14 (2)
+
+Add `time_task` Embassy task to refresh the clock display every 10 seconds.
+
+- `examples/ereader_ui.rs`: Added `static TIME_TICK: Signal` and `time_task` (wakes every 10 s, signals the main loop). Main loop reads `hw.current_time_secs()` from the RTC on each tick and updates the time label only when the formatted string changes, keeping unnecessary redraws to a minimum.
+
+## 2026-08-14
+
+Add Embassy background tasks for battery polling and WiFi/NTP sync.
+
+- `src/driver/ed047tc1.rs`, `display.rs`, `mod.rs`: Refactored I2C bus out of the display driver. `ED047TC1<'a, I>` and `Display<'a, I>` are now generic over `I: embedded_hal::i2c::I2c`. GPIO39/40 removed from `PinConfig` and `pin_config!` macro; the shared bus is constructed in `main` instead. `DISPLAY_WIDTH`/`DISPLAY_HEIGHT` promoted to module-level constants in `display.rs` to avoid generic-dependent const expressions.
+- `src/driver/graphics.rs`: Updated `DrawTarget` and `OriginDimensions` impls to `Display<'a, I>`.
+- `Cargo.toml`: Added `embassy-sync = "0.8"` and `critical-section = "1"` as explicit optional deps (pinned to match `esp-radio`'s transitive version).
+- `examples/ereader_ui.rs`:
+  - Builds a `static I2C_BUS: StaticCell<critical_section::Mutex<RefCell<I2c<'static, Blocking>>>>` in `main` and hands one `CriticalSectionDevice` handle to the display driver and another to the new `battery_task`.
+  - `battery_task`: `#[embassy_executor::task]` — reads BQ27220 every 10 s, signals `BATTERY_RESULT`.
+  - `wifi_task` + `do_ntp_sync`: `#[embassy_executor::task]` — connects to AP, syncs NTP, disconnects; waits on `WIFI_SYNC_REQUEST` for on-demand re-syncs. Replaces the blocking WiFi/NTP code that previously ran synchronously on boot.
+  - Main loop now `try_take()`s `BATTERY_RESULT` and `WIFI_SYNC_RESULT` each iteration.
+  - `sync_time` button now signals `WIFI_SYNC_REQUEST` (was a commented-out stub).
+  - `Rgb565ToGray4<'a, I>` made generic to propagate the I2C type parameter.
+
 ## 2026-08-13 (2)
 
 Fix: device forgot which book and position it was at after a hard reset.

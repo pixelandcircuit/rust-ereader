@@ -38,7 +38,7 @@ use iris_ui::list_view::{make_list_view, ListState};
 use iris_ui::scene::{click_at, draw_scene, layout_scene, Scene};
 use iris_ui::toggle_group::{make_toggle_group, SelectOneOfState};
 use iris_ui::view::{Align, Flex, View, ViewId};
-use iris_ui::{Callback, FontKind, GuiEvent, LayoutEvent, Theme, ViewStyle};
+use iris_ui::{Callback, DrawEvent, FontKind, GuiEvent, LayoutEvent, Theme, ViewStyle};
 use Align::Center;
 
 const WELCOME_HTML: &[u8] = include_bytes!("welcome.html");
@@ -55,6 +55,7 @@ const BATTERY_DIALOG_ID: ViewId = ViewId::new("battery_dialog");
 const BATTERY_CLOSE_ID: ViewId = ViewId::new("battery_close");
 const ERROR_DIALOG_ID: ViewId = ViewId::new("error_dialog");
 const LOADING_DIALOG_ID: ViewId = ViewId::new("loading_dialog");
+const LOADING_PROGRESS_BAR_ID: ViewId = ViewId::new("loading_progress_bar");
 const FAST_SCROLL_PANEL_ID: ViewId = ViewId::new("fast_scroll_panel");
 const FAST_SCROLL_LABEL_ID: ViewId = ViewId::new("fast_scroll_label");
 const ORIENTATION_ID: ViewId = ViewId::new("orientation");
@@ -64,6 +65,9 @@ const DEEP_CLEAN_ID: ViewId = ViewId::new("deep_clean");
 const PREV_PAGE_ID: ViewId = ViewId::new("prev_page");
 const NEXT_PAGE_ID: ViewId = ViewId::new("next_page");
 const SYNC_TIME_BUTTON_ID: ViewId = ViewId::new("sync_time");
+const TZ_MINUS_ID: ViewId = ViewId::new("tz_minus");
+const TZ_PLUS_ID: ViewId = ViewId::new("tz_plus");
+const TZ_LABEL_ID: ViewId = ViewId::new("tz_label");
 
 const UI_FONT_SIZE: f32 = 20.0;
 
@@ -101,16 +105,50 @@ fn show_error_dialog(scene: &mut Scene, filename: &str) {
     scene.mark_dirty_all();
 }
 
+struct ProgressBarState {
+    progress: u8, // 0–100
+}
+
+fn draw_progress_bar(e: &mut DrawEvent) {
+    // e.view.bounds is the view's own bounds in parent-local coordinates,
+    // consistent with how draw_book_content uses it. e.bounds is the scene bounds.
+    let bounds = e.view.bounds;
+    let pct = e
+        .view
+        .get_state::<ProgressBarState>()
+        .map(|s| s.progress)
+        .unwrap_or(0);
+    e.ctx.fill_rect(&bounds, &Rgb565::WHITE);
+    if pct > 0 {
+        let fill_w = (bounds.size.w as u32 * pct as u32 / 100) as i32;
+        let fill = Bounds::new(bounds.position.x, bounds.position.y, fill_w, bounds.size.h);
+        e.ctx.fill_rect(&fill, &Rgb565::BLACK);
+    }
+    e.ctx.stroke_rect(&bounds, &Rgb565::BLACK);
+}
+
 fn show_loading_dialog(scene: &mut Scene, filename: &str) {
     if let Some(v) = scene.get_view_mut(&ViewId::new("loading_msg")) {
         v.title = format!("Loading {filename}\u{2026}");
     }
+    set_loading_progress(scene, 0);
     scene.show_view(&LOADING_DIALOG_ID);
     scene.mark_layout_dirty_view(&LOADING_DIALOG_ID);
 }
 
 fn hide_loading_dialog(scene: &mut Scene) {
     scene.hide_view(&LOADING_DIALOG_ID);
+    scene.mark_dirty_view(&LOADING_DIALOG_ID);
+}
+
+fn set_loading_progress(scene: &mut Scene, pct: u8) {
+    if let Some(v) = scene.get_view_mut(&LOADING_PROGRESS_BAR_ID) {
+        if let Some(s) = v.get_state::<ProgressBarState>() {
+            s.progress = pct;
+        }
+    }
+    // Mark the whole dialog dirty — the progress bar's own bounds have w=0
+    // before layout runs, so marking it alone produces an empty dirty rect.
     scene.mark_dirty_view(&LOADING_DIALOG_ID);
 }
 
@@ -132,7 +170,7 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
     {
         let topbar_id = ViewId::new("topbar");
         scene.add_view_to_parent(make_button(&LIBRARY_BUTTON_ID, "Library"), &topbar_id);
-        scene.add_view_to_parent(h_spacer::make_h_spacer(&ViewId::new("spacer1")), &topbar_id);
+        scene.add_view_to_parent(make_h_spacer(&ViewId::new("spacer1")), &topbar_id);
         scene.add_view_to_parent(make_label(&ViewId::new("time"), "--:-- --"), &topbar_id);
         scene.add_view_to_parent(make_button(&BATTERY_BUTTON_ID, "85%"), &topbar_id);
         scene.add_view_to_parent(
@@ -250,6 +288,26 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
             &SETTINGS_DIALOG_ID,
         );
 
+        scene.add_view_to_parent(
+            make_label(&ViewId::new("dlg_tz_lbl"), "Time Zone").with_h_align(Start),
+            &SETTINGS_DIALOG_ID,
+        );
+        let tz_row = make_panel(&ViewId::new("tz_row"))
+            .with_h_flex(Grow)
+            .with_layout(Some(layout_hbox))
+            .with_state(Some(Box::new(PanelState {
+                border_visible: false,
+                gap: 8,
+                padding: Insets::new_same(0),
+            })));
+        scene.add_view_to_parent(make_button(&TZ_MINUS_ID, "−"), &tz_row.name);
+        scene.add_view_to_parent(
+            make_label(&TZ_LABEL_ID, "UTC").with_h_flex(Grow).with_h_align(Center),
+            &tz_row.name,
+        );
+        scene.add_view_to_parent(make_button(&TZ_PLUS_ID, "+"), &tz_row.name);
+        scene.add_view_to_parent(tz_row, &SETTINGS_DIALOG_ID);
+
         let row2 = make_panel(&ViewId::new("row2"))
             .with_h_flex(Grow)
             .with_layout(Some(layout_hbox))
@@ -274,7 +332,7 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
                 padding: Insets::new_same(0),
             })));
 
-        scene.add_view_to_parent(make_h_spacer(&ViewId::new("spacer1")), &row3.name);
+        scene.add_view_to_parent(make_h_spacer(&ViewId::new("spacer2")), &row3.name);
         scene.add_view_to_parent(
             make_full_button(&ViewId::new("dialog_close"), "Close", "close", true),
             &row3.name,
@@ -369,6 +427,16 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
             make_label(&ViewId::new("loading_msg"), ""),
             &LOADING_DIALOG_ID,
         );
+        scene.add_view_to_parent(
+            View::default()
+                .with_name(LOADING_PROGRESS_BAR_ID)
+                .with_h_flex(Flex::Grow)
+                .with_v_flex(Flex::Fixed)
+                .with_size(0, 20)
+                .with_draw(Some(draw_progress_bar))
+                .with_state(Some(Box::new(ProgressBarState { progress: 0 }))),
+            &LOADING_DIALOG_ID,
+        );
         scene.add_view_to_root(loading_panel);
     }
 
@@ -436,9 +504,14 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
     scene
 }
 
-fn format_time_utc(unix_secs: u64) -> String {
-    let h24 = (unix_secs / 3600) % 24;
-    let m = (unix_secs / 60) % 60;
+fn format_time_local(unix_secs: u64, utc_offset_minutes: i32) -> String {
+    let local_secs = if utc_offset_minutes >= 0 {
+        unix_secs.saturating_add(utc_offset_minutes as u64 * 60)
+    } else {
+        unix_secs.saturating_sub((-utc_offset_minutes) as u64 * 60)
+    };
+    let h24 = (local_secs / 3600) % 24;
+    let m = (local_secs / 60) % 60;
     let (h12, ampm) = if h24 == 0 {
         (12u64, "AM")
     } else if h24 < 12 {
@@ -449,6 +522,21 @@ fn format_time_utc(unix_secs: u64) -> String {
         (h24 - 12, "PM")
     };
     format!("{}:{:02} {}", h12, m, ampm)
+}
+
+fn format_tz_label(minutes: i32) -> String {
+    if minutes == 0 {
+        return String::from("UTC");
+    }
+    let sign = if minutes > 0 { '+' } else { '-' };
+    let abs = minutes.abs();
+    let h = abs / 60;
+    let m = abs % 60;
+    if m == 0 {
+        format!("UTC{}{}", sign, h)
+    } else {
+        format!("UTC{}{}:{:02}", sign, h, m)
+    }
 }
 
 /// Parse all fonts and leak them into `'static` memory.
@@ -529,6 +617,7 @@ fn load_book(state: &mut AppState, hw: &mut dyn HardwareAccess, filename: &Strin
         hide_loading_dialog(&mut state.scene);
         if let Ok(s) = new_session {
             state.current_filename = filename.clone();
+            #[cfg(feature = "esp")]
             save_last_filename(&filename);
             state.session = s;
             state.book = new_book;
@@ -702,7 +791,21 @@ fn main() {
                             }
                         }
                         handle_click_action(&mut hw, &input, &mut state);
-                        if input.source == DEEP_CLEAN_ID {
+                        if input.source == TZ_MINUS_ID || input.source == TZ_PLUS_ID {
+                            let delta = if input.source == TZ_PLUS_ID { 30 } else { -30 };
+                            let new_tz = (hw.utc_offset_minutes() + delta).clamp(-720, 840);
+                            hw.set_utc_offset_minutes(new_tz);
+                            if let Some(v) = state.scene.get_view_mut(&TZ_LABEL_ID) {
+                                v.title = format_tz_label(new_tz);
+                                state.scene.mark_dirty_view(&TZ_LABEL_ID);
+                            }
+                            let unix_secs = hw.current_time_secs();
+                            let time_str = format_time_local(unix_secs, new_tz);
+                            if let Some(v) = state.scene.get_view_mut(&ViewId::new("time")) {
+                                v.title = time_str;
+                            }
+                            state.scene.mark_dirty_view(&ViewId::new("time"));
+                        } else if input.source == DEEP_CLEAN_ID {
                             // no-op in simulator
                         } else if input.source == LIBRARY_READ_BUTTON_ID {
                             let filename = state
@@ -798,9 +901,11 @@ fn handle_click_action(hw: &mut dyn HardwareAccess, input: &InputResult, state: 
     }
     if input.source == SYNC_TIME_BUTTON_ID {
         let t = hw.current_time_secs();
+        let time_str = format_time_local(t, hw.utc_offset_minutes());
         if let Some(view) = state.scene.get_view_mut(&ViewId::new("time")) {
-            view.title = format_time_utc(t);
+            view.title = time_str;
         }
+        state.scene.mark_dirty_view(&ViewId::new("time"));
     }
     if input.source == PREV_PAGE_ID {
         state.nav_prev_page(hw);
@@ -866,14 +971,14 @@ const DEEP_SLEEP_AFTER_SECS: u64 = 3600;
 /// Converts Rgb565 luminance to 4-bit gray and applies orientation rotation so
 /// the logical coordinate space matches what the user sees.
 #[cfg(feature = "esp")]
-struct Rgb565ToGray4<'a> {
-    display: Display<'a>,
+struct Rgb565ToGray4<'a, I> {
+    display: Display<'a, I>,
     orientation: Orientation,
 }
 
 #[cfg(feature = "esp")]
-impl<'a> Rgb565ToGray4<'a> {
-    fn new(display: Display<'a>, orientation: Orientation) -> Self {
+impl<'a, I: embedded_hal::i2c::I2c> Rgb565ToGray4<'a, I> {
+    fn new(display: Display<'a, I>, orientation: Orientation) -> Self {
         Self {
             display,
             orientation,
@@ -923,13 +1028,13 @@ impl<'a> Rgb565ToGray4<'a> {
 }
 
 #[cfg(feature = "esp")]
-impl<'a> embedded_graphics::draw_target::DrawTarget for Rgb565ToGray4<'a> {
+impl<'a, I: embedded_hal::i2c::I2c> embedded_graphics::draw_target::DrawTarget for Rgb565ToGray4<'a, I> {
     type Color = Rgb565;
     type Error = ();
 
-    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
+    fn draw_iter<Iter>(&mut self, pixels: Iter) -> Result<(), Self::Error>
     where
-        I: IntoIterator<Item = embedded_graphics::Pixel<Self::Color>>,
+        Iter: IntoIterator<Item = embedded_graphics::Pixel<Self::Color>>,
     {
         for pix in pixels {
             let r = pix.1.r() as u32;
@@ -950,7 +1055,7 @@ impl<'a> embedded_graphics::draw_target::DrawTarget for Rgb565ToGray4<'a> {
 }
 
 #[cfg(feature = "esp")]
-impl<'a> embedded_graphics::geometry::OriginDimensions for Rgb565ToGray4<'a> {
+impl<'a, I: embedded_hal::i2c::I2c> embedded_graphics::geometry::OriginDimensions for Rgb565ToGray4<'a, I> {
     fn size(&self) -> embedded_graphics::geometry::Size {
         let (w, h) = self.orientation.logical_size();
         embedded_graphics::geometry::Size::new(w as u32, h as u32)
@@ -965,12 +1070,14 @@ use embassy_net::{
     IpAddress, IpEndpoint, Ipv4Address, Runner, StackResources,
 };
 #[cfg(feature = "esp")]
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
+#[cfg(feature = "esp")]
 use embassy_time::{with_timeout, Duration, Instant, Timer as EmbassyTimer};
 use ereader::appstate::{book_from_data, cfg_from_scene, AppState};
 use ereader::bookview::{draw_book_content, layout_cfg, update_content, BookState, CONTENT_ID};
 use ereader::h_spacer::make_h_spacer;
 #[cfg(feature = "esp")]
-use ereader::hardware::rtc_store_read;
+use ereader::hardware::{load_tz_offset, rtc_store_read};
 use ereader::{h_spacer, truncating_label};
 #[cfg(feature = "esp")]
 use esp_hal::{
@@ -1012,12 +1119,44 @@ const PASSWORD: &str = match option_env!("WIFI_PASS") {
 };
 // Set to false to skip WiFi init and NTP sync entirely (e.g. when no network is available).
 #[cfg(feature = "esp")]
-const ENABLE_WIFI_NTP: bool = false;
+const ENABLE_WIFI_NTP: bool = true;
 
 #[cfg(feature = "esp")]
 const NTP_ADDR: [u8; 4] = [216, 239, 35, 0]; // time.google.com
 #[cfg(feature = "esp")]
 const NTP_UNIX_OFFSET: u64 = 2_208_988_800; // NTP epoch → Unix epoch
+
+#[cfg(feature = "esp")]
+type I2cBus = critical_section::Mutex<
+    core::cell::RefCell<esp_hal::i2c::master::I2c<'static, esp_hal::Blocking>>,
+>;
+#[cfg(feature = "esp")]
+type SharedI2c = embedded_hal_bus::i2c::CriticalSectionDevice<
+    'static,
+    esp_hal::i2c::master::I2c<'static, esp_hal::Blocking>,
+>;
+
+#[cfg(feature = "esp")]
+static BATTERY_RESULT: Signal<CriticalSectionRawMutex, ereader::hardware::BatteryInfo> =
+    Signal::new();
+
+#[cfg(feature = "esp")]
+static TIME_TICK: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+#[cfg(feature = "esp")]
+static WIFI_SYNC_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+#[cfg(feature = "esp")]
+static WIFI_SYNC_RESULT: Signal<CriticalSectionRawMutex, Option<u64>> = Signal::new();
+
+#[cfg(feature = "esp")]
+static BOOK_LOAD_REQUEST: Signal<CriticalSectionRawMutex, alloc::string::String> = Signal::new();
+#[cfg(feature = "esp")]
+static BOOK_LOAD_PROGRESS: Signal<CriticalSectionRawMutex, u8> = Signal::new();
+#[cfg(feature = "esp")]
+static BOOK_LOAD_RESULT: Signal<
+    CriticalSectionRawMutex,
+    Option<alloc::vec::Vec<u8>>,
+> = Signal::new();
 
 #[cfg(feature = "esp")]
 macro_rules! mk_static {
@@ -1031,6 +1170,102 @@ macro_rules! mk_static {
 #[embassy_executor::task]
 async fn net_task(mut runner: Runner<'static, Interface<'static>>) {
     runner.run().await
+}
+
+#[cfg(feature = "esp")]
+#[embassy_executor::task]
+async fn time_task() {
+    loop {
+        EmbassyTimer::after(Duration::from_secs(10)).await;
+        TIME_TICK.signal(());
+    }
+}
+
+#[cfg(feature = "esp")]
+#[embassy_executor::task]
+async fn battery_task(mut i2c: SharedI2c) {
+    use embedded_hal::i2c::I2c as I2cTrait;
+    loop {
+        EmbassyTimer::after(Duration::from_secs(10)).await;
+        let voltage_mv = bq27220_read_u16(&mut i2c, 0x08) as u32;
+        let current_ma = bq27220_read_i16(&mut i2c, 0x14);
+        let percent = bq27220_read_u16(&mut i2c, 0x1E).min(100) as u8;
+        BATTERY_RESULT.signal(ereader::hardware::BatteryInfo {
+            voltage_mv,
+            percent,
+            is_charging: current_ma > 0,
+        });
+        info!("triggered battery refresh");
+    }
+}
+
+#[cfg(feature = "esp")]
+#[embassy_executor::task]
+async fn book_load_task() {
+    loop {
+        let filename = BOOK_LOAD_REQUEST.wait().await;
+        BOOK_LOAD_PROGRESS.signal(5);
+        EmbassyTimer::after(Duration::from_millis(100)).await;
+
+        let data = ereader::hardware::sd_read_file(&filename);
+
+        let pct = if data.is_some() { 70 } else { 0 };
+        BOOK_LOAD_PROGRESS.signal(pct);
+        EmbassyTimer::after(Duration::from_millis(400)).await;
+
+        BOOK_LOAD_RESULT.signal(data);
+    }
+}
+
+#[cfg(feature = "esp")]
+fn bq27220_read_u16<I: embedded_hal::i2c::I2c>(i2c: &mut I, reg: u8) -> u16 {
+    let mut buf = [0u8; 2];
+    let _ = i2c.write_read(0x55, &[reg], &mut buf);
+    u16::from_le_bytes(buf)
+}
+
+#[cfg(feature = "esp")]
+fn bq27220_read_i16<I: embedded_hal::i2c::I2c>(i2c: &mut I, reg: u8) -> i16 {
+    bq27220_read_u16(i2c, reg) as i16
+}
+
+#[cfg(feature = "esp")]
+#[embassy_executor::task]
+async fn wifi_task(
+    mut controller: esp_radio::wifi::WifiController<'static>,
+    stack: embassy_net::Stack<'static>,
+    skip_initial: bool,
+) {
+    if !skip_initial {
+        do_ntp_sync(&mut controller, stack).await;
+    }
+    loop {
+        WIFI_SYNC_REQUEST.wait().await;
+        do_ntp_sync(&mut controller, stack).await;
+    }
+}
+
+#[cfg(feature = "esp")]
+async fn do_ntp_sync(
+    controller: &mut esp_radio::wifi::WifiController<'static>,
+    stack: embassy_net::Stack<'static>,
+) {
+    log::info!("NTP: connecting to '{}' ...", SSID);
+    let result = with_timeout(Duration::from_secs(20), async {
+        if let Err(e) = controller.connect_async().await {
+            log::warn!("NTP: wifi connect failed: {:?}", e);
+            return None;
+        }
+        log::info!("NTP: wifi connected, waiting for DHCP...");
+        stack.wait_config_up().await;
+        log::info!("NTP: DHCP obtained, querying time.google.com...");
+        query_ntp(stack).await
+    })
+    .await;
+    let unix_opt = result.ok().flatten();
+    WIFI_SYNC_RESULT.signal(unix_opt);
+    controller.disconnect_async().await.ok();
+    log::info!("NTP: wifi disconnected");
 }
 
 /// Query time.google.com via NTP and return Unix seconds, or None on error.
@@ -1094,12 +1329,29 @@ async fn main(spawner: Spawner) -> ! {
 
     let rtc = Rtc::new(peripherals.LPWR);
 
+    // Build a shared I2C bus so the battery gauge can be read from a background task.
+    let i2c_raw = esp_hal::i2c::master::I2c::new(
+        peripherals.I2C0,
+        esp_hal::i2c::master::Config::default(),
+    )
+    .expect("I2C init")
+    .with_sda(peripherals.GPIO39)
+    .with_scl(peripherals.GPIO40);
+    static I2C_BUS: StaticCell<I2cBus> = StaticCell::new();
+    let i2c_bus: &'static I2cBus =
+        I2C_BUS.init(critical_section::Mutex::new(core::cell::RefCell::new(i2c_raw)));
+    let display_i2c = embedded_hal_bus::i2c::CriticalSectionDevice::new(i2c_bus);
+    let battery_i2c = embedded_hal_bus::i2c::CriticalSectionDevice::new(i2c_bus);
+    spawner.spawn(battery_task(battery_i2c).expect("battery_task spawn"));
+    spawner.spawn(time_task().expect("time_task spawn"));
+    spawner.spawn(book_load_task().expect("book_load_task spawn"));
+
     let mut display = Display::new(
         ereader::pin_config!(peripherals),
         peripherals.DMA_CH0,
         peripherals.LCD_CAM,
         peripherals.RMT,
-        peripherals.I2C0,
+        display_i2c,
     )
     .expect("display init");
 
@@ -1160,10 +1412,12 @@ async fn main(spawner: Spawner) -> ! {
         );
         (font, bl, ori, chapter, anchor)
     } else {
-        let (font, bl, ori) = load_settings();
+        let (font, bl, ori, _) = load_settings();
         let (chapter, anchor) = load_cold_boot_position();
         (font, bl, ori, chapter, anchor)
     };
+    // TZ offset is always read from flash (it is not packed into RTC registers).
+    let tz_offset_minutes = load_tz_offset();
 
     // Physical buttons: BOOT (GPIO0, active-low) = prev page; GPIO38 = next page.
     let btn_prev = Input::new(
@@ -1185,6 +1439,7 @@ async fn main(spawner: Spawner) -> ! {
         FontSize::from_index(font_idx),
         BacklightLevel::from_index(bl_idx),
         Orientation::from_index(ori_idx),
+        tz_offset_minutes,
     );
     let (lw, lh) = hw.orientation().logical_size();
     let mut bridge = Rgb565ToGray4::new(display, hw.orientation());
@@ -1213,6 +1468,10 @@ async fn main(spawner: Spawner) -> ! {
         }
     }
     sync_settings_ui(&mut state.scene, font_idx, bl_idx, ori_idx);
+    // Update the TZ label to show the persisted offset.
+    if let Some(v) = state.scene.get_view_mut(&TZ_LABEL_ID) {
+        v.title = format_tz_label(tz_offset_minutes);
+    }
 
     // On any boot (sleep wakeup or hard reset), reopen the last-read SD card book.
     // The filename is saved to NVS when a book is opened and again before deep sleep.
@@ -1254,68 +1513,38 @@ async fn main(spawner: Spawner) -> ! {
     state.update_content(&hw);
 
     let mut just_woke = false;
+    let mut pending_load: Option<String> = None;
     const PARTIAL_REFRESH_FULL_INTERVAL: u32 = 8;
     // Full-quality (15-frame) refresh every N full-screen page turns.
     // In between, use the 4-frame fast waveform.  Increase to reduce flicker;
     // decrease if ghosting accumulates too quickly.
     const FULL_QUALITY_INTERVAL: u32 = 5;
 
-    // ── WiFi + NTP time sync ──────────────────────────────────────────────────
-    // Only sync on cold boot. On deep-sleep wakeup the RTC already holds the
-    // correct time so there is no need to reconnect WiFi.
+    // ── WiFi + NTP time sync (background task) ───────────────────────────────
+    // wifi_task connects, syncs NTP, then disconnects. It stays alive to handle
+    // future sync requests (e.g. from the sync_time button) via WIFI_SYNC_REQUEST.
     if ENABLE_WIFI_NTP {
+        info!("connecting to WIFI_SSID {} WIFI_PASS {}", SSID, PASSWORD);
         let station_config = Config::Station(
             StationConfig::default()
                 .with_ssid(SSID)
                 .with_password(PASSWORD.into()),
         );
-        let (mut controller, interfaces) = esp_radio::wifi::new(
+        let (controller, interfaces) = esp_radio::wifi::new(
             peripherals.WIFI,
             ControllerConfig::default().with_initial_config(station_config),
         )
         .expect("wifi init");
-
-        if !is_sleep_wakeup {
-            let (stack, runner) = embassy_net::new(
-                interfaces.station,
-                embassy_net::Config::dhcpv4(Default::default()),
-                mk_static!(StackResources<3>, StackResources::<3>::new()),
-                seed,
-            );
-            spawner.spawn(net_task(runner).expect("net_task"));
-
-            log::info!("NTP: connecting to '{}' ...", SSID);
-            let ntp_result = with_timeout(Duration::from_secs(20), async {
-                if let Err(e) = controller.connect_async().await {
-                    log::warn!("NTP: wifi connect failed: {:?}", e);
-                    return None;
-                }
-                log::info!("NTP: wifi connected, waiting for DHCP...");
-                stack.wait_config_up().await;
-                log::info!("NTP: DHCP obtained, querying time.google.com...");
-                query_ntp(stack).await
-            })
-            .await;
-
-            match ntp_result {
-                Ok(Some(unix_secs)) => {
-                    hw.set_current_time_secs(unix_secs);
-                    let time_str = format_time_utc(unix_secs);
-                    if let Some(view) = state.scene.get_view_mut(&ViewId::new("time")) {
-                        view.title = time_str.clone();
-                    }
-                    state.scene.mark_layout_dirty();
-                    log::info!("NTP synced: {}", time_str);
-                }
-                Ok(None) => log::warn!("NTP: query failed (no response or bad packet)"),
-                Err(_) => log::warn!("NTP: timed out after 20 s (SSID: '{}')", SSID),
-            }
-
-            controller.disconnect_async().await.ok();
-            log::info!("NTP: wifi disconnected");
-        } else {
-            log::info!("NTP: skipped (woke from sleep, RTC time retained)");
-        }
+        let (stack, runner) = embassy_net::new(
+            interfaces.station,
+            embassy_net::Config::dhcpv4(Default::default()),
+            mk_static!(StackResources<3>, StackResources::<3>::new()),
+            seed,
+        );
+        spawner.spawn(net_task(runner).expect("net_task spawn"));
+        info!("spawned net_task");
+        spawner.spawn(wifi_task(controller, stack, is_sleep_wakeup).expect("wifi_task spawn"));
+        info!("spawned wifi_task");
     } else {
         log::info!("WiFi/NTP disabled (ENABLE_WIFI_NTP = false)");
     }
@@ -1339,6 +1568,110 @@ async fn main(spawner: Spawner) -> ! {
     }
 
     'esp_running: loop {
+        // Apply background battery reading if a new one has arrived.
+        if let Some(info) = BATTERY_RESULT.try_take() {
+            hw.update_battery(info.voltage_mv, info.percent, info.is_charging);
+            update_battery_labels(&mut state.scene, &hw);
+            // state.scene.mark_layout_dirty();
+        }
+
+        // Refresh the time label from the RTC every 10 s (driven by time_task).
+        if TIME_TICK.try_take().is_some() {
+            let unix_secs = hw.current_time_secs();
+            if unix_secs > 0 {
+                let time_str = format_time_local(unix_secs, hw.utc_offset_minutes());
+                if let Some(view) = state.scene.get_view_mut(&ViewId::new("time")) {
+                    if view.title != time_str {
+                        view.title = time_str;
+                        state.scene.mark_dirty_view(&ViewId::new("time"));
+                    }
+                }
+            }
+        }
+
+        // Apply NTP sync result if wifi_task delivered one.
+        if let Some(unix_opt) = WIFI_SYNC_RESULT.try_take() {
+            match unix_opt {
+                Some(unix_secs) => {
+                    hw.set_current_time_secs(unix_secs);
+                    let time_str = format_time_local(unix_secs, hw.utc_offset_minutes());
+                    if let Some(view) = state.scene.get_view_mut(&ViewId::new("time")) {
+                        view.title = time_str.clone();
+                    }
+                    state.scene.mark_layout_dirty();
+                    log::info!("NTP synced: {}", time_str);
+                }
+                None => log::warn!("NTP: sync failed (no response)"),
+            }
+        }
+
+        // Update progress bar while book_load_task is running, and flush
+        // the updated dialog to the display immediately so the bar is visible
+        // before the next blocking SD read or before the result arrives.
+        if let Some(pct) = BOOK_LOAD_PROGRESS.try_take() {
+            set_loading_progress(&mut state.scene, pct);
+            let dirty = state.scene.dirty_rect.clone();
+            if !dirty.is_empty() {
+                {
+                    let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
+                    ctx.clip = dirty.clone();
+                    // Skip layout_scene — dialog geometry is stable between progress
+                    // updates (was already laid out during the initial full-screen render).
+                    draw_scene(&mut state.scene, &mut ctx, &state.theme);
+                }
+                bridge.flush_region(&dirty, DrawMode::Fast);
+                state.partial_refresh_count += 1;
+            }
+        }
+
+        // Finalize the load when book_load_task delivers the raw bytes.
+        if let Some(data) = BOOK_LOAD_RESULT.try_take() {
+            if let Some(filename) = pending_load.take() {
+                match data {
+                    None => {
+                        hide_loading_dialog(&mut state.scene);
+                        show_error_dialog(&mut state.scene, &filename);
+                    }
+                    Some(bytes) => {
+                        set_loading_progress(&mut state.scene, 90);
+                        let book = book_from_data(&filename, bytes);
+                        state.cfg = cfg_from_scene(
+                            &mut state.scene,
+                            &state.theme,
+                            &state.fonts,
+                            hw.font_size(),
+                        );
+                        let new_session = match hw.load_bookmark(&filename) {
+                            Some((ch, anchor)) => {
+                                BookSession::restore(book.as_ref(), &state.cfg, ch, anchor)
+                                    .or_else(|_| BookSession::new(book.as_ref(), &state.cfg))
+                            }
+                            None => BookSession::new(book.as_ref(), &state.cfg),
+                        };
+                        hide_loading_dialog(&mut state.scene);
+                        match new_session {
+                            Ok(session) => {
+                                hw.save_bookmark(
+                                    &state.current_filename,
+                                    state.session.chapter_idx,
+                                    state.session.reader.anchor_byte,
+                                );
+                                state.current_filename = filename.clone();
+                                save_last_filename(&filename);
+                                state.session = session;
+                                state.book = book;
+                                state.update_content(&hw);
+                            }
+                            Err(_) => {
+                                show_error_dialog(&mut state.scene, &filename);
+                            }
+                        }
+                    }
+                }
+                state.last_interaction = Instant::now();
+            }
+        }
+
         // Read GT911 touch + face-button key state in one I2C transaction so we
         // don't miss a key event that read_touch would silently discard.
         let (touch_pt, face_key) = bridge.display.read_touch_and_key(&mut gt911);
@@ -1514,17 +1847,30 @@ async fn main(spawner: Spawner) -> ! {
                     }
                     handle_click_action(&mut hw, &input, &mut state);
                     if input.source == ViewId::new("sync_time") {
-                        info!("sync_time pressed, querying NTP");
-                        // if let Some(unix_secs) = query_ntp(stack).await {
-                        //     let time_str = format_time_utc(unix_secs);
-                        //     if let Some(view) = scene.get_view_mut(&ViewId::new("time")) {
-                        //         view.title = time_str.clone();
-                        //     }
-                        //     scene.mark_layout_dirty();
-                        //     info!("time synced: {}", time_str);
-                        // } else {
-                        //     info!("NTP query failed");
-                        // }
+                        if ENABLE_WIFI_NTP {
+                            info!("sync_time pressed — requesting background NTP sync");
+                            WIFI_SYNC_REQUEST.signal(());
+                        } else {
+                            info!("sync_time pressed but WiFi is disabled");
+                        }
+                    } else if input.source == TZ_MINUS_ID || input.source == TZ_PLUS_ID {
+                        let delta = if input.source == TZ_PLUS_ID { 30 } else { -30 };
+                        let new_tz = (hw.utc_offset_minutes() + delta).clamp(-720, 840);
+                        hw.set_utc_offset_minutes(new_tz);
+                        hw.save_settings();
+                        // Update the label in the settings dialog.
+                        if let Some(v) = state.scene.get_view_mut(&TZ_LABEL_ID) {
+                            v.title = format_tz_label(new_tz);
+                            state.scene.mark_dirty_view(&TZ_LABEL_ID);
+                        }
+                        // Immediately reflect the new offset in the clock.
+                        let unix_secs = hw.current_time_secs();
+                        if unix_secs > 0 {
+                            if let Some(v) = state.scene.get_view_mut(&ViewId::new("time")) {
+                                v.title = format_time_local(unix_secs, new_tz);
+                                state.scene.mark_dirty_view(&ViewId::new("time"));
+                            }
+                        }
                     } else if input.source == DEEP_CLEAN_ID {
                         info!("deep clean started");
                         bridge.display.deep_clean(3).unwrap();
@@ -1539,9 +1885,7 @@ async fn main(spawner: Spawner) -> ! {
                         if let Some(filename) = filename {
                             state.scene.hide_view(&LIBRARY_DIALOG_ID);
                             show_loading_dialog(&mut state.scene, &filename);
-                            // Flush the loading screen to e-paper before the blocking SD read.
-                            // E-paper is bistable so the "Loading…" message stays visible
-                            // for the full duration of the blocking file read.
+                            // Flush the loading dialog (with 0% bar) to e-paper immediately.
                             {
                                 let dirty = state.scene.dirty_rect.clone();
                                 bridge.clearing_flush_region(&dirty);
@@ -1554,7 +1898,14 @@ async fn main(spawner: Spawner) -> ! {
                                 bridge.flush_region(&dirty, DrawMode::BlackOnWhite);
                                 state.partial_refresh_count += 1;
                             }
-                            load_book(&mut state, &mut hw, &filename);
+                            // Drop the old book now so its heap is free before the
+                            // background task allocates the new epub (which can be
+                            // larger than the remaining free heap if the old book
+                            // is still live).
+                            state.book = Box::new(TxtBook::from_vec(alloc::vec![]));
+                            // Hand off to book_load_task; result arrives via BOOK_LOAD_RESULT.
+                            pending_load = Some(filename.clone());
+                            BOOK_LOAD_REQUEST.signal(filename);
                         }
                         state.last_interaction = Instant::now();
                     } else {
@@ -1600,8 +1951,33 @@ async fn main(spawner: Spawner) -> ! {
             state.update_content(&hw);
         } else if elapsed_secs >= LIGHT_SLEEP_AFTER_SECS {
             log::info!("inactivity timeout — entering light sleep");
+            // Draw a grid of 30×30 black squares with white 5 px gaps on the physical display.
+            // fill(0x0F) sets the entire framebuffer to white, making the gaps white by default.
+            {
+                const CELL: u16 = 30;
+                const GAP: u16 = 5;
+                const STRIDE: u16 = CELL + GAP;
+                bridge.display.fill(0x0F).unwrap(); // white — gaps inherit this
+                let pw = ereader::driver::display::DISPLAY_WIDTH;
+                let ph = ereader::driver::display::DISPLAY_HEIGHT;
+                let cols = (pw + GAP) / STRIDE;
+                let rows = (ph + GAP) / STRIDE;
+                for row in 0..rows {
+                    for col in 0..cols {
+                        let x = col * STRIDE;
+                        let y = row * STRIDE;
+                        bridge.display.fill_region(
+                            Rectangle { x, y, width: CELL, height: CELL },
+                            0x00, // black square
+                        ).unwrap();
+                    }
+                }
+                bridge.display.flush(DrawMode::BlackOnWhite).unwrap();
+            }
             // Backlight is turned off inside enter_light_sleep and restored on return.
             hw.enter_light_sleep();
+            // Full redraw after waking so the grid is replaced with book content.
+            state.scene.mark_dirty_all();
             state.last_interaction = Instant::now();
             just_woke = true;
         }
