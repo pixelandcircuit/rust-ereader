@@ -38,7 +38,7 @@ use iris_ui::list_view::{make_list_view, ListState};
 use iris_ui::scene::{click_at, draw_scene, layout_scene, Scene};
 use iris_ui::toggle_group::{make_toggle_group, SelectOneOfState};
 use iris_ui::view::{Align, Flex, View, ViewId};
-use iris_ui::{Callback, FontKind, GuiEvent, LayoutEvent, Theme, ViewStyle};
+use iris_ui::{Callback, DrawEvent, FontKind, GuiEvent, LayoutEvent, Theme, ViewStyle};
 use Align::Center;
 
 const WELCOME_HTML: &[u8] = include_bytes!("welcome.html");
@@ -55,6 +55,7 @@ const BATTERY_DIALOG_ID: ViewId = ViewId::new("battery_dialog");
 const BATTERY_CLOSE_ID: ViewId = ViewId::new("battery_close");
 const ERROR_DIALOG_ID: ViewId = ViewId::new("error_dialog");
 const LOADING_DIALOG_ID: ViewId = ViewId::new("loading_dialog");
+const LOADING_PROGRESS_BAR_ID: ViewId = ViewId::new("loading_progress_bar");
 const FAST_SCROLL_PANEL_ID: ViewId = ViewId::new("fast_scroll_panel");
 const FAST_SCROLL_LABEL_ID: ViewId = ViewId::new("fast_scroll_label");
 const ORIENTATION_ID: ViewId = ViewId::new("orientation");
@@ -101,10 +102,31 @@ fn show_error_dialog(scene: &mut Scene, filename: &str) {
     scene.mark_dirty_all();
 }
 
+struct ProgressBarState {
+    progress: u8, // 0–100
+}
+
+fn draw_progress_bar(e: &mut DrawEvent) {
+    let bounds = *e.bounds;
+    let pct = e
+        .view
+        .get_state::<ProgressBarState>()
+        .map(|s| s.progress)
+        .unwrap_or(0);
+    e.ctx.fill_rect(&bounds, &Rgb565::WHITE);
+    if pct > 0 {
+        let fill_w = (bounds.size.w as u32 * pct as u32 / 100) as i32;
+        let fill = Bounds::new(bounds.position.x, bounds.position.y, fill_w, bounds.size.h);
+        e.ctx.fill_rect(&fill, &Rgb565::BLACK);
+    }
+    e.ctx.stroke_rect(&bounds, &Rgb565::BLACK);
+}
+
 fn show_loading_dialog(scene: &mut Scene, filename: &str) {
     if let Some(v) = scene.get_view_mut(&ViewId::new("loading_msg")) {
         v.title = format!("Loading {filename}\u{2026}");
     }
+    set_loading_progress(scene, 0);
     scene.show_view(&LOADING_DIALOG_ID);
     scene.mark_layout_dirty_view(&LOADING_DIALOG_ID);
 }
@@ -112,6 +134,15 @@ fn show_loading_dialog(scene: &mut Scene, filename: &str) {
 fn hide_loading_dialog(scene: &mut Scene) {
     scene.hide_view(&LOADING_DIALOG_ID);
     scene.mark_dirty_view(&LOADING_DIALOG_ID);
+}
+
+fn set_loading_progress(scene: &mut Scene, pct: u8) {
+    if let Some(v) = scene.get_view_mut(&LOADING_PROGRESS_BAR_ID) {
+        if let Some(s) = v.get_state::<ProgressBarState>() {
+            s.progress = pct;
+        }
+    }
+    scene.mark_dirty_view(&LOADING_PROGRESS_BAR_ID);
 }
 
 fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
@@ -369,6 +400,16 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
             make_label(&ViewId::new("loading_msg"), ""),
             &LOADING_DIALOG_ID,
         );
+        scene.add_view_to_parent(
+            View::default()
+                .with_name(LOADING_PROGRESS_BAR_ID)
+                .with_h_flex(Flex::Grow)
+                .with_v_flex(Flex::Fixed)
+                .with_size(0, 20)
+                .with_draw(Some(draw_progress_bar))
+                .with_state(Some(Box::new(ProgressBarState { progress: 0 }))),
+            &LOADING_DIALOG_ID,
+        );
         scene.add_view_to_root(loading_panel);
     }
 
@@ -529,6 +570,7 @@ fn load_book(state: &mut AppState, hw: &mut dyn HardwareAccess, filename: &Strin
         hide_loading_dialog(&mut state.scene);
         if let Ok(s) = new_session {
             state.current_filename = filename.clone();
+            #[cfg(feature = "esp")]
             save_last_filename(&filename);
             state.session = s;
             state.book = new_book;
@@ -1044,6 +1086,16 @@ static WIFI_SYNC_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static WIFI_SYNC_RESULT: Signal<CriticalSectionRawMutex, Option<u64>> = Signal::new();
 
 #[cfg(feature = "esp")]
+static BOOK_LOAD_REQUEST: Signal<CriticalSectionRawMutex, alloc::string::String> = Signal::new();
+#[cfg(feature = "esp")]
+static BOOK_LOAD_PROGRESS: Signal<CriticalSectionRawMutex, u8> = Signal::new();
+#[cfg(feature = "esp")]
+static BOOK_LOAD_RESULT: Signal<
+    CriticalSectionRawMutex,
+    Option<alloc::vec::Vec<u8>>,
+> = Signal::new();
+
+#[cfg(feature = "esp")]
 macro_rules! mk_static {
     ($t:ty, $val:expr) => {{
         static STATIC_CELL: StaticCell<$t> = StaticCell::new();
@@ -1081,6 +1133,26 @@ async fn battery_task(mut i2c: SharedI2c) {
             is_charging: current_ma > 0,
         });
         info!("triggered battery refresh");
+    }
+}
+
+#[cfg(feature = "esp")]
+#[embassy_executor::task]
+async fn book_load_task() {
+    loop {
+        let filename = BOOK_LOAD_REQUEST.wait().await;
+        BOOK_LOAD_PROGRESS.signal(5);
+        // Yield so the main task can paint the initial 5% bar before blocking I/O.
+        EmbassyTimer::after(Duration::from_millis(0)).await;
+
+        let data = ereader::hardware::sd_read_file(&filename);
+
+        // Yield with a short delay so the main task can render the 70% bar
+        // before the result arrives.
+        BOOK_LOAD_PROGRESS.signal(if data.is_some() { 70 } else { 0 });
+        EmbassyTimer::after(Duration::from_millis(200)).await;
+
+        BOOK_LOAD_RESULT.signal(data);
     }
 }
 
@@ -1211,6 +1283,7 @@ async fn main(spawner: Spawner) -> ! {
     let battery_i2c = embedded_hal_bus::i2c::CriticalSectionDevice::new(i2c_bus);
     spawner.spawn(battery_task(battery_i2c).expect("battery_task spawn"));
     spawner.spawn(time_task().expect("time_task spawn"));
+    spawner.spawn(book_load_task().expect("book_load_task spawn"));
 
     let mut display = Display::new(
         ereader::pin_config!(peripherals),
@@ -1372,6 +1445,7 @@ async fn main(spawner: Spawner) -> ! {
     state.update_content(&hw);
 
     let mut just_woke = false;
+    let mut pending_load: Option<String> = None;
     const PARTIAL_REFRESH_FULL_INTERVAL: u32 = 8;
     // Full-quality (15-frame) refresh every N full-screen page turns.
     // In between, use the 4-frame fast waveform.  Increase to reduce flicker;
@@ -1460,6 +1534,59 @@ async fn main(spawner: Spawner) -> ! {
                     log::info!("NTP synced: {}", time_str);
                 }
                 None => log::warn!("NTP: sync failed (no response)"),
+            }
+        }
+
+        // Update progress bar while book_load_task is running.
+        if let Some(pct) = BOOK_LOAD_PROGRESS.try_take() {
+            set_loading_progress(&mut state.scene, pct);
+        }
+
+        // Finalize the load when book_load_task delivers the raw bytes.
+        if let Some(data) = BOOK_LOAD_RESULT.try_take() {
+            if let Some(filename) = pending_load.take() {
+                match data {
+                    None => {
+                        hide_loading_dialog(&mut state.scene);
+                        show_error_dialog(&mut state.scene, &filename);
+                    }
+                    Some(bytes) => {
+                        set_loading_progress(&mut state.scene, 90);
+                        let book = book_from_data(&filename, bytes);
+                        state.cfg = cfg_from_scene(
+                            &mut state.scene,
+                            &state.theme,
+                            &state.fonts,
+                            hw.font_size(),
+                        );
+                        let new_session = match hw.load_bookmark(&filename) {
+                            Some((ch, anchor)) => {
+                                BookSession::restore(book.as_ref(), &state.cfg, ch, anchor)
+                                    .or_else(|_| BookSession::new(book.as_ref(), &state.cfg))
+                            }
+                            None => BookSession::new(book.as_ref(), &state.cfg),
+                        };
+                        hide_loading_dialog(&mut state.scene);
+                        match new_session {
+                            Ok(session) => {
+                                hw.save_bookmark(
+                                    &state.current_filename,
+                                    state.session.chapter_idx,
+                                    state.session.reader.anchor_byte,
+                                );
+                                state.current_filename = filename.clone();
+                                save_last_filename(&filename);
+                                state.session = session;
+                                state.book = book;
+                                state.update_content(&hw);
+                            }
+                            Err(_) => {
+                                show_error_dialog(&mut state.scene, &filename);
+                            }
+                        }
+                    }
+                }
+                state.last_interaction = Instant::now();
             }
         }
 
@@ -1658,9 +1785,7 @@ async fn main(spawner: Spawner) -> ! {
                         if let Some(filename) = filename {
                             state.scene.hide_view(&LIBRARY_DIALOG_ID);
                             show_loading_dialog(&mut state.scene, &filename);
-                            // Flush the loading screen to e-paper before the blocking SD read.
-                            // E-paper is bistable so the "Loading…" message stays visible
-                            // for the full duration of the blocking file read.
+                            // Flush the loading dialog (with 0% bar) to e-paper immediately.
                             {
                                 let dirty = state.scene.dirty_rect.clone();
                                 bridge.clearing_flush_region(&dirty);
@@ -1673,7 +1798,9 @@ async fn main(spawner: Spawner) -> ! {
                                 bridge.flush_region(&dirty, DrawMode::BlackOnWhite);
                                 state.partial_refresh_count += 1;
                             }
-                            load_book(&mut state, &mut hw, &filename);
+                            // Hand off to book_load_task; result arrives via BOOK_LOAD_RESULT.
+                            pending_load = Some(filename.clone());
+                            BOOK_LOAD_REQUEST.signal(filename);
                         }
                         state.last_interaction = Instant::now();
                     } else {

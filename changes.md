@@ -1,5 +1,19 @@
 # Changes
 
+## 2026-08-15
+
+Async book loading with progress bar — moved epub loading to a background Embassy task (`book_load_task`) that yields between phases so the main loop can update a progress bar in the loading dialog.
+
+- `src/hardware.rs`: Extracted SD card file reading from `EspHardware::load_book_file` into a public free function `sd_read_file(name)`. The trait method now delegates to it.
+- `examples/ereader_ui.rs`:
+  - Added `ProgressBarState` + `draw_progress_bar` fn + `set_loading_progress` helper.
+  - Added `LOADING_PROGRESS_BAR_ID` constant and a 20 px tall `Grow`-width progress bar view to the loading dialog panel.
+  - Added `BOOK_LOAD_REQUEST`, `BOOK_LOAD_PROGRESS`, `BOOK_LOAD_RESULT` static Signals (ESP-only).
+  - Added `book_load_task`: waits for a filename, signals 5%, reads file (blocking SD I/O), signals 70%, yields 200 ms, then signals the raw bytes as the result.
+  - Spawns `book_load_task` at startup.
+  - Library "Read" button now signals `BOOK_LOAD_REQUEST` instead of calling `load_book` synchronously; filename stored in `pending_load`.
+  - Main loop polls `BOOK_LOAD_PROGRESS` (updates bar) and `BOOK_LOAD_RESULT` (finalises load: parse book, build session, update content).
+
 ## 2026-08-14 (3)
 
 Draw sleep grid on light sleep and refresh on wake — before entering light sleep, fills the physical display with a white background and a grid of 30×30 black squares with white 5 px gaps, then flushes to the e-paper panel. After waking, marks the full scene dirty so the next loop iteration does a full redraw back to book content.

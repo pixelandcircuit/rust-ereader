@@ -853,79 +853,7 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
     }
 
     fn load_book_file(&self, name: &str) -> Option<alloc::vec::Vec<u8>> {
-        use embedded_hal::spi::SpiBus;
-        use embedded_hal_bus::spi::ExclusiveDevice;
-        use embedded_sdmmc::{
-            Error, LfnBuffer, Mode, SdCard, SdCardError, VolumeIdx, VolumeManager,
-        };
-        use esp_hal::{
-            delay::Delay,
-            gpio::{Level, Output, OutputConfig},
-            spi::master::{Config as SpiConfig, Spi},
-            time::Rate,
-        };
-
-        let _lora_cs = unsafe {
-            Output::new(
-                esp_hal::gpio::AnyPin::steal(46),
-                Level::High,
-                OutputConfig::default(),
-            )
-        };
-        let cs = unsafe {
-            Output::new(
-                esp_hal::gpio::AnyPin::steal(12),
-                Level::High,
-                OutputConfig::default(),
-            )
-        };
-        let mut spi = unsafe {
-            Spi::new(
-                esp_hal::peripherals::SPI2::steal(),
-                SpiConfig::default().with_frequency(Rate::from_khz(400)),
-            )
-            .expect("SPI2 init")
-            .with_sck(esp_hal::gpio::AnyPin::steal(14))
-            .with_mosi(esp_hal::gpio::AnyPin::steal(13))
-            .with_miso(esp_hal::gpio::AnyPin::steal(21))
-        };
-        let _ = SpiBus::write(&mut spi, &[0xFF; 10]);
-        let spi_dev = ExclusiveDevice::new(spi, cs, Delay::new()).ok()?;
-        let sdcard = SdCard::new(spi_dev, Delay::new());
-        let mgr = VolumeManager::<_, _, 16, 4, 1>::new_with_limits(sdcard, DummyTimesource, 0);
-        let vol = match mgr.open_volume(VolumeIdx(0)) {
-            Ok(v) => v,
-            Err(Error::DeviceError(SdCardError::CardNotFound)) => {
-                log::info!("SD: no card");
-                return None;
-            }
-            Err(e) => {
-                log::warn!("SD error: {:?}", e);
-                return None;
-            }
-        };
-        let root = vol.open_root_dir().ok()?;
-
-        // Find the SFN entry whose LFN (or SFN fallback) matches the given display name.
-        let mut sfn: Option<embedded_sdmmc::ShortFileName> = None;
-        let mut lfn_storage = [0u8; 256];
-        let mut lfn_buf = LfnBuffer::new(&mut lfn_storage);
-        let _ = root.iterate_dir_lfn(&mut lfn_buf, |e, lfn| {
-            if sfn.is_some() {
-                return;
-            }
-            let display = match lfn {
-                Some(s) => String::from(s),
-                None => alloc::format!("{}", e.name),
-            };
-            if display == name {
-                sfn = Some(e.name.clone());
-            }
-        });
-        let mut f = root.open_file_in_dir(sfn?, Mode::ReadOnly).ok()?;
-        let mut buf = alloc::vec![0u8; f.length() as usize];
-        f.read(&mut buf).ok()?;
-        Some(buf)
+        sd_read_file(name)
     }
 
     fn battery_info(&self) -> BatteryInfo {
@@ -974,4 +902,83 @@ impl embedded_sdmmc::TimeSource for DummyTimesource {
             seconds: 0,
         }
     }
+}
+
+/// Read a file by display name from the SD card.
+///
+/// Steals SPI2 and the relevant GPIO pins with `unsafe`; callers are responsible
+/// for ensuring no other task accesses SPI2 concurrently (safe in Embassy's
+/// cooperative single-core executor as long as no other task also steals SPI2).
+#[cfg(feature = "esp")]
+pub fn sd_read_file(name: &str) -> Option<alloc::vec::Vec<u8>> {
+    use embedded_hal::spi::SpiBus;
+    use embedded_hal_bus::spi::ExclusiveDevice;
+    use embedded_sdmmc::{Error, LfnBuffer, Mode, SdCard, SdCardError, VolumeIdx, VolumeManager};
+    use esp_hal::{
+        delay::Delay,
+        gpio::{Level, Output, OutputConfig},
+        spi::master::{Config as SpiConfig, Spi},
+        time::Rate,
+    };
+
+    let _lora_cs = unsafe {
+        Output::new(
+            esp_hal::gpio::AnyPin::steal(46),
+            Level::High,
+            OutputConfig::default(),
+        )
+    };
+    let cs = unsafe {
+        Output::new(
+            esp_hal::gpio::AnyPin::steal(12),
+            Level::High,
+            OutputConfig::default(),
+        )
+    };
+    let mut spi = unsafe {
+        Spi::new(
+            esp_hal::peripherals::SPI2::steal(),
+            SpiConfig::default().with_frequency(Rate::from_khz(400)),
+        )
+        .expect("SPI2 init")
+        .with_sck(esp_hal::gpio::AnyPin::steal(14))
+        .with_mosi(esp_hal::gpio::AnyPin::steal(13))
+        .with_miso(esp_hal::gpio::AnyPin::steal(21))
+    };
+    let _ = SpiBus::write(&mut spi, &[0xFF; 10]);
+    let spi_dev = ExclusiveDevice::new(spi, cs, Delay::new()).ok()?;
+    let sdcard = SdCard::new(spi_dev, Delay::new());
+    let mgr = VolumeManager::<_, _, 16, 4, 1>::new_with_limits(sdcard, DummyTimesource, 0);
+    let vol = match mgr.open_volume(VolumeIdx(0)) {
+        Ok(v) => v,
+        Err(Error::DeviceError(SdCardError::CardNotFound)) => {
+            log::info!("SD: no card");
+            return None;
+        }
+        Err(e) => {
+            log::warn!("SD error: {:?}", e);
+            return None;
+        }
+    };
+    let root = vol.open_root_dir().ok()?;
+
+    let mut sfn: Option<embedded_sdmmc::ShortFileName> = None;
+    let mut lfn_storage = [0u8; 256];
+    let mut lfn_buf = LfnBuffer::new(&mut lfn_storage);
+    let _ = root.iterate_dir_lfn(&mut lfn_buf, |e, lfn| {
+        if sfn.is_some() {
+            return;
+        }
+        let display = match lfn {
+            Some(s) => String::from(s),
+            None => alloc::format!("{}", e.name),
+        };
+        if display == name {
+            sfn = Some(e.name.clone());
+        }
+    });
+    let mut f = root.open_file_in_dir(sfn?, Mode::ReadOnly).ok()?;
+    let mut buf = alloc::vec![0u8; f.length() as usize];
+    f.read(&mut buf).ok()?;
+    Some(buf)
 }
