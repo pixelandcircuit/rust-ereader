@@ -1,5 +1,14 @@
 # Changes
 
+## 2026-08-15 (2)
+
+Fix OOM when loading large epubs — free old book before allocating new one:
+
+- `examples/ereader_ui.rs`: Replace `state.book` with an empty `TxtBook` immediately when a new book load is requested (before signalling `BOOK_LOAD_REQUEST`). This frees the old epub's heap before the background task allocates the new one, resolving the 296 KB free / 378 KB needed OOM on sherlock_holmes.epub.
+- `examples/ereader_ui.rs`: Removed the redundant `layout_scene` call from the progress-bar partial-flush path (dialog geometry does not change between progress updates; calling `layout_scene` a second time was re-allocating layout buffers unnecessarily).
+- `examples/ereader_ui.rs`: Reduced the pre-read yield from 400 ms to 100 ms.
+- `src/hardware.rs`: Added a heap-free log line before the file buffer allocation in `sd_read_file` for future diagnosis.
+
 ## 2026-08-15
 
 Async book loading with progress bar — moved epub loading to a background Embassy task (`book_load_task`) that yields between phases so the main loop can update a progress bar in the loading dialog.

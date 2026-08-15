@@ -107,7 +107,9 @@ struct ProgressBarState {
 }
 
 fn draw_progress_bar(e: &mut DrawEvent) {
-    let bounds = *e.bounds;
+    // e.view.bounds is the view's own bounds in parent-local coordinates,
+    // consistent with how draw_book_content uses it. e.bounds is the scene bounds.
+    let bounds = e.view.bounds;
     let pct = e
         .view
         .get_state::<ProgressBarState>()
@@ -142,7 +144,9 @@ fn set_loading_progress(scene: &mut Scene, pct: u8) {
             s.progress = pct;
         }
     }
-    scene.mark_dirty_view(&LOADING_PROGRESS_BAR_ID);
+    // Mark the whole dialog dirty — the progress bar's own bounds have w=0
+    // before layout runs, so marking it alone produces an empty dirty rect.
+    scene.mark_dirty_view(&LOADING_DIALOG_ID);
 }
 
 fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
@@ -1142,15 +1146,13 @@ async fn book_load_task() {
     loop {
         let filename = BOOK_LOAD_REQUEST.wait().await;
         BOOK_LOAD_PROGRESS.signal(5);
-        // Yield so the main task can paint the initial 5% bar before blocking I/O.
-        EmbassyTimer::after(Duration::from_millis(0)).await;
+        EmbassyTimer::after(Duration::from_millis(100)).await;
 
         let data = ereader::hardware::sd_read_file(&filename);
 
-        // Yield with a short delay so the main task can render the 70% bar
-        // before the result arrives.
-        BOOK_LOAD_PROGRESS.signal(if data.is_some() { 70 } else { 0 });
-        EmbassyTimer::after(Duration::from_millis(200)).await;
+        let pct = if data.is_some() { 70 } else { 0 };
+        BOOK_LOAD_PROGRESS.signal(pct);
+        EmbassyTimer::after(Duration::from_millis(400)).await;
 
         BOOK_LOAD_RESULT.signal(data);
     }
@@ -1537,9 +1539,23 @@ async fn main(spawner: Spawner) -> ! {
             }
         }
 
-        // Update progress bar while book_load_task is running.
+        // Update progress bar while book_load_task is running, and flush
+        // the updated dialog to the display immediately so the bar is visible
+        // before the next blocking SD read or before the result arrives.
         if let Some(pct) = BOOK_LOAD_PROGRESS.try_take() {
             set_loading_progress(&mut state.scene, pct);
+            let dirty = state.scene.dirty_rect.clone();
+            if !dirty.is_empty() {
+                {
+                    let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
+                    ctx.clip = dirty.clone();
+                    // Skip layout_scene — dialog geometry is stable between progress
+                    // updates (was already laid out during the initial full-screen render).
+                    draw_scene(&mut state.scene, &mut ctx, &state.theme);
+                }
+                bridge.flush_region(&dirty, DrawMode::Fast);
+                state.partial_refresh_count += 1;
+            }
         }
 
         // Finalize the load when book_load_task delivers the raw bytes.
@@ -1798,6 +1814,11 @@ async fn main(spawner: Spawner) -> ! {
                                 bridge.flush_region(&dirty, DrawMode::BlackOnWhite);
                                 state.partial_refresh_count += 1;
                             }
+                            // Drop the old book now so its heap is free before the
+                            // background task allocates the new epub (which can be
+                            // larger than the remaining free heap if the old book
+                            // is still live).
+                            state.book = Box::new(TxtBook::from_vec(alloc::vec![]));
                             // Hand off to book_load_task; result arrives via BOOK_LOAD_RESULT.
                             pending_load = Some(filename.clone());
                             BOOK_LOAD_REQUEST.signal(filename);
