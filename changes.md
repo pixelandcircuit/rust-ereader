@@ -1,5 +1,11 @@
 # Changes
 
+## 2026-08-14 (3)
+
+Draw sleep grid on light sleep and refresh on wake — before entering light sleep, fills the physical display with a white background and a grid of 30×30 black squares with white 5 px gaps, then flushes to the e-paper panel. After waking, marks the full scene dirty so the next loop iteration does a full redraw back to book content.
+
+- `examples/ereader_ui.rs`: Added grid-drawing block (white background via `fill(0x0F)`, black squares via `fill_region`) in the `LIGHT_SLEEP_AFTER_SECS` branch. Added `state.scene.mark_dirty_all()` after `enter_light_sleep()` returns to trigger a full-screen refresh on wake.
+
 ## 2026-08-14 (2)
 
 Add `time_task` Embassy task to refresh the clock display every 10 seconds.

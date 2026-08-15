@@ -1719,8 +1719,33 @@ async fn main(spawner: Spawner) -> ! {
             state.update_content(&hw);
         } else if elapsed_secs >= LIGHT_SLEEP_AFTER_SECS {
             log::info!("inactivity timeout — entering light sleep");
+            // Draw a grid of 30×30 black squares with white 5 px gaps on the physical display.
+            // fill(0x0F) sets the entire framebuffer to white, making the gaps white by default.
+            {
+                const CELL: u16 = 30;
+                const GAP: u16 = 5;
+                const STRIDE: u16 = CELL + GAP;
+                bridge.display.fill(0x0F).unwrap(); // white — gaps inherit this
+                let pw = ereader::driver::display::DISPLAY_WIDTH;
+                let ph = ereader::driver::display::DISPLAY_HEIGHT;
+                let cols = (pw + GAP) / STRIDE;
+                let rows = (ph + GAP) / STRIDE;
+                for row in 0..rows {
+                    for col in 0..cols {
+                        let x = col * STRIDE;
+                        let y = row * STRIDE;
+                        bridge.display.fill_region(
+                            Rectangle { x, y, width: CELL, height: CELL },
+                            0x00, // black square
+                        ).unwrap();
+                    }
+                }
+                bridge.display.flush(DrawMode::BlackOnWhite).unwrap();
+            }
             // Backlight is turned off inside enter_light_sleep and restored on return.
             hw.enter_light_sleep();
+            // Full redraw after waking so the grid is replaced with book content.
+            state.scene.mark_dirty_all();
             state.last_interaction = Instant::now();
             just_woke = true;
         }
