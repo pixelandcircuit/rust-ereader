@@ -1,5 +1,12 @@
 # Changes
 
+## 2026-08-15 09:44
+
+Added `ARCHITECTURE.md`: documents the dual `esp`/`simulator` build split, the
+hardware/driver/data/rendering/appstate layers, the page-render data flow, and a
+file:line reference index. Also flags that `README.md` still references removed
+examples (`ereader_full.rs`, `epub_test.rs`) and a stale `examples/library/` path.
+
 ## 2026-08-15 (3)
 
 Add timezone setting so the clock displays local time after NTP sync:
