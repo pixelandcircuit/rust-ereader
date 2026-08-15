@@ -1,5 +1,12 @@
 # Changes
 
+## 2026-08-15 (3)
+
+Add timezone setting so the clock displays local time after NTP sync:
+
+- `src/hardware.rs`: Added `utc_offset_minutes: i32` field to both `EspHardware` and `SimHardware`. Added `utc_offset_minutes()` / `set_utc_offset_minutes()` to the `HardwareAccess` trait. Added `KEY_TZ = 13` flash key, `load_tz_offset()` public fn, and `save_settings()` now persists the TZ offset alongside font/backlight/orientation. `load_settings()` returns a 4-tuple including the TZ offset. `EspHardware::new()` accepts the initial offset.
+- `examples/ereader_ui.rs`: Renamed `format_time_utc` → `format_time_local(unix_secs, utc_offset_minutes)`, which applies the signed minute offset before formatting. Added `format_tz_label(minutes)` producing strings like "UTC", "UTC+5:30", "UTC-8". Added a "Time Zone" label and "−" / offset-label / "+" row to the settings dialog (30-minute steps, clamped to −12 h … +14 h). Pressing either button adjusts the offset, saves to flash, updates the TZ label, and immediately re-formats the clock display. TZ offset is loaded from flash at boot (both cold boot and deep-sleep wakeup) and the settings-dialog label is initialised to the saved value. Both simulator and ESP paths handle the TZ buttons. Fixed a bug where the "Sync Time" button updated the time label's text but forgot to mark the view dirty, so the display never repainted.
+
 ## 2026-08-15 (2)
 
 Fix OOM when loading large epubs — free old book before allocating new one:

@@ -193,6 +193,9 @@ pub trait HardwareAccess {
     fn set_orientation(&mut self, orientation: Orientation);
     /// Set the hardware RTC to the given Unix timestamp. No-op on simulator.
     fn set_current_time_secs(&mut self, secs: u64);
+    /// UTC offset in minutes for local time display (e.g. -480 for UTC-8, 330 for UTC+5:30).
+    fn utc_offset_minutes(&self) -> i32;
+    fn set_utc_offset_minutes(&mut self, minutes: i32);
 
     /// Physical BOOT button (GPIO0) state — always false on simulator.
     fn button_prev_pressed(&self) -> bool;
@@ -232,6 +235,7 @@ pub struct SimHardware {
     font_size: FontSize,
     backlight: BacklightLevel,
     orientation: Orientation,
+    utc_offset_minutes: i32,
     bookmarks: std::collections::HashMap<String, (usize, usize)>,
 }
 
@@ -242,6 +246,7 @@ impl SimHardware {
             font_size: FontSize::Medium,
             backlight: BacklightLevel::High,
             orientation: Orientation::Portrait,
+            utc_offset_minutes: 0,
             bookmarks: std::collections::HashMap::new(),
         }
     }
@@ -278,6 +283,12 @@ impl HardwareAccess for SimHardware {
         self.orientation = orientation;
     }
     fn set_current_time_secs(&mut self, _secs: u64) {} // simulator reads from system clock
+    fn utc_offset_minutes(&self) -> i32 {
+        self.utc_offset_minutes
+    }
+    fn set_utc_offset_minutes(&mut self, minutes: i32) {
+        self.utc_offset_minutes = minutes;
+    }
 
     fn button_prev_pressed(&self) -> bool {
         false
@@ -344,6 +355,8 @@ const KEY_FONT: u8 = 10;
 const KEY_BL: u8 = 11;
 #[cfg(feature = "esp")]
 const KEY_ORI: u8 = 12;
+#[cfg(feature = "esp")]
+const KEY_TZ: u8 = 13;
 
 // Per-book bookmark table: 8 slots, 3 keys each.
 // Slot i: hash at KEY_BM_HASH+i, chapter at KEY_BM_CHAP+i, anchor at KEY_BM_ANCH+i.
@@ -406,9 +419,15 @@ fn block_on<F: core::future::Future>(mut f: F) -> F::Output {
     }
 }
 
-/// Returns (font_idx, bl_idx, ori_idx). Defaults: Medium (1), High (2), Portrait (0).
+/// Returns the UTC offset in minutes from flash. Default: 0 (UTC).
 #[cfg(feature = "esp")]
-pub fn load_settings() -> (usize, usize, usize) {
+pub fn load_tz_offset() -> i32 {
+    flash_load_u32(KEY_TZ).map(|v| v as i32).unwrap_or(0)
+}
+
+/// Returns (font_idx, bl_idx, ori_idx, utc_offset_minutes). Defaults: Medium (1), High (2), Portrait (0), UTC (0).
+#[cfg(feature = "esp")]
+pub fn load_settings() -> (usize, usize, usize, i32) {
     let mut flash = FlashAdapter(FlashStorage::new());
     let mut cache = NoCache::new();
     let mut buf = [0u8; 64];
@@ -423,8 +442,9 @@ pub fn load_settings() -> (usize, usize, usize) {
     let font = load(KEY_FONT, 1) as usize;
     let bl = load(KEY_BL, 2) as usize;
     let ori = load(KEY_ORI, 0) as usize;
-    log::info!("settings loaded: font={} bl={} ori={}", font, bl, ori);
-    (font, bl, ori)
+    let tz = load(KEY_TZ, 0) as i32;
+    log::info!("settings loaded: font={} bl={} ori={} tz={}min", font, bl, ori, tz);
+    (font, bl, ori, tz)
 }
 
 // ── Bookmark helpers (ESP only) ───────────────────────────────────────────────
@@ -624,6 +644,7 @@ pub struct EspHardware<'d, C: ChannelIFace<'d, LowSpeed>> {
     font_size: FontSize,
     backlight: BacklightLevel,
     orientation: Orientation,
+    utc_offset_minutes: i32,
     bl_ch: C,
     rtc: Rtc<'d>,
     btn_prev: Input<'d>,
@@ -641,12 +662,14 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> EspHardware<'d, C> {
         font_size: FontSize,
         backlight: BacklightLevel,
         orientation: Orientation,
+        utc_offset_minutes: i32,
     ) -> Self {
         bl_ch.set_duty(BL_DUTY[backlight as usize]).unwrap();
         Self {
             font_size,
             backlight,
             orientation,
+            utc_offset_minutes,
             bl_ch,
             rtc,
             btn_prev,
@@ -700,6 +723,14 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
 
     fn set_current_time_secs(&mut self, secs: u64) {
         self.rtc.set_current_time_us(secs * 1_000_000);
+    }
+
+    fn utc_offset_minutes(&self) -> i32 {
+        self.utc_offset_minutes
+    }
+
+    fn set_utc_offset_minutes(&mut self, minutes: i32) {
+        self.utc_offset_minutes = minutes;
     }
 
     /// Save state to RTC fast memory, turn off backlight, and enter deep sleep.
@@ -759,6 +790,7 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
         save(KEY_FONT, self.font_size.to_index() as u32);
         save(KEY_BL, self.backlight.to_index() as u32);
         save(KEY_ORI, self.orientation.to_index() as u32);
+        save(KEY_TZ, self.utc_offset_minutes as u32);
     }
 
     fn list_book_files(&self) -> Vec<String> {

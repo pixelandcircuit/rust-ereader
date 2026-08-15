@@ -65,6 +65,9 @@ const DEEP_CLEAN_ID: ViewId = ViewId::new("deep_clean");
 const PREV_PAGE_ID: ViewId = ViewId::new("prev_page");
 const NEXT_PAGE_ID: ViewId = ViewId::new("next_page");
 const SYNC_TIME_BUTTON_ID: ViewId = ViewId::new("sync_time");
+const TZ_MINUS_ID: ViewId = ViewId::new("tz_minus");
+const TZ_PLUS_ID: ViewId = ViewId::new("tz_plus");
+const TZ_LABEL_ID: ViewId = ViewId::new("tz_label");
 
 const UI_FONT_SIZE: f32 = 20.0;
 
@@ -285,6 +288,26 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
             &SETTINGS_DIALOG_ID,
         );
 
+        scene.add_view_to_parent(
+            make_label(&ViewId::new("dlg_tz_lbl"), "Time Zone").with_h_align(Start),
+            &SETTINGS_DIALOG_ID,
+        );
+        let tz_row = make_panel(&ViewId::new("tz_row"))
+            .with_h_flex(Grow)
+            .with_layout(Some(layout_hbox))
+            .with_state(Some(Box::new(PanelState {
+                border_visible: false,
+                gap: 8,
+                padding: Insets::new_same(0),
+            })));
+        scene.add_view_to_parent(make_button(&TZ_MINUS_ID, "−"), &tz_row.name);
+        scene.add_view_to_parent(
+            make_label(&TZ_LABEL_ID, "UTC").with_h_flex(Grow).with_h_align(Center),
+            &tz_row.name,
+        );
+        scene.add_view_to_parent(make_button(&TZ_PLUS_ID, "+"), &tz_row.name);
+        scene.add_view_to_parent(tz_row, &SETTINGS_DIALOG_ID);
+
         let row2 = make_panel(&ViewId::new("row2"))
             .with_h_flex(Grow)
             .with_layout(Some(layout_hbox))
@@ -481,9 +504,14 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
     scene
 }
 
-fn format_time_utc(unix_secs: u64) -> String {
-    let h24 = (unix_secs / 3600) % 24;
-    let m = (unix_secs / 60) % 60;
+fn format_time_local(unix_secs: u64, utc_offset_minutes: i32) -> String {
+    let local_secs = if utc_offset_minutes >= 0 {
+        unix_secs.saturating_add(utc_offset_minutes as u64 * 60)
+    } else {
+        unix_secs.saturating_sub((-utc_offset_minutes) as u64 * 60)
+    };
+    let h24 = (local_secs / 3600) % 24;
+    let m = (local_secs / 60) % 60;
     let (h12, ampm) = if h24 == 0 {
         (12u64, "AM")
     } else if h24 < 12 {
@@ -494,6 +522,21 @@ fn format_time_utc(unix_secs: u64) -> String {
         (h24 - 12, "PM")
     };
     format!("{}:{:02} {}", h12, m, ampm)
+}
+
+fn format_tz_label(minutes: i32) -> String {
+    if minutes == 0 {
+        return String::from("UTC");
+    }
+    let sign = if minutes > 0 { '+' } else { '-' };
+    let abs = minutes.abs();
+    let h = abs / 60;
+    let m = abs % 60;
+    if m == 0 {
+        format!("UTC{}{}", sign, h)
+    } else {
+        format!("UTC{}{}:{:02}", sign, h, m)
+    }
 }
 
 /// Parse all fonts and leak them into `'static` memory.
@@ -748,7 +791,21 @@ fn main() {
                             }
                         }
                         handle_click_action(&mut hw, &input, &mut state);
-                        if input.source == DEEP_CLEAN_ID {
+                        if input.source == TZ_MINUS_ID || input.source == TZ_PLUS_ID {
+                            let delta = if input.source == TZ_PLUS_ID { 30 } else { -30 };
+                            let new_tz = (hw.utc_offset_minutes() + delta).clamp(-720, 840);
+                            hw.set_utc_offset_minutes(new_tz);
+                            if let Some(v) = state.scene.get_view_mut(&TZ_LABEL_ID) {
+                                v.title = format_tz_label(new_tz);
+                                state.scene.mark_dirty_view(&TZ_LABEL_ID);
+                            }
+                            let unix_secs = hw.current_time_secs();
+                            let time_str = format_time_local(unix_secs, new_tz);
+                            if let Some(v) = state.scene.get_view_mut(&ViewId::new("time")) {
+                                v.title = time_str;
+                            }
+                            state.scene.mark_dirty_view(&ViewId::new("time"));
+                        } else if input.source == DEEP_CLEAN_ID {
                             // no-op in simulator
                         } else if input.source == LIBRARY_READ_BUTTON_ID {
                             let filename = state
@@ -844,9 +901,11 @@ fn handle_click_action(hw: &mut dyn HardwareAccess, input: &InputResult, state: 
     }
     if input.source == SYNC_TIME_BUTTON_ID {
         let t = hw.current_time_secs();
+        let time_str = format_time_local(t, hw.utc_offset_minutes());
         if let Some(view) = state.scene.get_view_mut(&ViewId::new("time")) {
-            view.title = format_time_utc(t);
+            view.title = time_str;
         }
+        state.scene.mark_dirty_view(&ViewId::new("time"));
     }
     if input.source == PREV_PAGE_ID {
         state.nav_prev_page(hw);
@@ -1018,7 +1077,7 @@ use ereader::appstate::{book_from_data, cfg_from_scene, AppState};
 use ereader::bookview::{draw_book_content, layout_cfg, update_content, BookState, CONTENT_ID};
 use ereader::h_spacer::make_h_spacer;
 #[cfg(feature = "esp")]
-use ereader::hardware::rtc_store_read;
+use ereader::hardware::{load_tz_offset, rtc_store_read};
 use ereader::{h_spacer, truncating_label};
 #[cfg(feature = "esp")]
 use esp_hal::{
@@ -1353,10 +1412,12 @@ async fn main(spawner: Spawner) -> ! {
         );
         (font, bl, ori, chapter, anchor)
     } else {
-        let (font, bl, ori) = load_settings();
+        let (font, bl, ori, _) = load_settings();
         let (chapter, anchor) = load_cold_boot_position();
         (font, bl, ori, chapter, anchor)
     };
+    // TZ offset is always read from flash (it is not packed into RTC registers).
+    let tz_offset_minutes = load_tz_offset();
 
     // Physical buttons: BOOT (GPIO0, active-low) = prev page; GPIO38 = next page.
     let btn_prev = Input::new(
@@ -1378,6 +1439,7 @@ async fn main(spawner: Spawner) -> ! {
         FontSize::from_index(font_idx),
         BacklightLevel::from_index(bl_idx),
         Orientation::from_index(ori_idx),
+        tz_offset_minutes,
     );
     let (lw, lh) = hw.orientation().logical_size();
     let mut bridge = Rgb565ToGray4::new(display, hw.orientation());
@@ -1406,6 +1468,10 @@ async fn main(spawner: Spawner) -> ! {
         }
     }
     sync_settings_ui(&mut state.scene, font_idx, bl_idx, ori_idx);
+    // Update the TZ label to show the persisted offset.
+    if let Some(v) = state.scene.get_view_mut(&TZ_LABEL_ID) {
+        v.title = format_tz_label(tz_offset_minutes);
+    }
 
     // On any boot (sleep wakeup or hard reset), reopen the last-read SD card book.
     // The filename is saved to NVS when a book is opened and again before deep sleep.
@@ -1513,7 +1579,7 @@ async fn main(spawner: Spawner) -> ! {
         if TIME_TICK.try_take().is_some() {
             let unix_secs = hw.current_time_secs();
             if unix_secs > 0 {
-                let time_str = format_time_utc(unix_secs);
+                let time_str = format_time_local(unix_secs, hw.utc_offset_minutes());
                 if let Some(view) = state.scene.get_view_mut(&ViewId::new("time")) {
                     if view.title != time_str {
                         view.title = time_str;
@@ -1528,7 +1594,7 @@ async fn main(spawner: Spawner) -> ! {
             match unix_opt {
                 Some(unix_secs) => {
                     hw.set_current_time_secs(unix_secs);
-                    let time_str = format_time_utc(unix_secs);
+                    let time_str = format_time_local(unix_secs, hw.utc_offset_minutes());
                     if let Some(view) = state.scene.get_view_mut(&ViewId::new("time")) {
                         view.title = time_str.clone();
                     }
@@ -1786,6 +1852,24 @@ async fn main(spawner: Spawner) -> ! {
                             WIFI_SYNC_REQUEST.signal(());
                         } else {
                             info!("sync_time pressed but WiFi is disabled");
+                        }
+                    } else if input.source == TZ_MINUS_ID || input.source == TZ_PLUS_ID {
+                        let delta = if input.source == TZ_PLUS_ID { 30 } else { -30 };
+                        let new_tz = (hw.utc_offset_minutes() + delta).clamp(-720, 840);
+                        hw.set_utc_offset_minutes(new_tz);
+                        hw.save_settings();
+                        // Update the label in the settings dialog.
+                        if let Some(v) = state.scene.get_view_mut(&TZ_LABEL_ID) {
+                            v.title = format_tz_label(new_tz);
+                            state.scene.mark_dirty_view(&TZ_LABEL_ID);
+                        }
+                        // Immediately reflect the new offset in the clock.
+                        let unix_secs = hw.current_time_secs();
+                        if unix_secs > 0 {
+                            if let Some(v) = state.scene.get_view_mut(&ViewId::new("time")) {
+                                v.title = format_time_local(unix_secs, new_tz);
+                                state.scene.mark_dirty_view(&ViewId::new("time"));
+                            }
                         }
                     } else if input.source == DEEP_CLEAN_ID {
                         info!("deep clean started");
