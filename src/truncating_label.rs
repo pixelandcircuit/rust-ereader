@@ -4,10 +4,11 @@ extern crate alloc;
 #[cfg(feature = "esp")]
 use alloc::{boxed::Box, string::String, vec::Vec};
 
+use embedded_graphics_core::pixelcolor::Rgb565;
 use iris_ui::view::Flex::{Grow, Shrink};
 use iris_ui::view::{View, ViewId};
 
-pub fn make_truncating_label(name: &ViewId, title: &str) -> View {
+pub fn make_truncating_label(name: &ViewId, title: &str) -> View<Rgb565> {
     View {
         name: name.clone(),
         title: title.into(),

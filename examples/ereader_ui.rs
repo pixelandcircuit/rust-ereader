@@ -24,7 +24,8 @@ use std::time::Instant;
 
 #[cfg(feature = "esp")]
 use ereader::hardware::{
-    load_cold_boot_position, load_last_filename, load_settings, save_last_filename, EspHardware,
+    flash_write_task, load_cold_boot_position, load_last_filename, load_settings,
+    save_before_sleep, EspHardware,
 };
 use ereader::hardware::{BacklightLevel, FontSize, HardwareAccess, MemoryInfo, Orientation};
 use ereader::layout::LayoutConfig;
@@ -77,7 +78,7 @@ static BODY_FONT_BYTES: &[u8]        = include_bytes!("../fonts/CrimsonText-Regu
 static BODY_FONT_BOLD_BYTES: &[u8]   = include_bytes!("../fonts/CrimsonText-Bold.ttf");
 static BODY_FONT_ITALIC_BYTES: &[u8] = include_bytes!("../fonts/CrimsonText-Italic.ttf");
 
-fn handle_click(event: &mut GuiEvent) {
+fn handle_click(event: &mut GuiEvent<Rgb565>) {
     if event.target == &ViewId::new("settings") {
         event.scene.show_view(&SETTINGS_DIALOG_ID);
     } else if event.target == &ViewId::new("dialog_close") {
@@ -96,7 +97,7 @@ fn handle_click(event: &mut GuiEvent) {
     }
 }
 
-fn show_error_dialog(scene: &mut Scene, filename: &str) {
+fn show_error_dialog(scene: &mut Scene<Rgb565>, filename: &str) {
     if let Some(v) = scene.get_view_mut(&ViewId::new("err_msg")) {
         v.title = String::from(filename);
     }
@@ -109,7 +110,7 @@ struct ProgressBarState {
     progress: u8, // 0–100
 }
 
-fn draw_progress_bar(e: &mut DrawEvent) {
+fn draw_progress_bar(e: &mut DrawEvent<Rgb565>) {
     // e.view.bounds is the view's own bounds in parent-local coordinates,
     // consistent with how draw_book_content uses it. e.bounds is the scene bounds.
     let bounds = e.view.bounds;
@@ -127,7 +128,7 @@ fn draw_progress_bar(e: &mut DrawEvent) {
     e.ctx.stroke_rect(&bounds, &Rgb565::BLACK);
 }
 
-fn show_loading_dialog(scene: &mut Scene, filename: &str) {
+fn show_loading_dialog(scene: &mut Scene<Rgb565>, filename: &str) {
     if let Some(v) = scene.get_view_mut(&ViewId::new("loading_msg")) {
         v.title = format!("Loading {filename}\u{2026}");
     }
@@ -136,12 +137,12 @@ fn show_loading_dialog(scene: &mut Scene, filename: &str) {
     scene.mark_layout_dirty_view(&LOADING_DIALOG_ID);
 }
 
-fn hide_loading_dialog(scene: &mut Scene) {
+fn hide_loading_dialog(scene: &mut Scene<Rgb565>) {
     scene.hide_view(&LOADING_DIALOG_ID);
     scene.mark_dirty_view(&LOADING_DIALOG_ID);
 }
 
-fn set_loading_progress(scene: &mut Scene, pct: u8) {
+fn set_loading_progress(scene: &mut Scene<Rgb565>, pct: u8) {
     if let Some(v) = scene.get_view_mut(&LOADING_PROGRESS_BAR_ID) {
         if let Some(s) = v.get_state::<ProgressBarState>() {
             s.progress = pct;
@@ -152,7 +153,7 @@ fn set_loading_progress(scene: &mut Scene, pct: u8) {
     scene.mark_dirty_view(&LOADING_DIALOG_ID);
 }
 
-fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
+fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene<Rgb565> {
     let mut scene = Scene::new_with_bounds(Bounds::new(0, 0, w, h));
     scene.set_focus_enabled(false);
     let main_id = ViewId::new("main");
@@ -190,7 +191,7 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene {
 
     // content — plain View with BookState; draw_book_content renders TTF text
     {
-        fn fill_all_space(layout: &mut LayoutEvent) {
+        fn fill_all_space(layout: &mut LayoutEvent<Rgb565>) {
             if let Some(view) = layout.scene.get_view_mut(&layout.target) {
                 view.bounds.size.w = layout.space.w;
                 view.bounds.size.h = layout.space.h;
@@ -569,7 +570,7 @@ fn load_fonts() -> AppFonts {
     AppFonts { ui, ui_bold, body, body_bold, body_italic }
 }
 
-fn make_theme(fonts: &AppFonts) -> Theme {
+fn make_theme(fonts: &AppFonts) -> Theme<Rgb565> {
     Theme {
         standard: ViewStyle {
             fill: Rgb565::WHITE,
@@ -617,8 +618,7 @@ fn load_book(state: &mut AppState, hw: &mut dyn HardwareAccess, filename: &Strin
         hide_loading_dialog(&mut state.scene);
         if let Ok(s) = new_session {
             state.current_filename = filename.clone();
-            #[cfg(feature = "esp")]
-            save_last_filename(&filename);
+            hw.save_last_filename(&filename);
             state.session = s;
             state.book = new_book;
             state.update_content(hw);
@@ -652,7 +652,7 @@ fn main() {
     let settings = OutputSettingsBuilder::new().scale(1).build();
     let mut window = Window::new("ereader_ui", &settings);
 
-    let handlers: Vec<Callback> = vec![handle_click];
+    let handlers: Vec<Callback<Rgb565>> = vec![handle_click];
     let mut state: AppState = init_app_state(&hw);
 
     state.update_content(&hw);
@@ -869,7 +869,7 @@ fn fmt_bytes(n: usize) -> String {
     }
 }
 
-fn update_battery_labels(scene: &mut Scene, hw: &dyn HardwareAccess) {
+fn update_battery_labels(scene: &mut Scene<Rgb565>, hw: &dyn HardwareAccess) {
     let info = hw.battery_info();
     let status = if info.is_charging { "Charging" } else { "Not charging" };
     if let Some(v) = scene.get_view_mut(&BATTERY_BUTTON_ID) {
@@ -1089,7 +1089,7 @@ use esp_hal::{
         LSGlobalClkSource, Ledc, LowSpeed,
     },
     rtc_cntl::{reset_reason, Rtc, SocResetReason},
-    system::Cpu,
+    system::{Cpu, Stack},
     time::Rate,
     timer::timg::TimerGroup,
 };
@@ -1120,6 +1120,14 @@ const PASSWORD: &str = match option_env!("WIFI_PASS") {
 // Set to false to skip WiFi init and NTP sync entirely (e.g. when no network is available).
 #[cfg(feature = "esp")]
 const ENABLE_WIFI_NTP: bool = true;
+// Set to false to run `ui_task` on core 0 alongside everything else instead
+// of starting core 1 — useful for isolating whether a bug is related to the
+// dual-core split. See the flash-write hazard documented on
+// `wait_for_flash_write` in src/hardware.rs; that code path stays safe
+// either way, since a single-core cooperative executor never has two tasks
+// running at once.
+#[cfg(feature = "esp")]
+const USE_SECOND_CORE: bool = false;
 
 #[cfg(feature = "esp")]
 const NTP_ADDR: [u8; 4] = [216, 239, 35, 0]; // time.google.com
@@ -1295,6 +1303,17 @@ async fn query_ntp(stack: embassy_net::Stack<'static>) -> Option<u64> {
     Some(ntp_secs - NTP_UNIX_OFFSET)
 }
 
+/// Persisted/restored settings handed off to `ui_task` on core 1.
+#[cfg(feature = "esp")]
+struct BootSettings {
+    font_idx: usize,
+    bl_idx: usize,
+    ori_idx: usize,
+    saved_chapter: usize,
+    saved_anchor: usize,
+    tz_offset_minutes: i32,
+}
+
 #[cfg(feature = "esp")]
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
@@ -1345,57 +1364,14 @@ async fn main(spawner: Spawner) -> ! {
     spawner.spawn(battery_task(battery_i2c).expect("battery_task spawn"));
     spawner.spawn(time_task().expect("time_task spawn"));
     spawner.spawn(book_load_task().expect("book_load_task spawn"));
+    spawner.spawn(flash_write_task().expect("flash_write_task spawn"));
 
-    let mut display = Display::new(
-        ereader::pin_config!(peripherals),
-        peripherals.DMA_CH0,
-        peripherals.LCD_CAM,
-        peripherals.RMT,
-        display_i2c,
-    )
-    .expect("display init");
-
-    EmbassyTimer::after(Duration::from_millis(100)).await;
-    display.power_on();
-    EmbassyTimer::after(Duration::from_millis(10)).await;
-
-    let touch_addr = display.detect_touch_addr().unwrap_or_else(|| {
-        log::warn!("GT911 not found; defaulting to primary address");
-        GT911_ADDR_PRIMARY
-    });
-    let mut gt911 = Gt911::new(touch_addr);
-    display.configure_touch(&mut gt911, 960, 540);
-    EmbassyTimer::after(Duration::from_millis(200)).await;
-    display.init_touch(&mut gt911);
-
-    display.fill(0x0F).unwrap();
-    display.flush(DrawMode::WhiteOnBlack).unwrap();
-    println!("ereader_ui: display ready");
-
-    let mut ledc = Ledc::new(peripherals.LEDC);
-    ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
-    let mut lstimer0 = ledc.timer::<LowSpeed>(timer::Number::Timer0);
-    lstimer0
-        .configure(timer::config::Config {
-            duty: timer::config::Duty::Duty8Bit,
-            clock_source: timer::LSClockSource::APBClk,
-            frequency: Rate::from_khz(1),
-        })
-        .unwrap();
-    let mut bl_ch = ledc.channel(channel::Number::Channel0, peripherals.GPIO11);
-    bl_ch
-        .configure(channel::config::Config {
-            timer: &lstimer0,
-            duty_pct: 100,
-            drive_mode: esp_hal::gpio::DriveMode::PushPull,
-        })
-        .unwrap();
     // Detect whether we woke from deep sleep or did a cold boot.
     let is_sleep_wakeup = reset_reason(Cpu::ProCpu) == Some(SocResetReason::CoreDeepSleep);
 
     // On wakeup restore from RTC fast memory (fast, no flash wear); on first
     // boot read persisted settings from NVS flash.
-    let (font_idx, bl_idx, ori_idx, mut saved_chapter, mut saved_anchor) = if is_sleep_wakeup {
+    let (font_idx, bl_idx, ori_idx, saved_chapter, saved_anchor) = if is_sleep_wakeup {
         let anchor = rtc_store_read(0) as usize;
         let packed = rtc_store_read(5);
         let font = (packed & 0xF) as usize;
@@ -1419,18 +1395,183 @@ async fn main(spawner: Spawner) -> ! {
     // TZ offset is always read from flash (it is not packed into RTC registers).
     let tz_offset_minutes = load_tz_offset();
 
-    // Physical buttons: BOOT (GPIO0, active-low) = prev page; GPIO38 = next page.
-    let btn_prev = Input::new(
-        peripherals.GPIO0,
-        InputConfig::default().with_pull(Pull::Up),
-    );
-    let btn_next = Input::new(
-        peripherals.GPIO38,
-        InputConfig::default().with_pull(Pull::Up),
-    );
-
-    // Capture seed before rtc is moved into hw.
+    // Capture seed before rtc is moved into ui_task.
     let seed = rtc.current_time_us();
+
+    // ── Core 1: display + touch + UI event loop ─────────────────────────────
+    // Runs on the ESP32-S3's second core, in its own embassy executor, so a
+    // blocking e-paper flush or SD card read never stalls the WiFi/NTP/
+    // battery/time tasks below, which stay on core 0's executor.
+    let pin_cfg = ereader::pin_config!(peripherals);
+    let dma_ch0 = peripherals.DMA_CH0;
+    let lcd_cam = peripherals.LCD_CAM;
+    let rmt_periph = peripherals.RMT;
+    let ledc_periph = peripherals.LEDC;
+    let gpio11 = peripherals.GPIO11;
+    let gpio0 = peripherals.GPIO0;
+    let gpio38 = peripherals.GPIO38;
+    let cpu_ctrl = peripherals.CPU_CTRL;
+    let sw_int1 = sw_int.software_interrupt1;
+    let boot = BootSettings {
+        font_idx,
+        bl_idx,
+        ori_idx,
+        saved_chapter,
+        saved_anchor,
+        tz_offset_minutes,
+    };
+
+    static CORE1_STACK: StaticCell<Stack<16384>> = StaticCell::new();
+    let core1_stack = CORE1_STACK.init(Stack::new());
+    static CORE1_EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
+
+    if USE_SECOND_CORE {
+        esp_rtos::start_second_core(cpu_ctrl, sw_int1, core1_stack, move || {
+            let executor = CORE1_EXECUTOR.init(esp_rtos::embassy::Executor::new());
+            executor.run(|spawner| {
+                spawner.spawn(
+                    ui_task(
+                        pin_cfg,
+                        dma_ch0,
+                        lcd_cam,
+                        rmt_periph,
+                        display_i2c,
+                        ledc_periph,
+                        gpio11,
+                        gpio0,
+                        gpio38,
+                        rtc,
+                        boot,
+                    )
+                    .expect("ui_task spawn"),
+                );
+            });
+        });
+    } else {
+        info!("USE_SECOND_CORE = false — running ui_task on core 0");
+        spawner.spawn(
+            ui_task(
+                pin_cfg,
+                dma_ch0,
+                lcd_cam,
+                rmt_periph,
+                display_i2c,
+                ledc_periph,
+                gpio11,
+                gpio0,
+                gpio38,
+                rtc,
+                boot,
+            )
+            .expect("ui_task spawn"),
+        );
+    }
+
+    // ── WiFi + NTP time sync (background task, core 0) ──────────────────────
+    // wifi_task connects, syncs NTP, then disconnects. It stays alive to handle
+    // future sync requests (e.g. from the sync_time button) via WIFI_SYNC_REQUEST.
+    if ENABLE_WIFI_NTP {
+        info!("connecting to WIFI_SSID {} WIFI_PASS {}", SSID, PASSWORD);
+        let station_config = Config::Station(
+            StationConfig::default()
+                .with_ssid(SSID)
+                .with_password(PASSWORD.into()),
+        );
+        let (controller, interfaces) = esp_radio::wifi::new(
+            peripherals.WIFI,
+            ControllerConfig::default().with_initial_config(station_config),
+        )
+        .expect("wifi init");
+        let (stack, runner) = embassy_net::new(
+            interfaces.station,
+            embassy_net::Config::dhcpv4(Default::default()),
+            mk_static!(StackResources<3>, StackResources::<3>::new()),
+            seed,
+        );
+        spawner.spawn(net_task(runner).expect("net_task spawn"));
+        info!("spawned net_task");
+        spawner.spawn(wifi_task(controller, stack, is_sleep_wakeup).expect("wifi_task spawn"));
+        info!("spawned wifi_task");
+    } else {
+        log::info!("WiFi/NTP disabled (ENABLE_WIFI_NTP = false)");
+    }
+
+    // Core 0 has nothing left to do but keep the background tasks (battery,
+    // time, book loading, WiFi/NTP) alive; the UI runs entirely on core 1.
+    loop {
+        EmbassyTimer::after(Duration::from_secs(3600)).await;
+    }
+}
+
+#[cfg(feature = "esp")]
+#[embassy_executor::task]
+async fn ui_task(
+    pin_cfg: ereader::driver::PinConfig<'static>,
+    dma_ch0: esp_hal::peripherals::DMA_CH0<'static>,
+    lcd_cam: esp_hal::peripherals::LCD_CAM<'static>,
+    rmt_periph: esp_hal::peripherals::RMT<'static>,
+    display_i2c: SharedI2c,
+    ledc_periph: esp_hal::peripherals::LEDC<'static>,
+    gpio11: esp_hal::peripherals::GPIO11<'static>,
+    gpio0: esp_hal::peripherals::GPIO0<'static>,
+    gpio38: esp_hal::peripherals::GPIO38<'static>,
+    rtc: Rtc<'static>,
+    boot: BootSettings,
+) {
+    use esp_println::println;
+
+    let mut display = Display::new(pin_cfg, dma_ch0, lcd_cam, rmt_periph, display_i2c)
+        .expect("display init");
+
+    EmbassyTimer::after(Duration::from_millis(100)).await;
+    display.power_on();
+    EmbassyTimer::after(Duration::from_millis(10)).await;
+
+    let touch_addr = display.detect_touch_addr().unwrap_or_else(|| {
+        log::warn!("GT911 not found; defaulting to primary address");
+        GT911_ADDR_PRIMARY
+    });
+    let mut gt911 = Gt911::new(touch_addr);
+    display.configure_touch(&mut gt911, 960, 540);
+    EmbassyTimer::after(Duration::from_millis(200)).await;
+    display.init_touch(&mut gt911);
+
+    display.fill(0x0F).unwrap();
+    display.flush(DrawMode::WhiteOnBlack).unwrap();
+    println!("ereader_ui: display ready");
+
+    let mut ledc = Ledc::new(ledc_periph);
+    ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
+    let mut lstimer0 = ledc.timer::<LowSpeed>(timer::Number::Timer0);
+    lstimer0
+        .configure(timer::config::Config {
+            duty: timer::config::Duty::Duty8Bit,
+            clock_source: timer::LSClockSource::APBClk,
+            frequency: Rate::from_khz(1),
+        })
+        .unwrap();
+    let mut bl_ch = ledc.channel(channel::Number::Channel0, gpio11);
+    bl_ch
+        .configure(channel::config::Config {
+            timer: &lstimer0,
+            duty_pct: 100,
+            drive_mode: esp_hal::gpio::DriveMode::PushPull,
+        })
+        .unwrap();
+
+    let BootSettings {
+        font_idx,
+        bl_idx,
+        ori_idx,
+        mut saved_chapter,
+        mut saved_anchor,
+        tz_offset_minutes,
+    } = boot;
+
+    // Physical buttons: BOOT (GPIO0, active-low) = prev page; GPIO38 = next page.
+    let btn_prev = Input::new(gpio0, InputConfig::default().with_pull(Pull::Up));
+    let btn_next = Input::new(gpio38, InputConfig::default().with_pull(Pull::Up));
+
     let mut hw = EspHardware::new(
         bl_ch,
         rtc,
@@ -1441,9 +1582,8 @@ async fn main(spawner: Spawner) -> ! {
         Orientation::from_index(ori_idx),
         tz_offset_minutes,
     );
-    let (lw, lh) = hw.orientation().logical_size();
     let mut bridge = Rgb565ToGray4::new(display, hw.orientation());
-    let handlers = vec![handle_click as Callback];
+    let handlers = vec![handle_click as Callback<Rgb565>];
     let mut was_touching = false;
 
     // Counts consecutive partial refreshes so we can force a full ghost-clear
@@ -1454,7 +1594,7 @@ async fn main(spawner: Spawner) -> ! {
 
     /// Sync the settings dialog toggle groups to reflect the actual loaded settings.
     /// make_scene() hardcodes default selections; call this after loading persisted values.
-    fn sync_settings_ui(scene: &mut Scene, font_idx: usize, bl_idx: usize, ori_idx: usize) {
+    fn sync_settings_ui(scene: &mut Scene<Rgb565>, font_idx: usize, bl_idx: usize, ori_idx: usize) {
         for (id, idx) in [
             (FONT_SIZE_ID.clone(), font_idx),
             (BACKLIGHT_ID, bl_idx),
@@ -1514,41 +1654,16 @@ async fn main(spawner: Spawner) -> ! {
 
     let mut just_woke = false;
     let mut pending_load: Option<String> = None;
+    // Highest flash-write id we've confirmed landed on flash. Advanced right
+    // before every display flush below — see the module comment in
+    // src/hardware.rs on why a write racing a render corrupts the flash
+    // cache for whichever core isn't doing the write.
+    let mut last_confirmed_flash_write: u32 = 0;
     const PARTIAL_REFRESH_FULL_INTERVAL: u32 = 8;
     // Full-quality (15-frame) refresh every N full-screen page turns.
     // In between, use the 4-frame fast waveform.  Increase to reduce flicker;
     // decrease if ghosting accumulates too quickly.
     const FULL_QUALITY_INTERVAL: u32 = 5;
-
-    // ── WiFi + NTP time sync (background task) ───────────────────────────────
-    // wifi_task connects, syncs NTP, then disconnects. It stays alive to handle
-    // future sync requests (e.g. from the sync_time button) via WIFI_SYNC_REQUEST.
-    if ENABLE_WIFI_NTP {
-        info!("connecting to WIFI_SSID {} WIFI_PASS {}", SSID, PASSWORD);
-        let station_config = Config::Station(
-            StationConfig::default()
-                .with_ssid(SSID)
-                .with_password(PASSWORD.into()),
-        );
-        let (controller, interfaces) = esp_radio::wifi::new(
-            peripherals.WIFI,
-            ControllerConfig::default().with_initial_config(station_config),
-        )
-        .expect("wifi init");
-        let (stack, runner) = embassy_net::new(
-            interfaces.station,
-            embassy_net::Config::dhcpv4(Default::default()),
-            mk_static!(StackResources<3>, StackResources::<3>::new()),
-            seed,
-        );
-        spawner.spawn(net_task(runner).expect("net_task spawn"));
-        info!("spawned net_task");
-        spawner.spawn(wifi_task(controller, stack, is_sleep_wakeup).expect("wifi_task spawn"));
-        info!("spawned wifi_task");
-    } else {
-        log::info!("WiFi/NTP disabled (ENABLE_WIFI_NTP = false)");
-    }
-    let _ = seed;
 
     let mut fast = FastPaging {
         fs_active: false,
@@ -1657,7 +1772,7 @@ async fn main(spawner: Spawner) -> ! {
                                     state.session.reader.anchor_byte,
                                 );
                                 state.current_filename = filename.clone();
-                                save_last_filename(&filename);
+                                hw.save_last_filename(&filename);
                                 state.session = session;
                                 state.book = book;
                                 state.update_content(&hw);
@@ -1745,6 +1860,16 @@ async fn main(spawner: Spawner) -> ! {
                 state.session.reader.anchor_byte,
             );
             state.last_interaction = Instant::now();
+        }
+
+        // Drain any flash write enqueued above (or by handle_click_action
+        // further below, in a previous iteration) before touching the
+        // display: a write landing on core 0 mid-render corrupts the flash
+        // cache for core 1 too. See src/hardware.rs's module comment.
+        let pending_flash_write = ereader::hardware::latest_flash_write_id();
+        if pending_flash_write > last_confirmed_flash_write {
+            ereader::hardware::wait_for_flash_write(pending_flash_write).await;
+            last_confirmed_flash_write = pending_flash_write;
         }
 
         let dirty_rect = state.scene.dirty_rect.clone();
@@ -1937,12 +2062,15 @@ async fn main(spawner: Spawner) -> ! {
             bridge.flush();
             bridge.display.power_off();
             // Persist filename and position so wakeup can reopen the same book.
-            save_last_filename(&state.current_filename);
-            hw.save_bookmark(
+            // Unlike the fire-and-forget saves elsewhere, this one must be
+            // confirmed written before we power off — there's no next tick
+            // for core 0 to catch up on.
+            save_before_sleep(
                 &state.current_filename,
                 state.session.chapter_idx,
                 state.session.reader.anchor_byte,
-            );
+            )
+            .await;
             // On ESP: saves RTC state and enters deep sleep (never returns).
             // On simulator enter_deep_sleep is a no-op; reset the timer so we
             // don't loop immediately back into the sleep check.
@@ -2088,7 +2216,7 @@ impl FastPaging {
 }
 
 fn update_fast_scroll_label(
-    scene: &mut Scene,
+    scene: &mut Scene<Rgb565>,
     chapter: usize,
     chapter_count: usize,
     page: usize,

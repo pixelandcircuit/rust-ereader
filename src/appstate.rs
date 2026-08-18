@@ -13,6 +13,7 @@ use crate::layout::LayoutConfig;
 use crate::reader::BookSession;
 #[cfg(feature = "esp")]
 use embassy_time::{with_timeout, Duration, Instant, Timer as EmbassyTimer};
+use embedded_graphics_core::pixelcolor::Rgb565;
 use iris_ui::scene::{layout_scene, Scene};
 use iris_ui::Theme;
 #[cfg(feature = "simulator")]
@@ -28,9 +29,9 @@ pub struct AppState {
     pub cfg: LayoutConfig,
     pub book: Box<dyn Book>,
     pub session: BookSession,
-    pub scene: Scene,
+    pub scene: Scene<Rgb565>,
     pub fonts: AppFonts,
-    pub theme: Theme,
+    pub theme: Theme<Rgb565>,
 }
 
 impl AppState {
@@ -76,8 +77,8 @@ pub fn book_from_data(filename: &str, data: Vec<u8>) -> Box<dyn Book> {
 /// Run a layout pass and build a LayoutConfig from the real content view bounds.
 /// Must be called whenever the scene size or UI font changes.
 pub fn cfg_from_scene(
-    scene: &mut Scene,
-    theme: &Theme,
+    scene: &mut Scene<Rgb565>,
+    theme: &Theme<Rgb565>,
     fonts: &AppFonts,
     font_size: FontSize,
 ) -> LayoutConfig {

@@ -24,7 +24,7 @@ pub struct BookState {
     pub heading_font_px: f32,
 }
 
-pub fn draw_book_content(e: &mut DrawEvent) {
+pub fn draw_book_content(e: &mut DrawEvent<Rgb565>) {
     let bounds = e.view.bounds;
     if let Some(state) = e.view.get_state::<BookState>() {
         e.ctx.fill_rect(&bounds, &Rgb565::WHITE);
@@ -45,7 +45,7 @@ pub fn draw_book_content(e: &mut DrawEvent) {
     }
 }
 
-pub fn update_content(scene: &mut Scene, session: &BookSession, font_px: f32) {
+pub fn update_content(scene: &mut Scene<Rgb565>, session: &BookSession, font_px: f32) {
     let chapter_str = format!(
         "Ch.{} of {}",
         session.chapter_idx + 1,

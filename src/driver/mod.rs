@@ -30,7 +30,6 @@ pub use crate::driver::{
 macro_rules! pin_config {
     ($($name:ident),*) => {
         $(
-            #[allow(unused_mut)]
             $crate::driver::PinConfig {
                 data0:   $name.GPIO5,
                 data1:   $name.GPIO6,

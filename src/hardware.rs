@@ -219,6 +219,9 @@ pub trait HardwareAccess {
     /// Persist the current font/backlight/orientation settings to flash.
     /// No-op on simulator.
     fn save_settings(&mut self);
+    /// Persist the last-read filename so it can be restored after sleep.
+    /// No-op on simulator.
+    fn save_last_filename(&mut self, filename: &str);
 
     /// Return bare filenames of readable files (`.epub`, `.html`, `.htm`, `.txt`).
     /// Simulator: reads `./library/`. ESP: reads SD card root (empty if no card).
@@ -306,6 +309,7 @@ impl HardwareAccess for SimHardware {
         self.bookmarks.get(filename).copied()
     }
     fn save_settings(&mut self) {}
+    fn save_last_filename(&mut self, _filename: &str) {}
 
     fn list_book_files(&self) -> Vec<String> {
         std::fs::read_dir("library")
@@ -542,6 +546,25 @@ fn save_bookmark_impl(filename: &str, chapter_idx: usize, anchor_byte: usize) {
     );
 }
 
+/// Persist font/backlight/orientation/timezone settings to flash.
+#[cfg(feature = "esp")]
+fn save_settings_impl(font_idx: usize, bl_idx: usize, ori_idx: usize, tz_offset_minutes: i32) {
+    let mut flash = FlashAdapter(FlashStorage::new());
+    let mut cache = NoCache::new();
+    let mut buf = [0u8; 64];
+    let mut save = |key: u8, val: u32| {
+        if let Err(e) = block_on(map::store_item::<u8, u32, _>(
+            &mut flash, NVS_RANGE, &mut cache, &mut buf, &key, &val,
+        )) {
+            log::warn!("flash save key {} failed: {:?}", key, e);
+        }
+    };
+    save(KEY_FONT, font_idx as u32);
+    save(KEY_BL, bl_idx as u32);
+    save(KEY_ORI, ori_idx as u32);
+    save(KEY_TZ, tz_offset_minutes as u32);
+}
+
 /// Position to restore for the built-in embedded epub on cold boot.
 /// Returns (0, 0) when no bookmark exists yet.
 #[cfg(feature = "esp")]
@@ -554,7 +577,7 @@ pub fn load_cold_boot_position() -> (usize, usize) {
 /// NVS key 50 = byte length; keys 51-66 = filename bytes packed as u32s (LE).
 /// Silently truncates filenames longer than 64 bytes.
 #[cfg(feature = "esp")]
-pub fn save_last_filename(filename: &str) {
+fn save_last_filename_impl(filename: &str) {
     let bytes = filename.as_bytes();
     let len = if filename.starts_with("__") {
         0
@@ -571,7 +594,7 @@ pub fn save_last_filename(filename: &str) {
     }
 }
 
-/// Read back the filename persisted by `save_last_filename`.
+/// Read back the filename persisted by `HardwareAccess::save_last_filename`.
 /// Returns `None` if nothing was saved or the stored bytes are not valid UTF-8.
 #[cfg(feature = "esp")]
 pub fn load_last_filename() -> Option<String> {
@@ -587,6 +610,138 @@ pub fn load_last_filename() -> Option<String> {
         bytes[start..end].copy_from_slice(&chunk[..end - start]);
     }
     String::from_utf8(bytes).ok()
+}
+
+// ── Flash writes: relayed to core 0 ───────────────────────────────────────────
+//
+// The ESP32-S3's ROM SPI flash write/erase routines disable the flash cache
+// chip-wide for the duration of the operation. That's harmless when only one
+// core is running (the case before `ereader_ui` started using both cores),
+// but once `ui_task` runs on core 1 while core 0 keeps executing WiFi/battery/
+// time tasks fetched from that same flash, a write issued from core 1 stalls
+// core 0 mid-instruction-fetch — and since embassy's cross-core critical
+// section is just a spinlock (see `esp-sync`), core 0 tasks that then try to
+// take *any* critical section (logging, `Signal`, etc.) spin forever waiting
+// for a lock core 1 will never release. The whole chip appears to hang.
+//
+// So every flash write is funneled through this channel to `flash_write_task`,
+// which must be spawned on core 0's executor (alongside `book_load_task`).
+//
+// That alone isn't sufficient, though: the same cache-disable also corrupts
+// *reads* on whichever core ISN'T doing the write — including core 1 reading
+// flash-resident font glyph data mid-render, which crashed/reset the board
+// even after writes moved to core 0. `ui_task` must therefore also await
+// `wait_for_flash_write` (draining anything queued so far) immediately
+// before every display flush, so core 1 is suspended — not fetching
+// anything — for the whole duration of any write core 0 performs.
+#[cfg(feature = "esp")]
+use core::sync::atomic::{AtomicU32, Ordering};
+#[cfg(feature = "esp")]
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, signal::Signal};
+
+#[cfg(feature = "esp")]
+pub enum FlashWriteRequest {
+    Bookmark { filename: String, chapter_idx: usize, anchor_byte: usize },
+    LastFilename(String),
+    Settings { font_idx: usize, bl_idx: usize, ori_idx: usize, tz_offset_minutes: i32 },
+    /// Last-filename + bookmark, saved together right before deep sleep.
+    PrepareSleep { filename: String, chapter_idx: usize, anchor_byte: usize },
+}
+
+#[cfg(feature = "esp")]
+struct FlashWriteMsg {
+    id: u32,
+    req: FlashWriteRequest,
+}
+
+#[cfg(feature = "esp")]
+static FLASH_WRITE_SEQ: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "esp")]
+static FLASH_WRITE_CHANNEL: Channel<CriticalSectionRawMutex, FlashWriteMsg, 8> = Channel::new();
+/// Signaled with a request's `id` once `flash_write_task` finishes it.
+#[cfg(feature = "esp")]
+static FLASH_WRITE_DONE: Signal<CriticalSectionRawMutex, u32> = Signal::new();
+
+/// Queue a flash write for `flash_write_task` to perform on core 0. Never
+/// blocks; drops the request (with a warning) if the queue is full, which
+/// would mean 8 writes are already backed up — not expected in practice.
+#[cfg(feature = "esp")]
+fn enqueue_flash_write(req: FlashWriteRequest) -> u32 {
+    let id = FLASH_WRITE_SEQ.fetch_add(1, Ordering::Relaxed) + 1;
+    if FLASH_WRITE_CHANNEL.try_send(FlashWriteMsg { id, req }).is_err() {
+        log::warn!("flash write queue full; dropping request {}", id);
+    }
+    id
+}
+
+/// The id of the most recently *enqueued* flash write (0 if none yet).
+/// Compare against a previously-observed id to see whether new writes have
+/// been queued since; pass the current value to [`wait_for_flash_write`] to
+/// drain everything queued so far.
+#[cfg(feature = "esp")]
+pub fn latest_flash_write_id() -> u32 {
+    FLASH_WRITE_SEQ.load(Ordering::Relaxed)
+}
+
+/// Wait until request `id` (and, by FIFO order, everything queued before it)
+/// has been written. Only call this with an id you haven't already waited
+/// for — `Signal` holds a single pending value, so waiting again for an id
+/// that was already observed (with nothing newer queued since) blocks
+/// forever, since nothing will signal it a second time.
+///
+/// Used both right before deep sleep (which has no "next tick" to catch up
+/// on afterward) and by `ui_task` right before every display flush, since a
+/// flash write racing a core-1 render corrupts the flash cache for whichever
+/// core isn't the one doing the write (see the module comment above).
+#[cfg(feature = "esp")]
+pub async fn wait_for_flash_write(id: u32) {
+    loop {
+        if FLASH_WRITE_DONE.wait().await >= id {
+            return;
+        }
+    }
+}
+
+/// Persist the last-read filename and bookmark together, and wait for the
+/// write to actually land on flash. Call this instead of the `HardwareAccess`
+/// save methods immediately before `enter_deep_sleep` — those are
+/// fire-and-forget, but deep sleep powers down before core 0 would get a
+/// chance to catch up.
+#[cfg(feature = "esp")]
+pub async fn save_before_sleep(filename: &str, chapter_idx: usize, anchor_byte: usize) {
+    let id = enqueue_flash_write(FlashWriteRequest::PrepareSleep {
+        filename: String::from(filename),
+        chapter_idx,
+        anchor_byte,
+    });
+    wait_for_flash_write(id).await;
+}
+
+/// Runs on core 0 (spawned alongside `book_load_task`) and performs every
+/// flash write the app makes. See the module comment above for why this must
+/// not run on core 1.
+#[cfg(feature = "esp")]
+#[embassy_executor::task]
+pub async fn flash_write_task() {
+    loop {
+        let msg = FLASH_WRITE_CHANNEL.receive().await;
+        match msg.req {
+            FlashWriteRequest::Bookmark { filename, chapter_idx, anchor_byte } => {
+                save_bookmark_impl(&filename, chapter_idx, anchor_byte);
+            }
+            FlashWriteRequest::LastFilename(filename) => {
+                save_last_filename_impl(&filename);
+            }
+            FlashWriteRequest::Settings { font_idx, bl_idx, ori_idx, tz_offset_minutes } => {
+                save_settings_impl(font_idx, bl_idx, ori_idx, tz_offset_minutes);
+            }
+            FlashWriteRequest::PrepareSleep { filename, chapter_idx, anchor_byte } => {
+                save_last_filename_impl(&filename);
+                save_bookmark_impl(&filename, chapter_idx, anchor_byte);
+            }
+        }
+        FLASH_WRITE_DONE.signal(msg.id);
+    }
 }
 
 // ── ESP implementation ────────────────────────────────────────────────────────
@@ -769,28 +924,28 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
     }
 
     fn save_bookmark(&mut self, filename: &str, chapter_idx: usize, anchor_byte: usize) {
-        save_bookmark_impl(filename, chapter_idx, anchor_byte);
+        enqueue_flash_write(FlashWriteRequest::Bookmark {
+            filename: String::from(filename),
+            chapter_idx,
+            anchor_byte,
+        });
     }
 
     fn load_bookmark(&self, filename: &str) -> Option<(usize, usize)> {
         load_bookmark_impl(filename)
     }
 
+    fn save_last_filename(&mut self, filename: &str) {
+        enqueue_flash_write(FlashWriteRequest::LastFilename(String::from(filename)));
+    }
+
     fn save_settings(&mut self) {
-        let mut flash = FlashAdapter(FlashStorage::new());
-        let mut cache = NoCache::new();
-        let mut buf = [0u8; 64];
-        let mut save = |key: u8, val: u32| {
-            if let Err(e) = block_on(map::store_item::<u8, u32, _>(
-                &mut flash, NVS_RANGE, &mut cache, &mut buf, &key, &val,
-            )) {
-                log::warn!("flash save key {} failed: {:?}", key, e);
-            }
-        };
-        save(KEY_FONT, self.font_size.to_index() as u32);
-        save(KEY_BL, self.backlight.to_index() as u32);
-        save(KEY_ORI, self.orientation.to_index() as u32);
-        save(KEY_TZ, self.utc_offset_minutes as u32);
+        enqueue_flash_write(FlashWriteRequest::Settings {
+            font_idx: self.font_size.to_index(),
+            bl_idx: self.backlight.to_index(),
+            ori_idx: self.orientation.to_index(),
+            tz_offset_minutes: self.utc_offset_minutes,
+        });
     }
 
     fn list_book_files(&self) -> Vec<String> {

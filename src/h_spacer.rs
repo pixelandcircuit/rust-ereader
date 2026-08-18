@@ -1,9 +1,10 @@
+use embedded_graphics_core::pixelcolor::Rgb565;
 use iris_ui::geom::Bounds;
 use iris_ui::view::Align::Center;
 use iris_ui::view::Flex::{Grow, Shrink};
 use iris_ui::view::{View, ViewId};
 
-pub fn make_h_spacer(id: &ViewId) -> View {
+pub fn make_h_spacer(id: &ViewId) -> View<Rgb565> {
     View {
         name: id.clone(),
         h_flex: Grow,

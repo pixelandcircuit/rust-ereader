@@ -1,5 +1,163 @@
 # Changes
 
+## 2026-08-18 (make dual-core optional)
+
+Added `USE_SECOND_CORE: bool` (`examples/ereader_ui.rs`, next to the
+existing `ENABLE_WIFI_NTP` toggle). When `true` (default), behavior is
+unchanged: `ui_task` starts on core 1 via `esp_rtos::start_second_core`.
+When `false`, `ui_task` is instead spawned directly on core 0's `spawner`
+alongside the background tasks, and `start_second_core` is never called —
+useful for isolating whether a future bug is related to the dual-core split.
+The flash-write relay (`flash_write_task`/`wait_for_flash_write`) needed no
+changes for this: on a single cooperative core, only one task ever runs at
+a time, so the drain-before-flush logic is just a normal yield/resume with
+no cross-core hazard to guard against. Verified both settings build clean
+with `cargo esp-build --example ereader_ui`; not yet tested on hardware with
+`USE_SECOND_CORE = false`.
+
+## 2026-08-18 (debug instrumentation)
+
+First hardware test of the core-split build: loading a book from the library
+screen hangs forever (both CPU cores go silent — even the unrelated
+`battery_task` on core 0 stops logging its 10s tick — which points at a
+cross-core deadlock rather than a slow computation). Serial log shows
+`book_load_task` completing the SD read fine (`sd_read_file: file size=...`)
+and `ui_task`'s finalize block reaching `hw.load_bookmark(...)` (logs
+`"bookmark loaded"`), then nothing more.
+
+Added temporary `log::info!` bracketing calls in the finalize block in
+`examples/ereader_ui.rs` (around `cfg_from_scene`, `BookSession::restore`/
+`BookSession::new`, `hide_loading_dialog`, `update_content`) to pinpoint
+exactly which call the next hardware run freezes in. `cargo esp-build
+--example ereader_ui` builds clean. Not yet re-flashed/tested.
+
+First test with this instrumentation: loading a 631 KB epub got further —
+logs confirm `cfg_from_scene` and `BookSession::restore` both complete and
+`hide_loading_dialog` runs, then the hang resumes with no further output.
+Added more bracketing (`save_bookmark`, `save_last_filename`, the `Err`
+branch's `show_error_dialog`, end-of-block marker, and a
+`read_touch_and_key` marker gated to only fire right after a load
+finalizes, to avoid spamming the log every ~50 ms tick) to narrow down
+whether the freeze is in `save_bookmark` (NVS flash write), `update_content`,
+or the touch/render code that runs afterward. Builds clean; not yet
+re-flashed/tested.
+
+Second test: froze right after `"finalize: calling save_bookmark"` — i.e.
+inside `hw.save_bookmark()`'s flash write. Root cause: `esp-storage`'s flash
+write path (`esp_rom_spiflash_write`/`erase_sector`) disables the SPI flash
+cache chip-wide while writing, and only wraps the call in
+`critical_section::with(...)`. Checked the actual `critical-section` impl
+linked in (`esp-sync` 0.2.1, `multi_core` module) — on dual-core Xtensa it
+only disables interrupts and spins a software mutex on the *current* core; it
+never pauses the other physical core. Before the core split this was fine
+(core 1 was never started, so nothing else was fetching from flash). Now
+that `ui_task` runs on core 1 while core 0 keeps executing WiFi/battery/time
+tasks straight out of flash, a write from core 1 stalls core 0
+mid-instruction-fetch — and since core 0's tasks constantly re-enter that
+same global critical section (logging, `Signal`, etc.), they then spin
+forever waiting for a lock core 1 will never release. That's the "total
+silence on both cores" symptom exactly.
+
+Fix: added a flash-write relay in `src/hardware.rs` — `FlashWriteRequest`
+enum + `FLASH_WRITE_CHANNEL` (an `embassy_sync::channel::Channel`, capacity
+8) + `flash_write_task`, an embassy task that must be spawned on **core 0**
+(alongside `book_load_task`; done in `examples/ereader_ui.rs::main`).
+`EspHardware::save_bookmark`/`save_settings`/the new
+`HardwareAccess::save_last_filename` trait method now just `try_send` a
+request onto that channel instead of writing to flash directly, so the
+actual `esp_rom_spiflash_write` call always happens on core 0. Requests
+carry a sequence id; `FLASH_WRITE_DONE` (a `Signal<u32>`) is signaled with
+each request's id after it's processed. Added `save_before_sleep()` (waits
+on that signal) for the one call site — right before `enter_deep_sleep`
+— that can't just fire-and-forget, since deep sleep powers off before core 0
+would get a "next tick" to catch up on a queued write.
+
+Renamed the old free function `save_last_filename` to `save_last_filename_impl`
+(private, called only from `flash_write_task`) and added
+`HardwareAccess::save_last_filename` so callers go through the same relay;
+`SimHardware`'s impl is a no-op like the other save methods. Extracted
+`save_settings_impl` (the actual flash write, now used only by
+`flash_write_task`) out of `EspHardware::save_settings`, which now just
+enqueues a `Settings` request.
+
+Both `cargo esp-build --example ereader_ui` and `cargo sim --example
+ereader_ui` build clean (sim also runs without panicking). The debug log
+instrumentation from the previous entry is still in place to confirm the
+fix on the next hardware test; remove it once loading is confirmed working
+end-to-end.
+
+Re-tested on hardware: the deadlock is gone (finalize logs now run to
+completion and the book's full-screen render fires), but the board reset
+shortly after — right as `flash_write_task` (core 0) processed a *queued*
+bookmark write while `ui_task` (core 1) was mid-render. Root cause: moving
+writes to core 0 only fixed the *deadlock*; the underlying cache-disable
+hazard is symmetric. Whichever core ISN'T doing the write can still have its
+reads corrupted if it touches flash-mapped code/data (e.g. font glyph data)
+during the write — core 1 rendering constantly does exactly that, so it's
+now the vulnerable side instead of core 0.
+
+Since core 1 hosts nothing but `ui_task` (nothing else is spawned on that
+executor), the fix is to make `ui_task` fully suspend — not just avoid
+initiating the write — for the duration of any flash write. Added
+`latest_flash_write_id()` and made `wait_for_flash_write` `pub` in
+`src/hardware.rs`; `ui_task` now tracks `last_confirmed_flash_write` and, in
+`examples/ereader_ui.rs`, awaits `wait_for_flash_write` immediately before
+its display-flush block whenever a newer write is pending. While awaiting,
+`ui_task` is the only thing that could run on core 1, so the executor goes
+idle instead of executing anything flash-dependent, which is what actually
+keeps it safe during the write. `cargo esp-build` and `cargo sim` both build
+clean.
+
+Confirmed fixed on hardware: loading `sherlock_holmes.epub`, a subsequent
+page turn (SIDE button), and the resulting bookmark saves all completed
+normally, with `battery_task` on core 0 continuing to tick throughout — no
+hang, no reset. Removed the temporary `log::info!` debug instrumentation
+from the finalize block and the `read_touch_and_key` marker now that its
+job (pinpointing the freeze) is done; `cargo esp-build --example ereader_ui`
+still builds clean with only the pre-existing warnings.
+
+## 2026-08-16 15:10
+
+Compiler-verified the core-split change below now that `iris-ui`'s
+`PixelColor` generic refactor landed. Updated `ereader` call sites to the new
+`Scene<C>`/`Theme<C>`/`View<C>`/`DrawEvent<C>`/`GuiEvent<C>`/`LayoutEvent<C>`/
+`Callback<C>` API, using `Rgb565` as the concrete color everywhere (the color
+both the ESP `Rgb565ToGray4` bridge and the simulator's `SimulatorDisplay`
+already draw in): `src/appstate.rs`, `src/bookview.rs`, `src/h_spacer.rs`,
+`src/truncating_label.rs`, `examples/ereader_ui.rs` (both the ESP and
+simulator code paths).
+
+Also removed a stray `#[allow(unused_mut)]` from the `pin_config!` macro
+(`src/driver/mod.rs`) — it silenced a warning for a `mut` binding that no
+longer exists in the macro body, and it made the macro's expansion illegal to
+use as a `let` initializer (`attributes on expressions are experimental`),
+which the core-split change below needed to do.
+
+`cargo esp-build --example ereader_ui` and `cargo sim --example ereader_ui`
+both build clean; the simulator runs without panicking. Not yet flashed to
+hardware.
+
+## 2026-08-16 11:29
+
+`examples/ereader_ui.rs`: split the ESP build across both ESP32-S3 cores so a
+blocking e-paper flush or SD card read no longer stalls WiFi/NTP/battery/time.
+Core 0 (`main`, unchanged executor) now only spawns the background tasks
+(`battery_task`, `time_task`, `book_load_task`, `net_task`, `wifi_task`) and
+then idles. All display/touch/UI logic that used to run inline in `main` moved
+into a new `ui_task`, spawned on a second `esp_rtos::embassy::Executor` started
+via `esp_rtos::start_second_core` on core 1 (16 KB stack, `Stack<16384>`).
+Cross-core communication reuses the existing `CriticalSectionRawMutex`-backed
+`Signal`s and the `CriticalSectionDevice`-shared I2C bus — both already safe
+across cores on multi-core Xtensa targets, so no new synchronization was
+needed. Settings/position loaded at boot are bundled into a new `BootSettings`
+struct passed to `ui_task`.
+
+Not yet compiler-verified: `../rust-embedded-gui` (`iris-ui`) has an unrelated
+in-progress uncommitted refactor (generic `PixelColor` param) that currently
+breaks `ereader`'s build before it reaches this file. Re-run
+`cargo esp-build --example ereader_ui` once that's resolved, then flash-test
+on hardware.
+
 ## 2026-08-15 09:44
 
 Added `ARCHITECTURE.md`: documents the dual `esp`/`simulator` build split, the
