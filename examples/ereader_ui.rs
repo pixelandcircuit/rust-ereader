@@ -36,7 +36,7 @@ use iris_ui::geom::{Bounds, Insets, Point as GPoint};
 use iris_ui::label::{make_header_label, make_label};
 use iris_ui::layouts::{layout_centered_dialog, layout_hbox, layout_vbox};
 use iris_ui::list_view::{make_list_view, ListState};
-use iris_ui::scene::{click_at, draw_scene, layout_scene, Scene};
+use iris_ui::scene::{draw_scene, layout_scene, pointer_down_at, pointer_up_at, Scene};
 use iris_ui::toggle_group::{make_toggle_group, SelectOneOfState};
 use iris_ui::view::{Align, Flex, View, ViewId};
 use iris_ui::{Callback, DrawEvent, FontKind, GuiEvent, LayoutEvent, Theme, ViewStyle};
@@ -79,6 +79,12 @@ static BODY_FONT_BOLD_BYTES: &[u8]   = include_bytes!("../fonts/CrimsonText-Bold
 static BODY_FONT_ITALIC_BYTES: &[u8] = include_bytes!("../fonts/CrimsonText-Italic.ttf");
 
 fn handle_click(event: &mut GuiEvent<Rgb565>) {
+    // This handler runs for every pointer event dispatched to a hit target
+    // (both PointerDown and PointerUp) — only act on release, or dialogs
+    // would open/close the instant a button is pressed rather than tapped.
+    if !matches!(event.event_type, InputEvent::PointerUp(_)) {
+        return;
+    }
     if event.target == &ViewId::new("settings") {
         event.scene.show_view(&SETTINGS_DIALOG_ID);
     } else if event.target == &ViewId::new("dialog_close") {
@@ -750,9 +756,12 @@ fn main() {
                 } => {
                     fast.end(&mut state, &mut hw);
                 }
+                SimulatorEvent::MouseButtonDown { point, .. } => {
+                    pointer_down_at(&mut state.scene, &handlers, GPoint::new(point.x, point.y));
+                }
                 SimulatorEvent::MouseButtonUp { point, .. } => {
                     if let Some(input) =
-                        click_at(&mut state.scene, &handlers, GPoint::new(point.x, point.y))
+                        pointer_up_at(&mut state.scene, &handlers, GPoint::new(point.x, point.y))
                     {
                         if let Some(OutputAction::Command(ref cmd)) = input.action {
                             if input.source == ORIENTATION_ID {
@@ -1097,7 +1106,7 @@ use esp_hal::{
 use esp_radio::wifi::{sta::StationConfig, Config, ControllerConfig, Interface};
 use fontdue::layout::HorizontalAlign;
 use fontdue::Font;
-use iris_ui::input::{InputResult, OutputAction};
+use iris_ui::input::{InputEvent, InputResult, OutputAction};
 use iris_ui::panel::{make_panel, PanelState};
 use iris_ui::view::Align::Start;
 use iris_ui::view::Flex::Grow;
@@ -1585,6 +1594,7 @@ async fn ui_task(
     let mut bridge = Rgb565ToGray4::new(display, hw.orientation());
     let handlers = vec![handle_click as Callback<Rgb565>];
     let mut was_touching = false;
+    let mut last_touch_point: Option<GPoint> = None;
 
     // Counts consecutive partial refreshes so we can force a full ghost-clear
     // periodically.  E-paper capacitive field coupling from repeated partial
@@ -1928,9 +1938,17 @@ async fn ui_task(
         }
 
         if let Some((tx, ty)) = touch_pt {
+            let (lx, ly) = hw.orientation().phys_to_logical(tx, ty);
+            let pt = GPoint::new(lx, ly);
             if !was_touching {
-                let (lx, ly) = hw.orientation().phys_to_logical(tx, ty);
-                if let Some(input) = click_at(&mut state.scene, &handlers, GPoint::new(lx, ly)) {
+                pointer_down_at(&mut state.scene, &handlers, pt.clone());
+            }
+            last_touch_point = Some(pt);
+            was_touching = true;
+        } else if was_touching {
+            was_touching = false;
+            if let Some(pt) = last_touch_point.take() {
+                if let Some(input) = pointer_up_at(&mut state.scene, &handlers, pt) {
                     if let Some(OutputAction::Command(ref cmd)) = input.action {
                         if input.source == FONT_SIZE_ID {
                             hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
@@ -2038,9 +2056,6 @@ async fn ui_task(
                     }
                 }
             }
-            was_touching = true;
-        } else {
-            was_touching = false;
         }
 
         // Two-tier inactivity sleep: light sleep at 60 s, deep sleep at 60 min.

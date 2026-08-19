@@ -1,5 +1,97 @@
 # Changes
 
+## 2026-08-19 (list view also press-then-commit on pointer up)
+
+Extended the same pointer down/up split to `list_view.rs` in the vendored
+iris-ui library (`../rust-embedded-gui`), same pattern already applied to
+`button.rs` and `toggle_group.rs`:
+- `ListState` gained a private `pressed: Option<usize>` field.
+- `PointerDown` hit-tests which row was touched and stores it (visual only).
+- `PointerUp` only commits the selection (and fires the command) if the
+  release lands on the same row that was pressed.
+- `draw_list` inverts the pressed row's fill/text so the touch is visible
+  before release.
+
+This affects the library file list (`LIBRARY_LIST_ID`, `make_list_view()`)
+in `ereader_ui.rs`'s library dialog. No changes were needed in
+`ereader_ui.rs` itself.
+
+Verified: `cargo test --features std` in rust-embedded-gui (53 passed, all
+existing list_view tests unchanged), plus `cargo check` for both the
+simulator and ESP32 targets of `ereader_ui`.
+
+## 2026-08-19 (fix: dialogs opened/closed on pointer down instead of up)
+
+Bug: after switching to `pointer_down_at()`/`pointer_up_at()`, the Library
+button (and Settings, Battery, dialog-close, and error-dismiss buttons)
+still opened/closed their dialog the instant they were pressed, not when
+released.
+
+Root cause: `handle_click()` (`examples/ereader_ui.rs`) is registered as an
+app-level `Callback` in the `handlers` list, which iris-ui's
+`dispatch_pointer_event()` invokes for *every* pointer event delivered to
+the hit target — both `PointerDown` and `PointerUp` — regardless of what
+the widget's own `input()` function returned. Unlike the widget-level
+button logic (which only fires `OutputAction::Command` on `PointerUp`),
+`handle_click()` was checking only `event.target` and never
+`event.event_type`, so it acted on the very first `PointerDown` dispatch.
+
+Fix: `handle_click()` now returns immediately unless
+`event.event_type` is `InputEvent::PointerUp(_)`.
+
+Verified `cargo check` for both the simulator and ESP32 targets still
+compile clean. Not yet click-tested interactively.
+
+## 2026-08-19 (toggle groups also press-then-commit on pointer up)
+
+Extended the pointer down/up split to `toggle_group.rs` in the vendored
+iris-ui library (`../rust-embedded-gui`), mirroring `button.rs`'s pattern:
+- `SelectOneOfState` gained a private `pressed: Option<usize>` field.
+- `PointerDown` now hit-tests which segment was touched and stores it in
+  `pressed` (visual only, no selection change yet).
+- `PointerUp` re-hit-tests the release point; the selection only commits
+  (and `OutputAction::Command` fires) if the release lands on the same
+  segment that was pressed — dragging off the group before lifting cancels
+  it, same as a button.
+- `draw_toggle_group` now inverts fill/text for the currently pressed
+  segment (even if it isn't the selected one), so the touch is visible
+  before release.
+
+This affects the font size / backlight / orientation toggle groups in
+`ereader_ui.rs`'s settings dialog, which use `make_toggle_group()`. No
+changes were needed in `ereader_ui.rs` itself — it already switched to
+`pointer_down_at()`/`pointer_up_at()` for all touch handling in the entry
+above.
+
+Verified: `cargo test --features std` in rust-embedded-gui (53 passed,
+including the existing `toggle_group` tests using `click_at`), plus
+`cargo check` for both the simulator and ESP32 targets of `ereader_ui`.
+
+## 2026-08-19 (use iris pointer down/up events instead of click_at)
+
+`examples/ereader_ui.rs` previously used iris-ui's `click_at()` convenience
+helper everywhere, which synthesizes an immediate PointerDown+PointerUp pair
+at a single point — so buttons never showed a visible "pressed" state and
+the action fired on touch-down rather than release.
+
+Switched both input paths to the new granular `pointer_down_at()` /
+`pointer_up_at()` API:
+- Desktop simulator: added a `SimulatorEvent::MouseButtonDown` case that
+  calls `pointer_down_at()`; `MouseButtonUp` now calls `pointer_up_at()`
+  (was `click_at()`).
+- Real hardware (GT911 touch polling loop): `pointer_down_at()` fires on the
+  touch rising edge (`!was_touching`), and `pointer_up_at()` fires on the
+  falling edge (touch released), using a new `last_touch_point` variable to
+  remember where the finger was since the GT911 reports no coordinates once
+  lifted. Action handling (font size, backlight, orientation, battery
+  refresh, etc.) now runs off the release event instead of the press event.
+
+Verified `cargo check --no-default-features --features simulator --target
+aarch64-apple-darwin --example ereader_ui` and `cargo check -Z
+build-std=alloc,core --features esp --example ereader_ui` both compile
+clean, and the simulator launches without crashing. Not yet click-tested
+interactively in the simulator window or on hardware.
+
 ## 2026-08-18 (make dual-core optional)
 
 Added `USE_SECOND_CORE: bool` (`examples/ereader_ui.rs`, next to the
