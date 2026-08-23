@@ -57,12 +57,14 @@ const BATTERY_CLOSE_ID: ViewId = ViewId::new("battery_close");
 const ERROR_DIALOG_ID: ViewId = ViewId::new("error_dialog");
 const LOADING_DIALOG_ID: ViewId = ViewId::new("loading_dialog");
 const LOADING_PROGRESS_BAR_ID: ViewId = ViewId::new("loading_progress_bar");
+const SLEEP_DIALOG_ID: ViewId = ViewId::new("sleep_dialog");
 const FAST_SCROLL_PANEL_ID: ViewId = ViewId::new("fast_scroll_panel");
 const FAST_SCROLL_LABEL_ID: ViewId = ViewId::new("fast_scroll_label");
 const ORIENTATION_ID: ViewId = ViewId::new("orientation");
 const BACKLIGHT_ID: ViewId = ViewId::new("backlight");
 const FONT_SIZE_ID: ViewId = ViewId::new("font_size");
 const DEEP_CLEAN_ID: ViewId = ViewId::new("deep_clean");
+const DEEP_SLEEP_BUTTON_ID: ViewId = ViewId::new("deep_sleep");
 const PREV_PAGE_ID: ViewId = ViewId::new("prev_page");
 const NEXT_PAGE_ID: ViewId = ViewId::new("next_page");
 const SYNC_TIME_BUTTON_ID: ViewId = ViewId::new("sync_time");
@@ -328,6 +330,7 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene<Rgb565> {
             &row2.name,
         );
         scene.add_view_to_parent(make_button(&DEEP_CLEAN_ID, "Clean Screen"), &row2.name);
+        scene.add_view_to_parent(make_button(&DEEP_SLEEP_BUTTON_ID, "Sleep Now"), &row2.name);
         scene.add_view_to_parent(row2, &SETTINGS_DIALOG_ID);
 
         let row3 = make_panel(&ViewId::new("row3"))
@@ -445,6 +448,30 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene<Rgb565> {
             &LOADING_DIALOG_ID,
         );
         scene.add_view_to_root(loading_panel);
+    }
+
+    // ── Sleep dialog (hidden, shown just before entering deep sleep) ─────────
+    {
+        let sleep_panel = make_panel(&SLEEP_DIALOG_ID)
+            .with_layout(Some(layout_centered_dialog))
+            .with_h_flex(Fixed)
+            .with_v_flex(Flex::Shrink)
+            .with_size(320, 0)
+            .with_visible(false)
+            .with_state(Some(Box::new(PanelState {
+                border_visible: true,
+                gap: 8,
+                padding: Insets::new_same(16),
+            })));
+        scene.add_view_to_parent(
+            make_header_label(&ViewId::new("sleep_msg"), "Sleeping...").with_h_align(Center),
+            &SLEEP_DIALOG_ID,
+        );
+        scene.add_view_to_parent(
+            make_label(&ViewId::new("sleep_submsg"), "Press BOOT to wake").with_h_align(Center),
+            &SLEEP_DIALOG_ID,
+        );
+        scene.add_view_to_root(sleep_panel);
     }
 
     // ── Battery dialog (hidden; shown when battery button tapped) ─────────────
@@ -816,6 +843,25 @@ fn main() {
                             state.scene.mark_dirty_view(&ViewId::new("time"));
                         } else if input.source == DEEP_CLEAN_ID {
                             // no-op in simulator
+                        } else if input.source == DEEP_SLEEP_BUTTON_ID {
+                            info!("deep sleep button pressed — showing sleep screen");
+                            state.scene.hide_view(&SETTINGS_DIALOG_ID);
+                            state.scene.show_view(&SLEEP_DIALOG_ID);
+                            state.scene.mark_dirty_all();
+                            {
+                                let dirty = state.scene.dirty_rect.clone();
+                                let mut ctx = EmbeddedDrawingContext::new(&mut display);
+                                ctx.clip = dirty;
+                                layout_scene(&mut state.scene, &state.theme);
+                                draw_scene(&mut state.scene, &mut ctx, &state.theme);
+                                window.update(&display);
+                            }
+                            // On simulator this is a no-op — there's no real hardware
+                            // to power off, so the sleep screen just stays on screen.
+                            hw.enter_deep_sleep(
+                                state.session.chapter_idx,
+                                state.session.reader.anchor_byte,
+                            );
                         } else if input.source == LIBRARY_READ_BUTTON_ID {
                             let filename = state
                                 .scene
@@ -2019,6 +2065,37 @@ async fn ui_task(
                         bridge.display.deep_clean(3).unwrap();
                         state.partial_refresh_count = 0;
                         state.scene.mark_dirty_all();
+                    } else if input.source == DEEP_SLEEP_BUTTON_ID {
+                        info!("deep sleep button pressed — entering deep sleep");
+                        state.scene.hide_view(&SETTINGS_DIALOG_ID);
+                        state.scene.show_view(&SLEEP_DIALOG_ID);
+                        state.scene.mark_dirty_all();
+                        // Render the sleep message before powering off.
+                        let sleep_dirty = state.scene.dirty_rect.clone();
+                        // Clear away the previous screen (e.g. the settings dialog) first —
+                        // drawing straight over it without a clearing pass leaves ghosting
+                        // and can leave the sleep message only partially visible.
+                        bridge.clearing_flush_region(&sleep_dirty);
+                        {
+                            let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
+                            ctx.clip = sleep_dirty;
+                            layout_scene(&mut state.scene, &state.theme);
+                            draw_scene(&mut state.scene, &mut ctx, &state.theme);
+                        }
+                        bridge.flush();
+                        bridge.display.power_off();
+                        // Persist filename and position so wakeup can reopen the same book.
+                        save_before_sleep(
+                            &state.current_filename,
+                            state.session.chapter_idx,
+                            state.session.reader.anchor_byte,
+                        )
+                        .await;
+                        // Never returns on ESP.
+                        hw.enter_deep_sleep(
+                            state.session.chapter_idx,
+                            state.session.reader.anchor_byte,
+                        );
                     } else if input.source == LIBRARY_READ_BUTTON_ID {
                         let filename = state
                             .scene
@@ -2062,12 +2139,13 @@ async fn ui_task(
         let elapsed_secs = state.last_interaction.elapsed().as_secs();
         if elapsed_secs >= DEEP_SLEEP_AFTER_SECS {
             log::info!("inactivity timeout — entering deep sleep");
-            if let Some(v) = state.scene.get_view_mut(&ViewId::new("page")) {
-                v.title = "Sleeping\u{2026} Press BOOT to wake".into();
-            }
+            state.scene.show_view(&SLEEP_DIALOG_ID);
             state.scene.mark_dirty_all();
             // Render the sleep message before powering off.
             let sleep_dirty = state.scene.dirty_rect.clone();
+            // Clear away the previous screen first — see comment on the
+            // button-triggered deep sleep path above.
+            bridge.clearing_flush_region(&sleep_dirty);
             {
                 let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
                 ctx.clip = sleep_dirty;

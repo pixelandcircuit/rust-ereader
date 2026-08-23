@@ -139,7 +139,7 @@ cargo sim --example ereader_ui
 | Face button (GT911 key, circle below screen) | Next page / next chapter |
 | Fast paging | Hold any button > 1 s to enter fast-scroll mode; a counter overlay shows chapter/page; release to jump |
 | Light sleep | Backlight off after 60 s of inactivity; wakes instantly on any button press |
-| Deep sleep | Full ESP32-S3 deep sleep after 60 min of inactivity; reading position saved to RTC fast memory |
+| Deep sleep | Full ESP32-S3 deep sleep after 60 min of inactivity, or immediately via the "Sleep Now" button in Settings; reading position saved to RTC fast memory |
 | Wake from deep sleep | Press BOOT button; position and settings restored from RTC (no flash read) |
 | NVS persistence | Book, font size, backlight, orientation, and reading position saved to flash NVS; restored on any boot including hard reset |
 

@@ -1,5 +1,42 @@
 # Changes
 
+## 2026-08-23 15:00
+
+Added a "Sleep Now" button to the settings dialog that manually triggers deep
+sleep, and gave deep sleep an actual sleep screen instead of overloading the
+footer page-counter label:
+
+- `examples/ereader_ui.rs`: added `DEEP_SLEEP_BUTTON_ID` const and a "Sleep
+  Now" button next to "Clean Screen" in the settings dialog (`row2`).
+- Added a new `SLEEP_DIALOG_ID` panel (styled like the existing loading/error
+  dialogs) with "Sleeping..." / "Press BOOT to wake" labels. Previously the
+  sleep message was written directly into the tiny footer `"page"` label,
+  which overflowed into the "Next >" button — the message was unreadable.
+- Wired the button into both the sim and ESP pointer-up handlers:
+  - Sim: hides the settings dialog, shows the sleep dialog, redraws the
+    window, then calls `hw.enter_deep_sleep(...)` (a no-op on
+    `SimHardware`, so the sleep screen just stays up for visual testing).
+  - ESP: same, plus flushes to e-paper, calls `bridge.display.power_off()`,
+    persists reading position via `save_before_sleep`, then
+    `hw.enter_deep_sleep(...)` (never returns — arms BOOT-button wakeup and
+    enters ESP32 deep sleep).
+- Updated the pre-existing 60-minute inactivity-timeout deep sleep path (ESP
+  only) to show the same `SLEEP_DIALOG_ID` instead of mutating the footer
+  label, so both entry points behave consistently.
+- Fixed a second bug found during on-device testing: drawing the sleep
+  dialog straight over whatever was on screen before (e.g. the settings
+  dialog) left ghosting/incomplete rendering on the e-paper panel. Added a
+  `bridge.clearing_flush_region(&sleep_dirty)` pass before drawing the sleep
+  dialog, matching the existing clear-then-draw pattern already used by the
+  loading dialog / library-load flow.
+
+Verified: `cargo check` passes clean for both the simulator
+(`--no-default-features --features simulator --target aarch64-apple-darwin`)
+and ESP (`-Z build-std=alloc,core`) targets. Confirmed via simulator log
+output that the button press correctly hides the settings dialog and shows
+the sleep dialog. The e-paper clearing fix was reported working by the user
+after on-device testing.
+
 ## 2026-08-19 (list view also press-then-commit on pointer up)
 
 Extended the same pointer down/up split to `list_view.rs` in the vendored
