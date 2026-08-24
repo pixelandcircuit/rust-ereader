@@ -677,6 +677,9 @@ fn main() {
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
+    #[cfg(feature = "debug-inspect")]
+    let mut sim_server = ereader::inspect_sim::spawn();
+
     let mut hw = SimHardware::new();
     let (mut win_w, mut win_h) = hw.orientation().logical_size();
 
@@ -705,6 +708,24 @@ fn main() {
         // Advance fast-scroll page counter while a direction key is held.
         fast.handle_update_label(&mut state);
 
+        #[cfg(feature = "debug-inspect")]
+        if let Some(effects) = sim_server.tick(&mut state, &mut hw) {
+            if let Some(o) = effects.orientation_changed {
+                hw.set_orientation(o);
+                let (new_w, new_h) = hw.orientation().logical_size();
+                if new_w != win_w || new_h != win_h {
+                    win_w = new_w;
+                    win_h = new_h;
+                    state.scene.resize(Bounds::new(0, 0, win_w, win_h));
+                    display = SimulatorDisplay::new(Size::new(win_w as u32, win_h as u32));
+                    window = Window::new("ereader_ui", &settings);
+                    state.cfg = cfg_from_scene(&mut state.scene, &state.theme, &state.fonts, hw.font_size());
+                    state.session.reader.relayout(&state.cfg);
+                    state.update_content(&hw);
+                }
+            }
+        }
+
         if (!state.scene.dirty_rect.is_empty()) {
             info!("clip rect {}", state.scene.dirty_rect);
             let dirty = state.scene.dirty_rect.clone();
@@ -712,6 +733,13 @@ fn main() {
             ctx.clip = dirty.clone();
             layout_scene(&mut state.scene, &state.theme);
             draw_scene(&mut state.scene, &mut ctx, &state.theme);
+            #[cfg(feature = "debug-inspect")]
+            ereader::inspect_sim::capture_framebuffer(
+                &sim_server.fb_state,
+                display.to_le_bytes(),
+                win_w as u16,
+                win_h as u16,
+            );
             window.update(&display);
         }
 
@@ -1040,10 +1068,14 @@ impl<'a, I: embedded_hal::i2c::I2c> Rgb565ToGray4<'a, I> {
         }
     }
     fn flush(&mut self) {
+        #[cfg(feature = "debug-inspect")]
+        ereader::inspect_esp::capture_framebuffer(self.display.framebuffer());
         self.display.flush(DrawMode::BlackOnWhite).unwrap();
     }
 
     fn flush_with_mode(&mut self, mode: DrawMode) {
+        #[cfg(feature = "debug-inspect")]
+        ereader::inspect_esp::capture_framebuffer(self.display.framebuffer());
         self.display.flush(mode).unwrap();
     }
 
@@ -1074,6 +1106,8 @@ impl<'a, I: embedded_hal::i2c::I2c> Rgb565ToGray4<'a, I> {
             width: px2 - px + 1,
             height: py2 - py + 1,
         };
+        #[cfg(feature = "debug-inspect")]
+        ereader::inspect_esp::capture_framebuffer(self.display.framebuffer());
         self.display.flush_region(area, mode).unwrap();
     }
 
@@ -1114,6 +1148,73 @@ impl<'a, I: embedded_hal::i2c::I2c> embedded_graphics::geometry::OriginDimension
     fn size(&self) -> embedded_graphics::geometry::Size {
         let (w, h) = self.orientation.logical_size();
         embedded_graphics::geometry::Size::new(w as u32, h as u32)
+    }
+}
+
+/// One-time "debug server ready" splash — device name, URL, and a scannable
+/// QR code — drawn full-screen via the existing `bridge` DrawTarget (so it
+/// gets the same orientation-rotation and framebuffer-capture handling as
+/// normal book content, no new drawing pathway needed). Ported from
+/// `../epaper-examples/examples/inspect_demo.rs`'s `render_status`/`render_qr`,
+/// adapted from raw Gray4 drawing to `Rgb565` since ereader's `Display` isn't
+/// itself a `DrawTarget` (only the `Rgb565ToGray4` bridge is).
+#[cfg(all(feature = "esp", feature = "debug-inspect"))]
+fn render_debug_splash<I: embedded_hal::i2c::I2c>(bridge: &mut Rgb565ToGray4<'_, I>, url: &str) {
+    use embedded_graphics::{
+        geometry::{Point, Size},
+        mono_font::{ascii::FONT_9X18, MonoTextStyle},
+        prelude::RgbColor,
+        primitives::{Primitive, PrimitiveStyle, Rectangle},
+        text::{Alignment, Text},
+        Drawable,
+    };
+    use qrcode_core::{
+        bits::encode_auto,
+        canvas::Canvas,
+        ec::construct_codewords,
+        types::{Color, EcLevel},
+    };
+
+    let (lw, _lh) = bridge.orientation.logical_size();
+    let black = Rgb565::BLACK;
+    let style = MonoTextStyle::new(&FONT_9X18, black);
+
+    Text::with_alignment("ereader debug server ready", Point::new(lw / 2, 40), style, Alignment::Center)
+        .draw(bridge)
+        .ok();
+    Text::with_alignment(url, Point::new(lw / 2, 80), style, Alignment::Center)
+        .draw(bridge)
+        .ok();
+
+    let ec = EcLevel::M;
+    let Ok(bits) = encode_auto(url.as_bytes(), ec) else { return };
+    let version = bits.version();
+    let Ok((data_cw, ec_cw)) = construct_codewords(&bits.into_bytes(), version, ec) else { return };
+    let mut canvas = Canvas::new(version, ec);
+    canvas.draw_all_functional_patterns();
+    canvas.draw_data(&data_cw, &ec_cw);
+    let canvas = canvas.apply_best_mask();
+    let colors = canvas.into_colors();
+
+    let width = version.width() as i32;
+    let quiet = 4i32;
+    let scale = 6i32;
+    let total = (width + quiet * 2) * scale;
+    let x0 = (lw - total) / 2;
+    let y0 = 120i32;
+    let dark = PrimitiveStyle::with_fill(Rgb565::BLACK);
+    for row in 0..width {
+        for col in 0..width {
+            if colors[(row * width + col) as usize] == Color::Dark {
+                Rectangle::new(
+                    Point::new(x0 + (col + quiet) * scale, y0 + (row + quiet) * scale),
+                    Size::new(scale as u32, scale as u32),
+                )
+                .into_styled(dark)
+                .draw(bridge)
+                .ok();
+            }
+        }
     }
 }
 
@@ -1358,6 +1459,22 @@ async fn query_ntp(stack: embassy_net::Stack<'static>) -> Option<u64> {
     Some(ntp_secs - NTP_UNIX_OFFSET)
 }
 
+/// Replaces `wifi_task` when `debug-inspect` is enabled: the connection is
+/// already held open by `inspect_esp::connection`, so this only needs to
+/// query NTP (no connect/disconnect dance) — once at boot, then again on
+/// each `WIFI_SYNC_REQUEST` (e.g. from the settings "Sync Time" button).
+#[cfg(all(feature = "esp", feature = "debug-inspect"))]
+#[embassy_executor::task]
+async fn ntp_task(stack: embassy_net::Stack<'static>) {
+    stack.wait_config_up().await;
+    log::info!("ntp_task: link up, querying time.google.com...");
+    WIFI_SYNC_RESULT.signal(query_ntp(stack).await);
+    loop {
+        WIFI_SYNC_REQUEST.wait().await;
+        WIFI_SYNC_RESULT.signal(query_ntp(stack).await);
+    }
+}
+
 /// Persisted/restored settings handed off to `ui_task` on core 1.
 #[cfg(feature = "esp")]
 struct BootSettings {
@@ -1480,6 +1597,16 @@ async fn main(spawner: Spawner) -> ! {
     let core1_stack = CORE1_STACK.init(Stack::new());
     static CORE1_EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
 
+    // Constructed here (before `stack`/WiFi exist) so both possible `ui_task`
+    // spawn sites below and the debug server spawned later can all share it.
+    #[cfg(feature = "debug-inspect")]
+    let inspect_state: &'static ereader::inspect_esp::SharedInspectState = mk_static!(
+        ereader::inspect_esp::SharedInspectState,
+        embassy_sync::blocking_mutex::Mutex::new(core::cell::RefCell::new(
+            ereader::inspect_shared::InspectState::default()
+        ))
+    );
+
     if USE_SECOND_CORE {
         esp_rtos::start_second_core(cpu_ctrl, sw_int1, core1_stack, move || {
             let executor = CORE1_EXECUTOR.init(esp_rtos::embassy::Executor::new());
@@ -1497,6 +1624,8 @@ async fn main(spawner: Spawner) -> ! {
                         gpio38,
                         rtc,
                         boot,
+                        #[cfg(feature = "debug-inspect")]
+                        inspect_state,
                     )
                     .expect("ui_task spawn"),
                 );
@@ -1517,6 +1646,8 @@ async fn main(spawner: Spawner) -> ! {
                 gpio38,
                 rtc,
                 boot,
+                #[cfg(feature = "debug-inspect")]
+                inspect_state,
             )
             .expect("ui_task spawn"),
         );
@@ -1537,16 +1668,46 @@ async fn main(spawner: Spawner) -> ! {
             ControllerConfig::default().with_initial_config(station_config),
         )
         .expect("wifi init");
+        // debug-inspect needs extra socket slots: one TCP socket for the debug
+        // server, one UDP socket for mDNS, alongside NTP's UDP socket.
+        #[cfg(feature = "debug-inspect")]
+        let stack_resources = mk_static!(StackResources<6>, StackResources::<6>::new());
+        #[cfg(not(feature = "debug-inspect"))]
+        let stack_resources = mk_static!(StackResources<3>, StackResources::<3>::new());
         let (stack, runner) = embassy_net::new(
             interfaces.station,
             embassy_net::Config::dhcpv4(Default::default()),
-            mk_static!(StackResources<3>, StackResources::<3>::new()),
+            stack_resources,
             seed,
         );
         spawner.spawn(net_task(runner).expect("net_task spawn"));
         info!("spawned net_task");
-        spawner.spawn(wifi_task(controller, stack, is_sleep_wakeup).expect("wifi_task spawn"));
-        info!("spawned wifi_task");
+        #[cfg(not(feature = "debug-inspect"))]
+        {
+            spawner.spawn(wifi_task(controller, stack, is_sleep_wakeup).expect("wifi_task spawn"));
+            info!("spawned wifi_task");
+        }
+        // debug-inspect holds WiFi connected indefinitely (instead of the
+        // default connect-for-NTP-then-disconnect behavior) so the device
+        // stays reachable for the debug server.
+        #[cfg(feature = "debug-inspect")]
+        {
+            let _ = is_sleep_wakeup; // only meaningful to the default wifi_task above
+            spawner.spawn(
+                ereader::inspect_esp::connection(controller).expect("inspect connection spawn"),
+            );
+            spawner.spawn(ntp_task(stack).expect("ntp_task spawn"));
+            spawner.spawn(
+                ereader::inspect_esp::debug_server(stack, inspect_state)
+                    .expect("debug_server spawn"),
+            );
+            spawner.spawn(
+                ereader::inspect_esp::network_status_task(stack, inspect_state)
+                    .expect("network_status_task spawn"),
+            );
+            spawner.spawn(ereader::inspect_esp::mdns_task(stack).expect("mdns_task spawn"));
+            info!("spawned inspect_esp tasks (debug-inspect: WiFi always-on, ws://<ip>:3000/)");
+        }
     } else {
         log::info!("WiFi/NTP disabled (ENABLE_WIFI_NTP = false)");
     }
@@ -1572,6 +1733,7 @@ async fn ui_task(
     gpio38: esp_hal::peripherals::GPIO38<'static>,
     rtc: Rtc<'static>,
     boot: BootSettings,
+    #[cfg(feature = "debug-inspect")] inspect_state: &'static ereader::inspect_esp::SharedInspectState,
 ) {
     use esp_println::println;
 
@@ -1738,7 +1900,73 @@ async fn ui_task(
         fn is_forward(self) -> bool { !matches!(self, Btn::Prev) }
     }
 
+    #[cfg(feature = "debug-inspect")]
+    let inspect_boot = Instant::now();
+    // 0 = not shown yet, 1 = shown and counting down, 2 = done (never again).
+    #[cfg(feature = "debug-inspect")]
+    let mut splash_state: u8 = 0;
+    #[cfg(feature = "debug-inspect")]
+    let mut splash_ticks: u32 = 0;
+
     'esp_running: loop {
+        // Keep the debug-inspect snapshot current — one lock-and-write per
+        // tick (isolation rule 2), not one per field.
+        #[cfg(feature = "debug-inspect")]
+        {
+            let uptime_secs = (Instant::now() - inspect_boot).as_secs() as u32;
+            inspect_state.lock(|cell| {
+                ereader::inspect_shared::sync_from_real_state(
+                    &mut cell.borrow_mut(),
+                    &state,
+                    &hw,
+                    uptime_secs,
+                );
+            });
+            let effects = ereader::inspect_esp::apply_pending_commands(inspect_state, &mut state, &mut hw);
+            if effects.ntp_sync_requested {
+                WIFI_SYNC_REQUEST.signal(());
+            }
+            if let Some(o) = effects.orientation_changed {
+                // Mirrors the settings-dialog ORIENTATION_ID click handler.
+                hw.set_orientation(o);
+                bridge.orientation = hw.orientation();
+                let (new_w, new_h) = hw.orientation().logical_size();
+                state.scene.resize(Bounds::new(0, 0, new_w, new_h));
+                state.cfg = cfg_from_scene(&mut state.scene, &state.theme, &state.fonts, hw.font_size());
+                state.session.reader.relayout(&state.cfg);
+                state.update_content(&hw);
+                hw.save_settings();
+            }
+
+            // Show a one-time "debug server ready" splash (with a QR code
+            // linking to the debug UI) the first tick after WiFi comes up,
+            // then restore the normal reading UI a few seconds later.
+            if splash_state == 0 {
+                let ip = inspect_state.lock(|cell| {
+                    let s = cell.borrow();
+                    s.network.connected.then(|| {
+                        (s.network.ip_a, s.network.ip_b, s.network.ip_c, s.network.ip_d)
+                    })
+                });
+                if let Some((a, b, c, d)) = ip {
+                    let url = alloc::format!("http://{}.{}.{}.{}:3000/", a, b, c, d);
+                    let full = Bounds::new(0, 0, hw.orientation().logical_size().0, hw.orientation().logical_size().1);
+                    bridge.clearing_flush_region(&full);
+                    render_debug_splash(&mut bridge, &url);
+                    bridge.flush_region(&full, DrawMode::BlackOnWhite);
+                    splash_state = 1;
+                    splash_ticks = 0;
+                }
+            } else if splash_state == 1 {
+                splash_ticks += 1;
+                if splash_ticks > 100 {
+                    // ~5s at the loop's ~50ms cadence — restore the reading UI.
+                    state.scene.mark_dirty_all();
+                    splash_state = 2;
+                }
+            }
+        }
+
         // Apply background battery reading if a new one has arrived.
         if let Some(info) = BATTERY_RESULT.try_take() {
             hw.update_battery(info.voltage_mv, info.percent, info.is_charging);

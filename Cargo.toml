@@ -39,6 +39,17 @@ simulator = [
     "dep:env_logger",
     "dep:log",
 ]
+# Opt-in WebSocket debug/inspection server (embedded-inspect). Off by default —
+# adds no size/behavior cost unless explicitly enabled alongside "esp" or
+# "simulator". See changes.md for usage.
+debug-inspect = [
+    "dep:embedded-inspect",
+    "dep:embedded-websocket",
+    "dep:httparse",
+    "dep:qrcode-core",
+    "embassy-net?/tcp",
+    "embassy-net?/multicast",
+]
 
 [dependencies]
 # Always required
@@ -73,6 +84,12 @@ embassy-time     = { version = "0.5.0",  optional = true }
 static_cell      = { version = "2.1.0",  optional = true }
 embedded-sdmmc   = { version = "0.9",  default-features = false, optional = true }
 embedded-hal-bus = { version = "0.2",  optional = true }
+
+# debug-inspect only (optional, enabled via the "debug-inspect" feature)
+embedded-inspect   = { path = "../embedded-inspect/embedded-inspect", optional = true }
+embedded-websocket = { version = "0.9", default-features = false, optional = true }
+httparse           = { version = "1",   default-features = false, optional = true }
+qrcode-core        = { version = "2",   optional = true }
 
 [profile.dev]
 opt-level = "s"

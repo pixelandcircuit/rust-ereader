@@ -131,6 +131,13 @@ impl<'a, I: I2cTrait> Display<'a, I> {
         self.epd.power_off()
     }
 
+    /// Raw 4bpp-packed framebuffer bytes (2 px/byte), for screenshot capture.
+    /// Valid only between drawing and the next `flush`/`flush_region` call —
+    /// both reset the buffer to all-white (`0xFF`) once driven to the panel.
+    pub fn framebuffer(&self) -> &[u8] {
+        &*self.framebuffer
+    }
+
     pub fn set_pixel(&mut self, x: u16, y: u16, color: u8) -> Result<()> {
         if x >= DISPLAY_WIDTH || y >= DISPLAY_HEIGHT {
             return Err(Error::OutOfBounds);
