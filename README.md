@@ -86,10 +86,10 @@ brew install sdl2          # macOS
 sudo apt install libsdl2-dev  # Debian/Ubuntu
 ```
 
-Run either example with `cargo sim`:
+Run either example with `cargo sim-run`:
 ```sh
-cargo sim --example ereader_full
-cargo sim --example ereader_ui
+cargo sim-run --example ereader_full
+cargo sim-run --example ereader_ui
 ```
 
 ---
@@ -100,7 +100,7 @@ cargo sim --example ereader_ui
 
 **Run:**
 ```sh
-cargo sim --example ereader_full
+cargo sim-run --example ereader_full
 ```
 
 **Keyboard controls:**
@@ -111,7 +111,7 @@ cargo sim --example ereader_full
 | Left arrow / Backspace / P | Previous page (or previous chapter) |
 | Close window / Q | Quit |
 
-The `sim` alias expands to `run --no-default-features --features simulator --target aarch64-apple-darwin`. Adjust the target triple in `.cargo/config.toml` if you are on a non-Apple-Silicon machine (see table below).
+The `sim-run` alias expands to `run --no-default-features --features simulator --target aarch64-apple-darwin`. Adjust the target triple in `.cargo/config.toml` if you are on a non-Apple-Silicon machine (see table below).
 
 ## Running ereader_ui in the simulator (no device needed)
 
@@ -119,7 +119,7 @@ The `sim` alias expands to `run --no-default-features --features simulator --tar
 
 **Run:**
 ```sh
-cargo sim --example ereader_ui
+cargo sim-run --example ereader_ui
 ```
 
 **Keyboard controls:**
@@ -190,5 +190,5 @@ Run the simulator with the debug-inspector feature enabled then you can
 connect to http://127.0.0.1:3000/ to see it.  
 
 ```shell
-cargo sim --example ereader_ui --features=debug-inspect
+cargo sim-run --example ereader_ui --features=debug-inspect
 ```
