@@ -183,3 +183,12 @@ fonts/           — Embedded TTF/OTF font files
 ## Flash partition layout
 
 Defined in `partitions.csv`. Sequential-storage is used for persisting reading position, font size, orientation, and backlight level across deep-sleep cycles.
+
+## Debug Inspector
+
+Run the simulator with the debug-inspector feature enabled then you can 
+connect to http://127.0.0.1:3000/ to see it.  
+
+```shell
+cargo sim --example ereader_ui --features=debug-inspect
+```
