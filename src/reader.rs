@@ -97,8 +97,10 @@ impl ReaderState {
 /// Use `session.reader` to access page-level operations (`turn_page`,
 /// `current_text`, `relayout`, etc.). Save `session.chapter_idx` and
 /// `session.reader.anchor_byte` to persist the reading position.
+#[derive(DebugInspect)]
 pub struct BookSession {
     pub chapter_idx: usize,
+    #[inspect]
     pub reader: ReaderState,
     spine: Vec<String>,
 }

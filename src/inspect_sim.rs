@@ -182,6 +182,7 @@ fn run_server(
         }
     };
     log::info!("debug-inspect (sim): listening at ws://127.0.0.1:{}/", PORT);
+    log::info!("debug-inspect (sim): dev console at http://127.0.0.1:{}/", PORT);
 
     // One connection at a time, mirroring the ESP transport's accept loop —
     // a local debug tool doesn't need concurrent browser tabs.
