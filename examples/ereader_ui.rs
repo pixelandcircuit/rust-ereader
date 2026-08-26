@@ -47,6 +47,7 @@ const WELCOME_HTML: &[u8] = include_bytes!("welcome.html");
 const SETTINGS_DIALOG_ID: ViewId = ViewId::new("settings_dialog");
 const LIBRARY_DIALOG_ID: ViewId = ViewId::new("library_dialog");
 const LIBRARY_BUTTON_ID: ViewId = ViewId::new("library");
+const TIME_LABEL_ID: ViewId = ViewId::new("time_label");
 const LIBRARY_LIST_ID: ViewId = ViewId::new("lib_list");
 const LIBRARY_READ_BUTTON_ID: ViewId = ViewId::new("library_read");
 const LIBRARY_CLOSE_BUTTON_ID: ViewId = ViewId::new("library_close");
@@ -91,8 +92,6 @@ fn handle_click(event: &mut GuiEvent<Rgb565>) {
         event.scene.show_view(&SETTINGS_DIALOG_ID);
     } else if event.target == &ViewId::new("dialog_close") {
         event.scene.hide_view(&SETTINGS_DIALOG_ID);
-    } else if event.target == &LIBRARY_BUTTON_ID {
-        event.scene.show_view(&LIBRARY_DIALOG_ID);
     } else if event.target == &LIBRARY_CLOSE_BUTTON_ID {
         event.scene.hide_view(&LIBRARY_DIALOG_ID);
     } else if event.target == &BATTERY_BUTTON_ID {
@@ -101,6 +100,7 @@ fn handle_click(event: &mut GuiEvent<Rgb565>) {
         event.scene.hide_view(&BATTERY_DIALOG_ID);
     } else if event.target == &ViewId::new("error_dismiss") {
         event.scene.hide_view(&ERROR_DIALOG_ID);
+        info!("marking dirty all for hiding error dialog");
         event.scene.mark_dirty_all();
     }
 }
@@ -110,6 +110,7 @@ fn show_error_dialog(scene: &mut Scene<Rgb565>, filename: &str) {
         v.title = String::from(filename);
     }
     scene.show_view(&ERROR_DIALOG_ID);
+    info!("marking dirty for showing error dialog");
     scene.mark_layout_dirty();
     scene.mark_dirty_all();
 }
@@ -142,18 +143,21 @@ fn show_loading_dialog(scene: &mut Scene<Rgb565>, filename: &str) {
     }
     set_loading_progress(scene, 0);
     scene.show_view(&LOADING_DIALOG_ID);
+    // we need to trigger a relayout the first time a dialog is show, or if it's contents may have changed.
     scene.mark_layout_dirty_view(&LOADING_DIALOG_ID);
+    info!("show loading dialog");
 }
 
 fn hide_loading_dialog(scene: &mut Scene<Rgb565>) {
     scene.hide_view(&LOADING_DIALOG_ID);
-    scene.mark_dirty_view(&LOADING_DIALOG_ID);
+    info!("hide loading dialog");
 }
 
 fn set_loading_progress(scene: &mut Scene<Rgb565>, pct: u8) {
     if let Some(v) = scene.get_view_mut(&LOADING_PROGRESS_BAR_ID) {
         if let Some(s) = v.get_state::<ProgressBarState>() {
             s.progress = pct;
+            info!("set loading progress {}",s.progress);
         }
     }
     // Mark the whole dialog dirty — the progress bar's own bounds have w=0
@@ -180,7 +184,7 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene<Rgb565> {
         let topbar_id = ViewId::new("topbar");
         scene.add_view_to_parent(make_button(&LIBRARY_BUTTON_ID, "Library"), &topbar_id);
         scene.add_view_to_parent(make_h_spacer(&ViewId::new("spacer1")), &topbar_id);
-        scene.add_view_to_parent(make_label(&ViewId::new("time"), "--:-- --"), &topbar_id);
+        scene.add_view_to_parent(make_label(&TIME_LABEL_ID, "--:-- --"), &topbar_id);
         scene.add_view_to_parent(make_button(&BATTERY_BUTTON_ID, "85%"), &topbar_id);
         scene.add_view_to_parent(
             make_full_button(&SETTINGS_BUTTON_ID, "Settings", "settings", false),
@@ -667,6 +671,15 @@ fn load_book(state: &mut AppState, hw: &mut dyn HardwareAccess, filename: &Strin
     }
 }
 
+fn update_label(state: &mut AppState, label: &ViewId, value:String) {
+    if let Some(v) = state.scene.get_view_mut(label) {
+        v.title = value;
+        state.scene.mark_dirty_view(label);
+        info!("marked label dirty: {}", label);
+    }
+}
+
+
 #[cfg(feature = "simulator")]
 fn main() {
     use embedded_graphics::geometry::Size;
@@ -855,21 +868,7 @@ fn main() {
                             }
                         }
                         handle_click_action(&mut hw, &input, &mut state);
-                        if input.source == TZ_MINUS_ID || input.source == TZ_PLUS_ID {
-                            let delta = if input.source == TZ_PLUS_ID { 30 } else { -30 };
-                            let new_tz = (hw.utc_offset_minutes() + delta).clamp(-720, 840);
-                            hw.set_utc_offset_minutes(new_tz);
-                            if let Some(v) = state.scene.get_view_mut(&TZ_LABEL_ID) {
-                                v.title = format_tz_label(new_tz);
-                                state.scene.mark_dirty_view(&TZ_LABEL_ID);
-                            }
-                            let unix_secs = hw.current_time_secs();
-                            let time_str = format_time_local(unix_secs, new_tz);
-                            if let Some(v) = state.scene.get_view_mut(&ViewId::new("time")) {
-                                v.title = time_str;
-                            }
-                            state.scene.mark_dirty_view(&ViewId::new("time"));
-                        } else if input.source == DEEP_CLEAN_ID {
+                        if input.source == DEEP_CLEAN_ID {
                             // no-op in simulator
                         } else if input.source == DEEP_SLEEP_BUTTON_ID {
                             info!("deep sleep button pressed — showing sleep screen");
@@ -979,16 +978,14 @@ fn update_battery_labels(scene: &mut Scene<Rgb565>, hw: &dyn HardwareAccess) {
 fn handle_click_action(hw: &mut dyn HardwareAccess, input: &InputResult, state: &mut AppState) {
     if input.source == BATTERY_BUTTON_ID {
         update_battery_labels(&mut state.scene, hw);
+        info!("marking battery dialog dirty");
         state.scene.mark_layout_dirty_view(&BATTERY_DIALOG_ID);
         state.last_interaction = Instant::now();
     }
     if input.source == SYNC_TIME_BUTTON_ID {
         let t = hw.current_time_secs();
         let time_str = format_time_local(t, hw.utc_offset_minutes());
-        if let Some(view) = state.scene.get_view_mut(&ViewId::new("time")) {
-            view.title = time_str;
-        }
-        state.scene.mark_dirty_view(&ViewId::new("time"));
+        update_label(state,&TIME_LABEL_ID, time_str);
     }
     if input.source == PREV_PAGE_ID {
         state.nav_prev_page(hw);
@@ -1016,11 +1013,30 @@ fn handle_click_action(hw: &mut dyn HardwareAccess, input: &InputResult, state: 
                 s.selected = 0;
             }
         }
+        state.scene.show_view(&LIBRARY_DIALOG_ID);
         state.scene.mark_layout_dirty_view(&LIBRARY_DIALOG_ID);
+        info!("marking the library dialog layout dirty");
         state.last_interaction = Instant::now();
     }
     if input.source == LIBRARY_LIST_ID {
         state.last_interaction = Instant::now();
+    }
+    if input.source == TZ_MINUS_ID || input.source == TZ_PLUS_ID {
+        let delta = if input.source == TZ_PLUS_ID { 30 } else { -30 };
+        let new_tz = (hw.utc_offset_minutes() + delta).clamp(-720, 840);
+        hw.set_utc_offset_minutes(new_tz);
+        hw.save_settings();
+        // Update the label in the settings dialog.
+        if let Some(v) = state.scene.get_view_mut(&TZ_LABEL_ID) {
+            v.title = format_tz_label(new_tz);
+            info!("marking dirty for the timezone label");
+            state.scene.mark_dirty_view(&TZ_LABEL_ID);
+        }
+        // Immediately reflect the new offset in the clock.
+        let unix_secs = hw.current_time_secs();
+        if unix_secs > 0 {
+            update_label(state, &TIME_LABEL_ID, format_time_local(unix_secs, new_tz));
+        }
     }
 }
 
@@ -1046,7 +1062,7 @@ use ereader::driver::Gt911;
 
 // Light sleep after 60 s of inactivity; deep sleep after 60 min.
 #[cfg(feature = "esp")]
-const LIGHT_SLEEP_AFTER_SECS: u64 = 60;
+const LIGHT_SLEEP_AFTER_SECS: u64 = 60*5;
 #[cfg(feature = "esp")]
 const DEEP_SLEEP_AFTER_SECS: u64 = 3600;
 
@@ -1350,7 +1366,7 @@ async fn time_task() {
 async fn battery_task(mut i2c: SharedI2c) {
     use embedded_hal::i2c::I2c as I2cTrait;
     loop {
-        EmbassyTimer::after(Duration::from_secs(10)).await;
+        EmbassyTimer::after(Duration::from_secs(60*5)).await;
         let voltage_mv = bq27220_read_u16(&mut i2c, 0x08) as u32;
         let current_ma = bq27220_read_i16(&mut i2c, 0x14);
         let percent = bq27220_read_u16(&mut i2c, 0x1E).min(100) as u8;
@@ -1414,22 +1430,22 @@ async fn do_ntp_sync(
     controller: &mut esp_radio::wifi::WifiController<'static>,
     stack: embassy_net::Stack<'static>,
 ) {
-    log::info!("NTP: connecting to '{}' ...", SSID);
+    info!("NTP: connecting to '{}' ...", SSID);
     let result = with_timeout(Duration::from_secs(20), async {
         if let Err(e) = controller.connect_async().await {
             log::warn!("NTP: wifi connect failed: {:?}", e);
             return None;
         }
-        log::info!("NTP: wifi connected, waiting for DHCP...");
+        info!("NTP: wifi connected, waiting for DHCP...");
         stack.wait_config_up().await;
-        log::info!("NTP: DHCP obtained, querying time.google.com...");
+        info!("NTP: DHCP obtained, querying time.google.com...");
         query_ntp(stack).await
     })
     .await;
     let unix_opt = result.ok().flatten();
     WIFI_SYNC_RESULT.signal(unix_opt);
     controller.disconnect_async().await.ok();
-    log::info!("NTP: wifi disconnected");
+    info!("NTP: wifi disconnected");
 }
 
 /// Query time.google.com via NTP and return Unix seconds, or None on error.
@@ -1467,7 +1483,7 @@ async fn query_ntp(stack: embassy_net::Stack<'static>) -> Option<u64> {
 #[embassy_executor::task]
 async fn ntp_task(stack: embassy_net::Stack<'static>) {
     stack.wait_config_up().await;
-    log::info!("ntp_task: link up, querying time.google.com...");
+    info!("ntp_task: link up, querying time.google.com...");
     WIFI_SYNC_RESULT.signal(query_ntp(stack).await);
     loop {
         WIFI_SYNC_REQUEST.wait().await;
@@ -1510,7 +1526,7 @@ async fn main(spawner: Spawner) -> ! {
         use esp_alloc::MemoryCapability;
         let psram_free = esp_alloc::HEAP.free_caps(MemoryCapability::External.into());
         let sram_free = esp_alloc::HEAP.free_caps(MemoryCapability::Internal.into());
-        log::info!("heap init: psram_free={} sram_free={}", psram_free, sram_free);
+        info!("heap init: psram_free={} sram_free={}", psram_free, sram_free);
     }
 
     // Must run before any EmbassyTimer use and before esp_radio::wifi::new.
@@ -1550,7 +1566,7 @@ async fn main(spawner: Spawner) -> ! {
         let bl = ((packed >> 4) & 0xF) as usize;
         let ori = ((packed >> 8) & 0xF) as usize;
         let chapter = rtc_store_read(6) as usize;
-        log::info!(
+        info!(
             "woke from deep sleep: ch={} anchor={} font={} bl={} ori={}",
             chapter,
             anchor,
@@ -1709,7 +1725,7 @@ async fn main(spawner: Spawner) -> ! {
             info!("spawned inspect_esp tasks (debug-inspect: WiFi always-on, ws://<ip>:3000/)");
         }
     } else {
-        log::info!("WiFi/NTP disabled (ENABLE_WIFI_NTP = false)");
+        info!("WiFi/NTP disabled (ENABLE_WIFI_NTP = false)");
     }
 
     // Core 0 has nothing left to do but keep the background tasks (battery,
@@ -1979,12 +1995,7 @@ async fn ui_task(
             let unix_secs = hw.current_time_secs();
             if unix_secs > 0 {
                 let time_str = format_time_local(unix_secs, hw.utc_offset_minutes());
-                if let Some(view) = state.scene.get_view_mut(&ViewId::new("time")) {
-                    if view.title != time_str {
-                        view.title = time_str;
-                        state.scene.mark_dirty_view(&ViewId::new("time"));
-                    }
-                }
+                update_label(&mut state,&TIME_LABEL_ID, time_str);
             }
         }
 
@@ -1994,11 +2005,9 @@ async fn ui_task(
                 Some(unix_secs) => {
                     hw.set_current_time_secs(unix_secs);
                     let time_str = format_time_local(unix_secs, hw.utc_offset_minutes());
-                    if let Some(view) = state.scene.get_view_mut(&ViewId::new("time")) {
-                        view.title = time_str.clone();
-                    }
-                    state.scene.mark_layout_dirty();
-                    log::info!("NTP synced: {}", time_str);
+                    info!("NTP synced: {}", time_str);
+                    update_label(&mut state,&TIME_LABEL_ID, time_str);
+                    info!("marked ntp time as dirty");
                 }
                 None => log::warn!("NTP: sync failed (no response)"),
             }
@@ -2011,6 +2020,7 @@ async fn ui_task(
             set_loading_progress(&mut state.scene, pct);
             let dirty = state.scene.dirty_rect.clone();
             if !dirty.is_empty() {
+                info!("marking manually drawing and flushing for the book load progress");
                 {
                     let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
                     ctx.clip = dirty.clone();
@@ -2091,7 +2101,7 @@ async fn ui_task(
             None
         };
         if let Some(btn) = btn_pressed {
-            log::info!("{} button pressed{}", btn.name(), if just_woke { " (wake)" } else { "" });
+            info!("{} button pressed{}", btn.name(), if just_woke { " (wake)" } else { "" });
             if !just_woke {
                 if btn.is_forward() { fast.start_forward(); } else { fast.start_backward(); }
             }
@@ -2113,11 +2123,13 @@ async fn ui_task(
                 // first so the panel has its centred global bounds, then rederive
                 // the dirty rect from the panel alone.
                 if !state.scene.dirty_rect.is_empty() {
+                    info!("calling layout scene for fast paging");
                     layout_scene(&mut state.scene, &state.theme);
                     state.scene.dirty_rect = Bounds::new_empty();
                     state.scene.mark_dirty_view(&FAST_SCROLL_PANEL_ID);
                     let panel_rect = state.scene.dirty_rect.clone();
 
+                    info!("flushing for fast paging");
                     bridge.flush_region(&panel_rect, DrawMode::FastClear);
                     {
                         let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
@@ -2129,7 +2141,7 @@ async fn ui_task(
 
                 EmbassyTimer::after(Duration::from_millis(10)).await;
             }
-            log::info!("{} button released", btn.name());
+            info!("{} button released", btn.name());
 
             if just_woke {
                 // First press after light sleep: consume as wake-only, no page turn.
@@ -2270,33 +2282,17 @@ async fn ui_task(
                         } else {
                             info!("sync_time pressed but WiFi is disabled");
                         }
-                    } else if input.source == TZ_MINUS_ID || input.source == TZ_PLUS_ID {
-                        let delta = if input.source == TZ_PLUS_ID { 30 } else { -30 };
-                        let new_tz = (hw.utc_offset_minutes() + delta).clamp(-720, 840);
-                        hw.set_utc_offset_minutes(new_tz);
-                        hw.save_settings();
-                        // Update the label in the settings dialog.
-                        if let Some(v) = state.scene.get_view_mut(&TZ_LABEL_ID) {
-                            v.title = format_tz_label(new_tz);
-                            state.scene.mark_dirty_view(&TZ_LABEL_ID);
-                        }
-                        // Immediately reflect the new offset in the clock.
-                        let unix_secs = hw.current_time_secs();
-                        if unix_secs > 0 {
-                            if let Some(v) = state.scene.get_view_mut(&ViewId::new("time")) {
-                                v.title = format_time_local(unix_secs, new_tz);
-                                state.scene.mark_dirty_view(&ViewId::new("time"));
-                            }
-                        }
                     } else if input.source == DEEP_CLEAN_ID {
                         info!("deep clean started");
                         bridge.display.deep_clean(3).unwrap();
                         state.partial_refresh_count = 0;
+                        info!("marked dirty all for deep clean");
                         state.scene.mark_dirty_all();
                     } else if input.source == DEEP_SLEEP_BUTTON_ID {
                         info!("deep sleep button pressed — entering deep sleep");
                         state.scene.hide_view(&SETTINGS_DIALOG_ID);
                         state.scene.show_view(&SLEEP_DIALOG_ID);
+                        info!("marked dirty all for deep sleep button");
                         state.scene.mark_dirty_all();
                         // Render the sleep message before powering off.
                         let sleep_dirty = state.scene.dirty_rect.clone();
@@ -2366,8 +2362,9 @@ async fn ui_task(
         // Two-tier inactivity sleep: light sleep at 60 s, deep sleep at 60 min.
         let elapsed_secs = state.last_interaction.elapsed().as_secs();
         if elapsed_secs >= DEEP_SLEEP_AFTER_SECS {
-            log::info!("inactivity timeout — entering deep sleep");
+            info!("inactivity timeout — entering deep sleep");
             state.scene.show_view(&SLEEP_DIALOG_ID);
+            info!("marking dirty all for showing the sleep dialog");
             state.scene.mark_dirty_all();
             // Render the sleep message before powering off.
             let sleep_dirty = state.scene.dirty_rect.clone();
@@ -2399,7 +2396,7 @@ async fn ui_task(
             state.last_interaction = Instant::now();
             state.update_content(&hw);
         } else if elapsed_secs >= LIGHT_SLEEP_AFTER_SECS {
-            log::info!("inactivity timeout — entering light sleep");
+            info!("inactivity timeout — entering light sleep");
             // Draw a grid of 30×30 black squares with white 5 px gaps on the physical display.
             // fill(0x0F) sets the entire framebuffer to white, making the gaps white by default.
             {
@@ -2426,6 +2423,7 @@ async fn ui_task(
             // Backlight is turned off inside enter_light_sleep and restored on return.
             hw.enter_light_sleep();
             // Full redraw after waking so the grid is replaced with book content.
+            info!("full redraw after waking");
             state.scene.mark_dirty_all();
             state.last_interaction = Instant::now();
             just_woke = true;
@@ -2458,6 +2456,7 @@ impl FastPaging {
                 state.session.reader.go_to_page(self.fs_target);
                 state.update_content(hw);
                 state.scene.hide_view(&FAST_SCROLL_PANEL_ID);
+                info!("marking dirty all after hiding the fast scroll panel");
                 state.scene.mark_dirty_all();
             } else {
                 if self.forward {
@@ -2488,6 +2487,7 @@ impl FastPaging {
                     state.session.reader.page_count(),
                 );
                 state.scene.show_view(&FAST_SCROLL_PANEL_ID);
+                info!("marking layout dirty after showing fast scroll panel");
                 state.scene.mark_layout_dirty();
             }
         }
@@ -2552,6 +2552,7 @@ fn update_fast_scroll_label(
             page_count
         );
     }
+    info!("marking fast scroll panel dirty");
     scene.mark_dirty_view(&FAST_SCROLL_PANEL_ID);
 }
 // ── Tests ─────────────────────────────────────────────────────────────────────
