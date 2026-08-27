@@ -1164,10 +1164,9 @@ pub fn sd_read_file(name: &str) -> Option<alloc::vec::Vec<u8>> {
             sfn = Some(e.name.clone());
         }
     });
-    let mut f = root.open_file_in_dir(sfn?, Mode::ReadOnly).ok()?;
+    let f = root.open_file_in_dir(sfn?, Mode::ReadOnly).ok()?;
     let file_len = f.length() as usize;
     {
-        use esp_alloc::MemoryCapability;
         let stats = esp_alloc::HEAP.stats();
         let total_free: usize = stats.region_stats.iter().flatten().map(|r| r.free).sum();
         log::info!("sd_read_file: file size={} bytes, total heap free={} bytes", file_len, total_free);

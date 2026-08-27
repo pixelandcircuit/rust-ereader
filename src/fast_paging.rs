@@ -5,7 +5,7 @@ use crate::hardware::HardwareAccess;
 // use alloc::format;
 
 #[cfg(feature = "esp")]
-use embassy_time::{ Duration, Instant};
+use embassy_time::{ Instant};
 
 #[cfg(feature = "simulator")]
 use std::time::Instant;

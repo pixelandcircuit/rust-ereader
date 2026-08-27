@@ -16,8 +16,6 @@ use embedded_graphics::prelude::RgbColor;
 use ereader::book::HtmlBook;
 #[cfg(feature = "esp")]
 use ereader::book::TxtBook;
-#[cfg(feature = "esp")]
-use ereader::font::font_px_for;
 use ereader::font::AppFonts;
 #[cfg(feature = "simulator")]
 use ereader::hardware::SimHardware;
@@ -1389,7 +1387,6 @@ struct BootSettings {
 #[cfg(feature = "esp")]
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
-    use esp_println::println;
 
     esp_println::logger::init_logger(log::LevelFilter::Info);
 
@@ -1812,7 +1809,7 @@ async fn ui_task(
         fn is_forward(self) -> bool { !matches!(self, Btn::Prev) }
     }
 
-    'esp_running: loop {
+    loop {
         // Apply background battery reading if a new one has arrived.
         if let Some(info) = BATTERY_RESULT.try_take() {
             hw.update_battery(info.voltage_mv, info.percent, info.is_charging);
