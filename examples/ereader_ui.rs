@@ -21,16 +21,16 @@ use ereader::font::AppFonts;
 use ereader::hardware::SimHardware;
 
 #[cfg(feature = "simulator")]
-use std::time::Instant;
-#[cfg(feature = "simulator")]
 use embedded_graphics_simulator::{SimulatorDisplay, Window};
+#[cfg(feature = "simulator")]
+use std::time::Instant;
 
 #[cfg(feature = "esp")]
 use ereader::hardware::{
     flash_write_task, load_cold_boot_position, load_last_filename, load_settings,
     save_before_sleep, EspHardware,
 };
-use ereader::hardware::{BacklightLevel, FontSize, HardwareAccess,  Orientation};
+use ereader::hardware::{BacklightLevel, FontSize, HardwareAccess, Orientation};
 use ereader::reader::BookSession;
 use iris_ui::button::{make_button, make_full_button};
 use iris_ui::device::EmbeddedDrawingContext;
@@ -59,7 +59,6 @@ const BATTERY_DIALOG_ID: ViewId = ViewId::new("battery_dialog");
 const BATTERY_CLOSE_ID: ViewId = ViewId::new("battery_close");
 const ERROR_DIALOG_ID: ViewId = ViewId::new("error_dialog");
 const LOADING_DIALOG_ID: ViewId = ViewId::new("loading_dialog");
-const LOADING_PROGRESS_BAR_ID: ViewId = ViewId::new("loading_progress_bar");
 const SLEEP_DIALOG_ID: ViewId = ViewId::new("sleep_dialog");
 const ORIENTATION_ID: ViewId = ViewId::new("orientation");
 const BACKLIGHT_ID: ViewId = ViewId::new("backlight");
@@ -112,48 +111,14 @@ fn show_error_dialog(scene: &mut Scene<Rgb565>, filename: &str) {
     scene.mark_layout_dirty();
 }
 
-struct ProgressBarState {
-    progress: u8, // 0–100
-}
-
-fn draw_progress_bar(e: &mut DrawEvent<Rgb565>) {
-    // e.view.bounds is the view's own bounds in parent-local coordinates,
-    // consistent with how draw_book_content uses it. e.bounds is the scene bounds.
-    let bounds = e.view.bounds;
-    let pct = e
-        .view
-        .get_state::<ProgressBarState>()
-        .map(|s| s.progress)
-        .unwrap_or(0);
-    e.ctx.fill_rect(&bounds, &Rgb565::WHITE);
-    if pct > 0 {
-        let fill_w = (bounds.size.w as u32 * pct as u32 / 100) as i32;
-        let fill = Bounds::new(bounds.position.x, bounds.position.y, fill_w, bounds.size.h);
-        e.ctx.fill_rect(&fill, &Rgb565::BLACK);
-    }
-    e.ctx.stroke_rect(&bounds, &Rgb565::BLACK);
-}
-
 fn show_loading_dialog(scene: &mut Scene<Rgb565>, filename: &str) {
     if let Some(v) = scene.get_view_mut(&ViewId::new("loading_msg")) {
         v.title = format!("Loading {filename}\u{2026}");
     }
-    set_loading_progress(scene, 0);
+    progress_bar::set_loading_progress(scene, 0);
     scene.show_view(&LOADING_DIALOG_ID);
     // we need to trigger a relayout the first time a dialog is show, or if it's contents may have changed.
     scene.mark_layout_dirty_view(&LOADING_DIALOG_ID);
-}
-
-fn set_loading_progress(scene: &mut Scene<Rgb565>, pct: u8) {
-    if let Some(v) = scene.get_view_mut(&LOADING_PROGRESS_BAR_ID) {
-        if let Some(s) = v.get_state::<ProgressBarState>() {
-            s.progress = pct;
-            info!("set loading progress {}",s.progress);
-        }
-    }
-    // Mark the whole dialog dirty — the progress bar's own bounds have w=0
-    // before layout runs, so marking it alone produces an empty dirty rect.
-    scene.mark_dirty_view(&LOADING_DIALOG_ID);
 }
 
 fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene<Rgb565> {
@@ -438,7 +403,7 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene<Rgb565> {
                 .with_h_flex(Flex::Grow)
                 .with_v_flex(Flex::Fixed)
                 .with_size(0, 20)
-                .with_draw(Some(draw_progress_bar))
+                .with_draw(Some(progress_bar::draw_progress_bar))
                 .with_state(Some(Box::new(ProgressBarState { progress: 0 }))),
             &LOADING_DIALOG_ID,
         );
@@ -1148,10 +1113,13 @@ use embassy_time::{with_timeout, Duration, Instant, Timer as EmbassyTimer};
 use embedded_graphics_core::geometry::Size;
 use ereader::appstate::{book_from_data, cfg_from_scene, AppState};
 use ereader::bookview::{draw_book_content, BookState, CONTENT_ID};
+use ereader::fast_paging::{FAST_SCROLL_LABEL_ID, FAST_SCROLL_PANEL_ID};
 use ereader::h_spacer::make_h_spacer;
 #[cfg(feature = "esp")]
 use ereader::hardware::{load_tz_offset, rtc_store_read};
-use ereader::{truncating_label};
+use ereader::native_screen::NativeScreen;
+use ereader::progress_bar::{ProgressBarState, LOADING_PROGRESS_BAR_ID};
+use ereader::{progress_bar, truncating_label};
 #[cfg(feature = "esp")]
 use esp_hal::{
     gpio::{Input, InputConfig, Pull},
@@ -1176,8 +1144,6 @@ use log::info;
 #[cfg(feature = "esp")]
 use static_cell::StaticCell;
 use Flex::{Fixed, Shrink};
-use ereader::fast_paging::{FAST_SCROLL_LABEL_ID, FAST_SCROLL_PANEL_ID};
-use ereader::native_screen::NativeScreen;
 
 // WiFi credentials — set WIFI_SSID and WIFI_PASS at build time.
 #[cfg(feature = "esp")]
@@ -1668,8 +1634,9 @@ async fn ui_task(
     rtc: Rtc<'static>,
     boot: BootSettings,
 ) {
-    use esp_println::println;
     use ereader::fast_paging::FastPaging;
+    use esp_println::println;
+    use ereader::progress_bar;
 
     let mut display = Display::new(pin_cfg, dma_ch0, lcd_cam, rmt_periph, display_i2c)
         .expect("display init");
@@ -1856,7 +1823,8 @@ async fn ui_task(
         // the updated dialog to the display immediately so the bar is visible
         // before the next blocking SD read or before the result arrives.
         if let Some(pct) = BOOK_LOAD_PROGRESS.try_take() {
-            set_loading_progress(&mut state.scene, pct);
+            progress_bar::set_loading_progress(&mut state.scene, pct);
+            state.scene.mark_dirty_view(&LOADING_DIALOG_ID);
             native_screen.refresh(&mut state);
         }
 
@@ -1869,7 +1837,8 @@ async fn ui_task(
                         show_error_dialog(&mut state.scene, &filename);
                     }
                     Some(bytes) => {
-                        set_loading_progress(&mut state.scene, 90);
+                        progress_bar::set_loading_progress(&mut state.scene, 90);
+                        state.scene.mark_dirty_view(&LOADING_DIALOG_ID);
                         let book = book_from_data(&filename, bytes);
                         state.cfg = cfg_from_scene(
                             &mut state.scene,
