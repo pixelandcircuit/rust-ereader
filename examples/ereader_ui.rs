@@ -678,16 +678,28 @@ pub struct SimNativeScreen {
     pub settings: embedded_graphics_simulator::OutputSettings,
     pub window: Window,
 }
+
 #[cfg(feature = "simulator")]
 impl SimNativeScreen {
 }
 
 #[cfg(feature = "simulator")]
 impl NativeScreen for SimNativeScreen {
-    fn resize(&mut self, size: Size) {
-        self.display = SimulatorDisplay::new(size);
+    fn set_orientation(&mut self, orientation: Orientation, state: &mut AppState, font_size: FontSize) {
+        let (new_w, new_h) = orientation.logical_size();
+        let new_size = Size::new(new_w as u32, new_h as u32);
+        state.scene.resize(Bounds::new(0, 0, new_size.width as i32, new_size.height as i32));
+        state.cfg = cfg_from_scene(
+            &mut state.scene,
+            &state.theme,
+            &state.fonts,
+            font_size,
+        );
+        state.session.reader.relayout(&state.cfg);
+        self.display = SimulatorDisplay::new(new_size);
         self.window = Window::new("ereader_ui", &self.settings);
     }
+
 
     fn deep_clean(&mut self, state: &mut AppState) {
         // no-op in simulator
@@ -828,17 +840,7 @@ fn main() {
                         if let Some(OutputAction::Command(ref cmd)) = input.action {
                             if input.source == ORIENTATION_ID {
                                 hw.set_orientation(Orientation::from_cmd(cmd.as_str()));
-                                let (new_w, new_h) = hw.orientation().logical_size();
-                                let new_size = Size::new(new_w as u32, new_h as u32);
-                                state.scene.resize(Bounds::new(0, 0, new_size.width as i32, new_size.height as i32));
-                                native_screen.resize(new_size);
-                                state.cfg = cfg_from_scene(
-                                    &mut state.scene,
-                                    &state.theme,
-                                    &state.fonts,
-                                    hw.font_size(),
-                                );
-                                state.session.reader.relayout(&state.cfg);
+                                native_screen.set_orientation(hw.orientation(), &mut state, hw.font_size());
                                 state.update_content(&hw);
                             } else if input.source == FONT_SIZE_ID {
                                 hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
@@ -1586,8 +1588,19 @@ impl EspNativeScreen<'_> {
 }
 #[cfg(feature = "esp")]
 impl NativeScreen for EspNativeScreen<'_> {
-    fn resize(&mut self, _size: Size) {
-        todo!()
+
+    fn set_orientation(&mut self, orientation: Orientation, state: &mut AppState, font_size: FontSize) {
+        self.bridge.orientation = orientation;
+        let (new_w, new_h) = orientation.logical_size();
+        state.scene.resize(Bounds::new(0, 0, new_w, new_h));
+        state.cfg = cfg_from_scene(
+            &mut state.scene,
+            &state.theme,
+            &state.fonts,
+            font_size,
+        );
+        state.session.reader.relayout(&state.cfg);
+
     }
 
     fn deep_clean(&mut self, state: &mut AppState) {
@@ -2065,16 +2078,7 @@ async fn ui_task(
                             handle_backlight_action(cmd, &mut hw);
                         } else if input.source == ORIENTATION_ID {
                             hw.set_orientation(Orientation::from_cmd(cmd.as_str()));
-                            native_screen.bridge.orientation = hw.orientation();
-                            let (new_w, new_h) = hw.orientation().logical_size();
-                            state.scene.resize(Bounds::new(0, 0, new_w, new_h));
-                            state.cfg = cfg_from_scene(
-                                &mut state.scene,
-                                &state.theme,
-                                &state.fonts,
-                                hw.font_size(),
-                            );
-                            state.session.reader.relayout(&state.cfg);
+                            native_screen.set_orientation(hw.orientation(), &mut state, hw.font_size());
                             state.update_content(&hw);
                             hw.save_settings();
                         }
