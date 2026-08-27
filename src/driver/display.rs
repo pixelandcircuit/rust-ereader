@@ -7,8 +7,9 @@ use log::*;
 use crate::driver::{ed047tc1, Error, Result};
 
 // Full-quality 15-frame waveforms (GL16 style).
-const CONTRAST_CYCLES_4BPP: &[u16] =
-    &[30, 30, 20, 20, 30, 30, 30, 40, 40, 50, 50, 50, 100, 200, 300];
+const CONTRAST_CYCLES_4BPP: &[u16] = &[
+    30, 30, 20, 20, 30, 30, 30, 40, 40, 50, 50, 50, 100, 200, 300,
+];
 const CONTRAST_CYCLES_4BPP_WHITE: &[u16] =
     &[10, 10, 8, 8, 8, 8, 8, 10, 10, 15, 15, 20, 20, 100, 300];
 
@@ -555,7 +556,11 @@ fn prepare_dma_buffer(line_data: &[u8], conversion_lut: &[u8], out: &mut [u8; BY
 const FULL_FRAME_COUNT: usize = 15;
 
 fn update_lut(conversion_lut: &mut [u8], k: usize, mode: DrawMode) {
-    let k = if mode.reverse_frames() { FULL_FRAME_COUNT - k } else { k };
+    let k = if mode.reverse_frames() {
+        FULL_FRAME_COUNT - k
+    } else {
+        k
+    };
     for l in (k..1 << 16).step_by(16) {
         conversion_lut[l] &= 0xFC;
     }

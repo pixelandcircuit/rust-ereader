@@ -340,7 +340,12 @@ impl HardwareAccess for SimHardware {
     }
 
     fn memory_info(&self) -> MemoryInfo {
-        MemoryInfo { psram_free_bytes: 0, psram_total_bytes: 0, sram_free_bytes: 0, sram_total_bytes: 0 }
+        MemoryInfo {
+            psram_free_bytes: 0,
+            psram_total_bytes: 0,
+            sram_free_bytes: 0,
+            sram_total_bytes: 0,
+        }
     }
 }
 
@@ -447,7 +452,13 @@ pub fn load_settings() -> (usize, usize, usize, i32) {
     let bl = load(KEY_BL, 2) as usize;
     let ori = load(KEY_ORI, 0) as usize;
     let tz = load(KEY_TZ, 0) as i32;
-    log::info!("settings loaded: font={} bl={} ori={} tz={}min", font, bl, ori, tz);
+    log::info!(
+        "settings loaded: font={} bl={} ori={} tz={}min",
+        font,
+        bl,
+        ori,
+        tz
+    );
     (font, bl, ori, tz)
 }
 
@@ -637,15 +648,30 @@ pub fn load_last_filename() -> Option<String> {
 #[cfg(feature = "esp")]
 use core::sync::atomic::{AtomicU32, Ordering};
 #[cfg(feature = "esp")]
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, signal::Signal};
+use embassy_sync::{
+    blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, signal::Signal,
+};
 
 #[cfg(feature = "esp")]
 pub enum FlashWriteRequest {
-    Bookmark { filename: String, chapter_idx: usize, anchor_byte: usize },
+    Bookmark {
+        filename: String,
+        chapter_idx: usize,
+        anchor_byte: usize,
+    },
     LastFilename(String),
-    Settings { font_idx: usize, bl_idx: usize, ori_idx: usize, tz_offset_minutes: i32 },
+    Settings {
+        font_idx: usize,
+        bl_idx: usize,
+        ori_idx: usize,
+        tz_offset_minutes: i32,
+    },
     /// Last-filename + bookmark, saved together right before deep sleep.
-    PrepareSleep { filename: String, chapter_idx: usize, anchor_byte: usize },
+    PrepareSleep {
+        filename: String,
+        chapter_idx: usize,
+        anchor_byte: usize,
+    },
 }
 
 #[cfg(feature = "esp")]
@@ -668,7 +694,10 @@ static FLASH_WRITE_DONE: Signal<CriticalSectionRawMutex, u32> = Signal::new();
 #[cfg(feature = "esp")]
 fn enqueue_flash_write(req: FlashWriteRequest) -> u32 {
     let id = FLASH_WRITE_SEQ.fetch_add(1, Ordering::Relaxed) + 1;
-    if FLASH_WRITE_CHANNEL.try_send(FlashWriteMsg { id, req }).is_err() {
+    if FLASH_WRITE_CHANNEL
+        .try_send(FlashWriteMsg { id, req })
+        .is_err()
+    {
         log::warn!("flash write queue full; dropping request {}", id);
     }
     id
@@ -726,16 +755,29 @@ pub async fn flash_write_task() {
     loop {
         let msg = FLASH_WRITE_CHANNEL.receive().await;
         match msg.req {
-            FlashWriteRequest::Bookmark { filename, chapter_idx, anchor_byte } => {
+            FlashWriteRequest::Bookmark {
+                filename,
+                chapter_idx,
+                anchor_byte,
+            } => {
                 save_bookmark_impl(&filename, chapter_idx, anchor_byte);
             }
             FlashWriteRequest::LastFilename(filename) => {
                 save_last_filename_impl(&filename);
             }
-            FlashWriteRequest::Settings { font_idx, bl_idx, ori_idx, tz_offset_minutes } => {
+            FlashWriteRequest::Settings {
+                font_idx,
+                bl_idx,
+                ori_idx,
+                tz_offset_minutes,
+            } => {
                 save_settings_impl(font_idx, bl_idx, ori_idx, tz_offset_minutes);
             }
-            FlashWriteRequest::PrepareSleep { filename, chapter_idx, anchor_byte } => {
+            FlashWriteRequest::PrepareSleep {
+                filename,
+                chapter_idx,
+                anchor_byte,
+            } => {
                 save_last_filename_impl(&filename);
                 save_bookmark_impl(&filename, chapter_idx, anchor_byte);
             }
@@ -829,13 +871,21 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> EspHardware<'d, C> {
             rtc,
             btn_prev,
             btn_next,
-            cached_battery: BatteryInfo { percent: 0, voltage_mv: 0, is_charging: false },
+            cached_battery: BatteryInfo {
+                percent: 0,
+                voltage_mv: 0,
+                is_charging: false,
+            },
         }
     }
 
     /// Update cached battery state from parsed hardware readings.
     pub fn update_battery(&mut self, voltage_mv: u32, percent: u8, is_charging: bool) {
-        self.cached_battery = BatteryInfo { percent: percent.min(100), voltage_mv, is_charging };
+        self.cached_battery = BatteryInfo {
+            percent: percent.min(100),
+            voltage_mv,
+            is_charging,
+        };
     }
 }
 
@@ -1169,7 +1219,11 @@ pub fn sd_read_file(name: &str) -> Option<alloc::vec::Vec<u8>> {
     {
         let stats = esp_alloc::HEAP.stats();
         let total_free: usize = stats.region_stats.iter().flatten().map(|r| r.free).sum();
-        log::info!("sd_read_file: file size={} bytes, total heap free={} bytes", file_len, total_free);
+        log::info!(
+            "sd_read_file: file size={} bytes, total heap free={} bytes",
+            file_len,
+            total_free
+        );
     }
     let mut buf = alloc::vec![0u8; file_len];
     f.read(&mut buf).ok()?;

@@ -74,10 +74,10 @@ const TZ_LABEL_ID: ViewId = ViewId::new("tz_label");
 
 const UI_FONT_SIZE: f32 = 20.0;
 
-static FONT_BYTES: &[u8]             = include_bytes!("../fonts/AtkinsonHyperlegible-Regular.ttf");
-static FONT_BOLD_BYTES: &[u8]        = include_bytes!("../fonts/AtkinsonHyperlegible-Bold.ttf");
-static BODY_FONT_BYTES: &[u8]        = include_bytes!("../fonts/CrimsonText-Regular.ttf");
-static BODY_FONT_BOLD_BYTES: &[u8]   = include_bytes!("../fonts/CrimsonText-Bold.ttf");
+static FONT_BYTES: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Regular.ttf");
+static FONT_BOLD_BYTES: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Bold.ttf");
+static BODY_FONT_BYTES: &[u8] = include_bytes!("../fonts/CrimsonText-Regular.ttf");
+static BODY_FONT_BOLD_BYTES: &[u8] = include_bytes!("../fonts/CrimsonText-Bold.ttf");
 static BODY_FONT_ITALIC_BYTES: &[u8] = include_bytes!("../fonts/CrimsonText-Italic.ttf");
 
 fn handle_click(event: &mut GuiEvent<Rgb565>) {
@@ -271,7 +271,9 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene<Rgb565> {
             })));
         scene.add_view_to_parent(make_button(&TZ_MINUS_ID, "−"), &tz_row.name);
         scene.add_view_to_parent(
-            make_label(&TZ_LABEL_ID, "UTC").with_h_flex(Grow).with_h_align(Center),
+            make_label(&TZ_LABEL_ID, "UTC")
+                .with_h_flex(Grow)
+                .with_h_align(Center),
             &tz_row.name,
         );
         scene.add_view_to_parent(make_button(&TZ_PLUS_ID, "+"), &tz_row.name);
@@ -341,7 +343,7 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene<Rgb565> {
             &lib_btn_row_id,
         );
         scene.add_view_to_parent(
-            make_full_button(&LIBRARY_READ_BUTTON_ID, "Read","read",true),
+            make_full_button(&LIBRARY_READ_BUTTON_ID, "Read", "read", true),
             &lib_btn_row_id,
         );
         let lib_btn_row = make_panel(&lib_btn_row_id)
@@ -560,7 +562,13 @@ fn load_fonts() -> AppFonts {
         fontdue::Font::from_bytes(BODY_FONT_ITALIC_BYTES, fontdue::FontSettings::default())
             .expect("CrimsonText-Italic parse failed"),
     ));
-    AppFonts { ui, ui_bold, body, body_bold, body_italic }
+    AppFonts {
+        ui,
+        ui_bold,
+        body,
+        body_bold,
+        body_italic,
+    }
 }
 
 fn make_theme(fonts: &AppFonts) -> Theme<Rgb565> {
@@ -628,7 +636,7 @@ fn load_book(state: &mut AppState, hw: &mut dyn HardwareAccess, filename: &Strin
     }
 }
 
-fn update_label(state: &mut AppState, label: &ViewId, value:String) {
+fn update_label(state: &mut AppState, label: &ViewId, value: String) {
     if let Some(v) = state.scene.get_view_mut(label) {
         v.title = value;
         state.scene.mark_dirty_view(label);
@@ -645,26 +653,29 @@ pub struct SimNativeScreen {
 }
 
 #[cfg(feature = "simulator")]
-impl SimNativeScreen {
-}
+impl SimNativeScreen {}
 
 #[cfg(feature = "simulator")]
 impl NativeScreen for SimNativeScreen {
-    fn set_orientation(&mut self, orientation: Orientation, state: &mut AppState, font_size: FontSize) {
+    fn set_orientation(
+        &mut self,
+        orientation: Orientation,
+        state: &mut AppState,
+        font_size: FontSize,
+    ) {
         let (new_w, new_h) = orientation.logical_size();
         let new_size = Size::new(new_w as u32, new_h as u32);
-        state.scene.resize(Bounds::new(0, 0, new_size.width as i32, new_size.height as i32));
-        state.cfg = cfg_from_scene(
-            &mut state.scene,
-            &state.theme,
-            &state.fonts,
-            font_size,
-        );
+        state.scene.resize(Bounds::new(
+            0,
+            0,
+            new_size.width as i32,
+            new_size.height as i32,
+        ));
+        state.cfg = cfg_from_scene(&mut state.scene, &state.theme, &state.fonts, font_size);
         state.session.reader.relayout(&state.cfg);
         self.display = SimulatorDisplay::new(new_size);
         self.window = Window::new("ereader_ui", &self.settings);
     }
-
 
     fn deep_clean(&mut self, state: &mut AppState) {
         // no-op in simulator
@@ -674,7 +685,6 @@ impl NativeScreen for SimNativeScreen {
     fn deep_sleep(&mut self, state: &mut AppState) {
         self.refresh(state);
     }
-
 
     fn refresh(&mut self, state: &mut AppState) {
         // Flush the loading screen to the window before blocking.
@@ -689,7 +699,6 @@ impl NativeScreen for SimNativeScreen {
         }
     }
 }
-
 
 #[cfg(feature = "simulator")]
 fn main() {
@@ -805,7 +814,11 @@ fn main() {
                         if let Some(OutputAction::Command(ref cmd)) = input.action {
                             if input.source == ORIENTATION_ID {
                                 hw.set_orientation(Orientation::from_cmd(cmd.as_str()));
-                                native_screen.set_orientation(hw.orientation(), &mut state, hw.font_size());
+                                native_screen.set_orientation(
+                                    hw.orientation(),
+                                    &mut state,
+                                    hw.font_size(),
+                                );
                                 state.update_content(&hw);
                             } else if input.source == FONT_SIZE_ID {
                                 hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
@@ -892,7 +905,11 @@ fn fmt_bytes(n: usize) -> String {
 
 fn update_battery_labels(scene: &mut Scene<Rgb565>, hw: &dyn HardwareAccess) {
     let info = hw.battery_info();
-    let status = if info.is_charging { "Charging" } else { "Not charging" };
+    let status = if info.is_charging {
+        "Charging"
+    } else {
+        "Not charging"
+    };
     if let Some(v) = scene.get_view_mut(&BATTERY_BUTTON_ID) {
         v.title = format!("{}%", info.percent);
     }
@@ -907,10 +924,18 @@ fn update_battery_labels(scene: &mut Scene<Rgb565>, hw: &dyn HardwareAccess) {
     }
     let mem = hw.memory_info();
     if let Some(v) = scene.get_view_mut(&ViewId::new("mem_psram")) {
-        v.title = format!("PSRAM: {} / {} free", fmt_bytes(mem.psram_free_bytes), fmt_bytes(mem.psram_total_bytes));
+        v.title = format!(
+            "PSRAM: {} / {} free",
+            fmt_bytes(mem.psram_free_bytes),
+            fmt_bytes(mem.psram_total_bytes)
+        );
     }
     if let Some(v) = scene.get_view_mut(&ViewId::new("mem_sram")) {
-        v.title = format!("SRAM: {} / {} free", fmt_bytes(mem.sram_free_bytes), fmt_bytes(mem.sram_total_bytes));
+        v.title = format!(
+            "SRAM: {} / {} free",
+            fmt_bytes(mem.sram_free_bytes),
+            fmt_bytes(mem.sram_total_bytes)
+        );
     }
     scene.mark_layout_dirty_view(&BATTERY_DIALOG_ID);
 }
@@ -923,7 +948,7 @@ fn handle_click_action(hw: &mut dyn HardwareAccess, input: &InputResult, state: 
     if input.source == SYNC_TIME_BUTTON_ID {
         let t = hw.current_time_secs();
         let time_str = format_time_local(t, hw.utc_offset_minutes());
-        update_label(state,&TIME_LABEL_ID, time_str);
+        update_label(state, &TIME_LABEL_ID, time_str);
     }
     if input.source == PREV_PAGE_ID {
         state.nav_prev_page(hw);
@@ -983,7 +1008,6 @@ fn handle_backlight_action(cmd: &String, hw: &mut dyn HardwareAccess) {
     hw.save_settings();
 }
 
-
 // ── ESP path ──────────────────────────────────────────────────────────────────
 #[cfg(feature = "esp")]
 use esp_backtrace as _;
@@ -1000,7 +1024,7 @@ use ereader::driver::Gt911;
 
 // Light sleep after 60 s of inactivity; deep sleep after 60 min.
 #[cfg(feature = "esp")]
-const LIGHT_SLEEP_AFTER_SECS: u64 = 60*5;
+const LIGHT_SLEEP_AFTER_SECS: u64 = 60 * 5;
 #[cfg(feature = "esp")]
 const DEEP_SLEEP_AFTER_SECS: u64 = 3600;
 
@@ -1065,7 +1089,9 @@ impl<'a, I: embedded_hal::i2c::I2c> Rgb565ToGray4<'a, I> {
 }
 
 #[cfg(feature = "esp")]
-impl<'a, I: embedded_hal::i2c::I2c> embedded_graphics::draw_target::DrawTarget for Rgb565ToGray4<'a, I> {
+impl<'a, I: embedded_hal::i2c::I2c> embedded_graphics::draw_target::DrawTarget
+    for Rgb565ToGray4<'a, I>
+{
     type Color = Rgb565;
     type Error = ();
 
@@ -1092,7 +1118,9 @@ impl<'a, I: embedded_hal::i2c::I2c> embedded_graphics::draw_target::DrawTarget f
 }
 
 #[cfg(feature = "esp")]
-impl<'a, I: embedded_hal::i2c::I2c> embedded_graphics::geometry::OriginDimensions for Rgb565ToGray4<'a, I> {
+impl<'a, I: embedded_hal::i2c::I2c> embedded_graphics::geometry::OriginDimensions
+    for Rgb565ToGray4<'a, I>
+{
     fn size(&self) -> embedded_graphics::geometry::Size {
         let (w, h) = self.orientation.logical_size();
         embedded_graphics::geometry::Size::new(w as u32, h as u32)
@@ -1200,10 +1228,8 @@ static BOOK_LOAD_REQUEST: Signal<CriticalSectionRawMutex, alloc::string::String>
 #[cfg(feature = "esp")]
 static BOOK_LOAD_PROGRESS: Signal<CriticalSectionRawMutex, u8> = Signal::new();
 #[cfg(feature = "esp")]
-static BOOK_LOAD_RESULT: Signal<
-    CriticalSectionRawMutex,
-    Option<alloc::vec::Vec<u8>>,
-> = Signal::new();
+static BOOK_LOAD_RESULT: Signal<CriticalSectionRawMutex, Option<alloc::vec::Vec<u8>>> =
+    Signal::new();
 
 #[cfg(feature = "esp")]
 macro_rules! mk_static {
@@ -1232,7 +1258,7 @@ async fn time_task() {
 #[embassy_executor::task]
 async fn battery_task(mut i2c: SharedI2c) {
     loop {
-        EmbassyTimer::after(Duration::from_secs(60*5)).await;
+        EmbassyTimer::after(Duration::from_secs(60 * 5)).await;
         let voltage_mv = bq27220_read_u16(&mut i2c, 0x08) as u32;
         let current_ma = bq27220_read_i16(&mut i2c, 0x14);
         let percent = bq27220_read_u16(&mut i2c, 0x1E).min(100) as u8;
@@ -1355,7 +1381,6 @@ struct BootSettings {
 #[cfg(feature = "esp")]
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
-
     esp_println::logger::init_logger(log::LevelFilter::Info);
 
     let config = esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::_240MHz);
@@ -1375,7 +1400,10 @@ async fn main(spawner: Spawner) -> ! {
         use esp_alloc::MemoryCapability;
         let psram_free = esp_alloc::HEAP.free_caps(MemoryCapability::External.into());
         let sram_free = esp_alloc::HEAP.free_caps(MemoryCapability::Internal.into());
-        info!("heap init: psram_free={} sram_free={}", psram_free, sram_free);
+        info!(
+            "heap init: psram_free={} sram_free={}",
+            psram_free, sram_free
+        );
     }
 
     // Must run before any EmbassyTimer use and before esp_radio::wifi::new.
@@ -1386,16 +1414,15 @@ async fn main(spawner: Spawner) -> ! {
     let rtc = Rtc::new(peripherals.LPWR);
 
     // Build a shared I2C bus so the battery gauge can be read from a background task.
-    let i2c_raw = esp_hal::i2c::master::I2c::new(
-        peripherals.I2C0,
-        esp_hal::i2c::master::Config::default(),
-    )
-    .expect("I2C init")
-    .with_sda(peripherals.GPIO39)
-    .with_scl(peripherals.GPIO40);
+    let i2c_raw =
+        esp_hal::i2c::master::I2c::new(peripherals.I2C0, esp_hal::i2c::master::Config::default())
+            .expect("I2C init")
+            .with_sda(peripherals.GPIO39)
+            .with_scl(peripherals.GPIO40);
     static I2C_BUS: StaticCell<I2cBus> = StaticCell::new();
-    let i2c_bus: &'static I2cBus =
-        I2C_BUS.init(critical_section::Mutex::new(core::cell::RefCell::new(i2c_raw)));
+    let i2c_bus: &'static I2cBus = I2C_BUS.init(critical_section::Mutex::new(
+        core::cell::RefCell::new(i2c_raw),
+    ));
     let display_i2c = embedded_hal_bus::i2c::CriticalSectionDevice::new(i2c_bus);
     let battery_i2c = embedded_hal_bus::i2c::CriticalSectionDevice::new(i2c_bus);
     spawner.spawn(battery_task(battery_i2c).expect("battery_task spawn"));
@@ -1417,11 +1444,7 @@ async fn main(spawner: Spawner) -> ! {
         let chapter = rtc_store_read(6) as usize;
         info!(
             "woke from deep sleep: ch={} anchor={} font={} bl={} ori={}",
-            chapter,
-            anchor,
-            font,
-            bl,
-            ori
+            chapter, anchor, font, bl, ori
         );
         (font, bl, ori, chapter, anchor)
     } else {
@@ -1549,24 +1572,20 @@ pub struct EspNativeScreen<'a> {
     pub bridge: Rgb565ToGray4<'a, SharedI2c>,
 }
 #[cfg(feature = "esp")]
-impl EspNativeScreen<'_> {
-
-}
+impl EspNativeScreen<'_> {}
 #[cfg(feature = "esp")]
 impl NativeScreen for EspNativeScreen<'_> {
-
-    fn set_orientation(&mut self, orientation: Orientation, state: &mut AppState, font_size: FontSize) {
+    fn set_orientation(
+        &mut self,
+        orientation: Orientation,
+        state: &mut AppState,
+        font_size: FontSize,
+    ) {
         self.bridge.orientation = orientation;
         let (new_w, new_h) = orientation.logical_size();
         state.scene.resize(Bounds::new(0, 0, new_w, new_h));
-        state.cfg = cfg_from_scene(
-            &mut state.scene,
-            &state.theme,
-            &state.fonts,
-            font_size,
-        );
+        state.cfg = cfg_from_scene(&mut state.scene, &state.theme, &state.fonts, font_size);
         state.session.reader.relayout(&state.cfg);
-
     }
 
     fn deep_clean(&mut self, state: &mut AppState) {
@@ -1618,7 +1637,6 @@ impl NativeScreen for EspNativeScreen<'_> {
     }
 }
 
-
 #[cfg(feature = "esp")]
 #[embassy_executor::task]
 async fn ui_task(
@@ -1635,11 +1653,11 @@ async fn ui_task(
     boot: BootSettings,
 ) {
     use ereader::fast_paging::FastPaging;
-    use esp_println::println;
     use ereader::progress_bar;
+    use esp_println::println;
 
-    let mut display = Display::new(pin_cfg, dma_ch0, lcd_cam, rmt_periph, display_i2c)
-        .expect("display init");
+    let mut display =
+        Display::new(pin_cfg, dma_ch0, lcd_cam, rmt_periph, display_i2c).expect("display init");
 
     EmbassyTimer::after(Duration::from_millis(100)).await;
     display.power_on();
@@ -1701,7 +1719,7 @@ async fn ui_task(
         tz_offset_minutes,
     );
     let mut native_screen = EspNativeScreen {
-        bridge: Rgb565ToGray4::new(display, hw.orientation())
+        bridge: Rgb565ToGray4::new(display, hw.orientation()),
     };
     let handlers = vec![handle_click as Callback<Rgb565>];
     let mut was_touching = false;
@@ -1730,17 +1748,13 @@ async fn ui_task(
     }
     sync_settings_ui(&mut state.scene, font_idx, bl_idx, ori_idx);
     // Update the TZ label to show the persisted offset.
-    if let Some(v) = state.scene.get_view_mut(&TZ_LABEL_ID) {
-        v.title = format_tz_label(tz_offset_minutes);
-    }
+    update_label(&mut state, &TZ_LABEL_ID, format_tz_label(tz_offset_minutes));
 
     // On any boot (sleep wakeup or hard reset), reopen the last-read SD card book.
     // The filename is saved to NVS when a book is opened and again before deep sleep.
     if let Some(last_file) = load_last_filename() {
         show_loading_dialog(&mut state.scene, &last_file);
-        {
-            native_screen.refresh(&mut state);
-        }
+        native_screen.refresh(&mut state);
         if let Some(data) = hw.load_book_file(&last_file) {
             state.book = book_from_data(&last_file, data);
             if let Some((ch, anch)) = hw.load_bookmark(&last_file) {
@@ -1781,12 +1795,22 @@ async fn ui_task(
     let mut fast = FastPaging::default();
 
     #[derive(Clone, Copy)]
-    enum Btn { Prev, Next, Face }
+    enum Btn {
+        Prev,
+        Next,
+        Face,
+    }
     impl Btn {
         fn name(self) -> &'static str {
-            match self { Btn::Prev => "BOOT", Btn::Next => "SIDE", Btn::Face => "FACE" }
+            match self {
+                Btn::Prev => "BOOT",
+                Btn::Next => "SIDE",
+                Btn::Face => "FACE",
+            }
         }
-        fn is_forward(self) -> bool { !matches!(self, Btn::Prev) }
+        fn is_forward(self) -> bool {
+            !matches!(self, Btn::Prev)
+        }
     }
 
     loop {
@@ -1801,7 +1825,7 @@ async fn ui_task(
             let unix_secs = hw.current_time_secs();
             if unix_secs > 0 {
                 let time_str = format_time_local(unix_secs, hw.utc_offset_minutes());
-                update_label(&mut state,&TIME_LABEL_ID, time_str);
+                update_label(&mut state, &TIME_LABEL_ID, time_str);
             }
         }
 
@@ -1812,7 +1836,7 @@ async fn ui_task(
                     hw.set_current_time_secs(unix_secs);
                     let time_str = format_time_local(unix_secs, hw.utc_offset_minutes());
                     info!("NTP synced: {}", time_str);
-                    update_label(&mut state,&TIME_LABEL_ID, time_str);
+                    update_label(&mut state, &TIME_LABEL_ID, time_str);
                     info!("marked ntp time as dirty");
                 }
                 None => log::warn!("NTP: sync failed (no response)"),
@@ -1897,9 +1921,17 @@ async fn ui_task(
             None
         };
         if let Some(btn) = btn_pressed {
-            info!("{} button pressed{}", btn.name(), if just_woke { " (wake)" } else { "" });
+            info!(
+                "{} button pressed{}",
+                btn.name(),
+                if just_woke { " (wake)" } else { "" }
+            );
             if !just_woke {
-                if btn.is_forward() { fast.start_forward(); } else { fast.start_backward(); }
+                if btn.is_forward() {
+                    fast.start_forward();
+                } else {
+                    fast.start_backward();
+                }
             }
             loop {
                 let still_held = match btn {
@@ -1926,13 +1958,17 @@ async fn ui_task(
                     let panel_rect = state.scene.dirty_rect.clone();
 
                     info!("flushing for fast paging");
-                    native_screen.bridge.flush_region(&panel_rect, DrawMode::FastClear);
+                    native_screen
+                        .bridge
+                        .flush_region(&panel_rect, DrawMode::FastClear);
                     {
                         let mut ctx = EmbeddedDrawingContext::new(&mut native_screen.bridge);
                         ctx.clip = panel_rect;
                         draw_scene(&mut state.scene, &mut ctx, &state.theme);
                     }
-                    native_screen.bridge.flush_region(&panel_rect, DrawMode::Fast);
+                    native_screen
+                        .bridge
+                        .flush_region(&panel_rect, DrawMode::Fast);
                 }
 
                 EmbassyTimer::after(Duration::from_millis(10)).await;
@@ -2015,7 +2051,9 @@ async fn ui_task(
             if needs_full_refresh || force_full {
                 native_screen.bridge.flush_with_mode(draw_mode);
             } else {
-                native_screen.bridge.flush_region(&dirty_rect, DrawMode::BlackOnWhite);
+                native_screen
+                    .bridge
+                    .flush_region(&dirty_rect, DrawMode::BlackOnWhite);
             }
         }
 
@@ -2047,7 +2085,11 @@ async fn ui_task(
                             handle_backlight_action(cmd, &mut hw);
                         } else if input.source == ORIENTATION_ID {
                             hw.set_orientation(Orientation::from_cmd(cmd.as_str()));
-                            native_screen.set_orientation(hw.orientation(), &mut state, hw.font_size());
+                            native_screen.set_orientation(
+                                hw.orientation(),
+                                &mut state,
+                                hw.font_size(),
+                            );
                             state.update_content(&hw);
                             hw.save_settings();
                         }
@@ -2055,9 +2097,14 @@ async fn ui_task(
                     // Refresh battery from BQ27220 fuel gauge (I2C 0x55).
                     // Voltage at reg 0x08, AverageCurrent at 0x14, StateOfCharge at 0x1E.
                     if input.source == BATTERY_BUTTON_ID {
-                        let voltage_mv = native_screen.bridge.display.i2c_read_u16(0x55, 0x08) as u32;
+                        let voltage_mv =
+                            native_screen.bridge.display.i2c_read_u16(0x55, 0x08) as u32;
                         let current_ma = native_screen.bridge.display.i2c_read_i16(0x55, 0x14);
-                        let percent = native_screen.bridge.display.i2c_read_u16(0x55, 0x1E).min(100) as u8;
+                        let percent = native_screen
+                            .bridge
+                            .display
+                            .i2c_read_u16(0x55, 0x1E)
+                            .min(100) as u8;
                         let is_charging = current_ma > 0;
                         hw.update_battery(voltage_mv, percent, is_charging);
                     }
@@ -2106,12 +2153,15 @@ async fn ui_task(
                                 let dirty = state.scene.dirty_rect.clone();
                                 native_screen.bridge.clearing_flush_region(&dirty);
                                 {
-                                    let mut ctx = EmbeddedDrawingContext::new(&mut native_screen.bridge);
+                                    let mut ctx =
+                                        EmbeddedDrawingContext::new(&mut native_screen.bridge);
                                     ctx.clip = dirty.clone();
                                     layout_scene(&mut state.scene, &state.theme);
                                     draw_scene(&mut state.scene, &mut ctx, &state.theme);
                                 }
-                                native_screen.bridge.flush_region(&dirty, DrawMode::BlackOnWhite);
+                                native_screen
+                                    .bridge
+                                    .flush_region(&dirty, DrawMode::BlackOnWhite);
                                 state.partial_refresh_count += 1;
                             }
                             // Drop the old book now so its heap is free before the
@@ -2184,13 +2234,26 @@ async fn ui_task(
                     for col in 0..cols {
                         let x = col * STRIDE;
                         let y = row * STRIDE;
-                        native_screen.bridge.display.fill_region(
-                            Rectangle { x, y, width: CELL, height: CELL },
-                            0x00, // black square
-                        ).unwrap();
+                        native_screen
+                            .bridge
+                            .display
+                            .fill_region(
+                                Rectangle {
+                                    x,
+                                    y,
+                                    width: CELL,
+                                    height: CELL,
+                                },
+                                0x00, // black square
+                            )
+                            .unwrap();
                     }
                 }
-                native_screen.bridge.display.flush(DrawMode::BlackOnWhite).unwrap();
+                native_screen
+                    .bridge
+                    .display
+                    .flush(DrawMode::BlackOnWhite)
+                    .unwrap();
             }
             // Backlight is turned off inside enter_light_sleep and restored on return.
             hw.enter_light_sleep();

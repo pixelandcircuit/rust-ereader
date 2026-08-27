@@ -1,11 +1,11 @@
-#[cfg(feature = "esp")]
-use alloc::format;
 use crate::appstate::AppState;
 use crate::hardware::HardwareAccess;
+#[cfg(feature = "esp")]
+use alloc::format;
 // use alloc::format;
 
 #[cfg(feature = "esp")]
-use embassy_time::{ Instant};
+use embassy_time::Instant;
 
 #[cfg(feature = "simulator")]
 use std::time::Instant;
@@ -14,7 +14,6 @@ use embedded_graphics_core::pixelcolor::Rgb565;
 use iris_ui::scene::Scene;
 use iris_ui::view::ViewId;
 use log::info;
-
 
 pub const FAST_SCROLL_PANEL_ID: ViewId = ViewId::new("fast_scroll_panel");
 pub const FAST_SCROLL_LABEL_ID: ViewId = ViewId::new("fast_scroll_label");

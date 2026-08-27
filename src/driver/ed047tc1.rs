@@ -318,7 +318,6 @@ impl<'a, I: I2cTrait> ED047TC1<'a, I> {
     fn pca_read_port1(&mut self) -> u8 {
         pca_read(&mut self.i2c, PCA_REG_INPUT1)
     }
-
 }
 
 // ── Free-standing I2C helpers ─────────────────────────────────────────────────

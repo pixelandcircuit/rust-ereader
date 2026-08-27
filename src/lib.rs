@@ -12,12 +12,12 @@ pub mod bookview;
 #[cfg(feature = "esp")]
 pub mod driver;
 pub mod epub;
+pub mod fast_paging;
 pub mod font;
 pub mod h_spacer;
 pub mod hardware;
 pub mod layout;
-pub mod reader;
-pub mod truncating_label;
-pub mod fast_paging;
 pub mod native_screen;
 pub mod progress_bar;
+pub mod reader;
+pub mod truncating_label;

@@ -34,7 +34,7 @@ pub fn set_loading_progress(scene: &mut Scene<Rgb565>, pct: u8) {
     if let Some(v) = scene.get_view_mut(&LOADING_PROGRESS_BAR_ID) {
         if let Some(s) = v.get_state::<ProgressBarState>() {
             s.progress = pct;
-            info!("set loading progress {}",s.progress);
+            info!("set loading progress {}", s.progress);
         }
     }
 }

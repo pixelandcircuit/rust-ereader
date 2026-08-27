@@ -2,7 +2,7 @@
 extern crate alloc;
 
 #[cfg(feature = "esp")]
-use alloc::{string::String};
+use alloc::string::String;
 
 use embedded_graphics_core::pixelcolor::Rgb565;
 use iris_ui::view::Flex::{Grow, Shrink};
