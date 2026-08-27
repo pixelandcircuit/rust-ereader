@@ -12,12 +12,12 @@ use crate::hardware::{FontSize, HardwareAccess};
 use crate::layout::LayoutConfig;
 use crate::reader::BookSession;
 #[cfg(feature = "esp")]
-use embassy_time::{with_timeout, Duration, Instant, Timer as EmbassyTimer};
+use embassy_time::{Instant};
+#[cfg(feature = "simulator")]
+use std::time::Instant;
 use embedded_graphics_core::pixelcolor::Rgb565;
 use iris_ui::scene::{layout_scene, Scene};
 use iris_ui::Theme;
-#[cfg(feature = "simulator")]
-use std::time::Instant;
 
 pub struct AppState {
     pub partial_refresh_count: u32,
