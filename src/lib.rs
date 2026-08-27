@@ -24,3 +24,4 @@ pub mod inspect_sim;
 pub mod layout;
 pub mod reader;
 pub mod truncating_label;
+pub mod fast_paging;

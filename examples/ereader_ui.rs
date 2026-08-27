@@ -59,8 +59,6 @@ const ERROR_DIALOG_ID: ViewId = ViewId::new("error_dialog");
 const LOADING_DIALOG_ID: ViewId = ViewId::new("loading_dialog");
 const LOADING_PROGRESS_BAR_ID: ViewId = ViewId::new("loading_progress_bar");
 const SLEEP_DIALOG_ID: ViewId = ViewId::new("sleep_dialog");
-const FAST_SCROLL_PANEL_ID: ViewId = ViewId::new("fast_scroll_panel");
-const FAST_SCROLL_LABEL_ID: ViewId = ViewId::new("fast_scroll_label");
 const ORIENTATION_ID: ViewId = ViewId::new("orientation");
 const BACKLIGHT_ID: ViewId = ViewId::new("backlight");
 const FONT_SIZE_ID: ViewId = ViewId::new("font_size");
@@ -146,11 +144,6 @@ fn show_loading_dialog(scene: &mut Scene<Rgb565>, filename: &str) {
     // we need to trigger a relayout the first time a dialog is show, or if it's contents may have changed.
     scene.mark_layout_dirty_view(&LOADING_DIALOG_ID);
     info!("show loading dialog");
-}
-
-fn hide_loading_dialog(scene: &mut Scene<Rgb565>) {
-    scene.hide_view(&LOADING_DIALOG_ID);
-    info!("hide loading dialog");
 }
 
 fn set_loading_progress(scene: &mut Scene<Rgb565>, pct: u8) {
@@ -652,7 +645,7 @@ fn load_book(state: &mut AppState, hw: &mut dyn HardwareAccess, filename: &Strin
             }
             None => BookSession::new(new_book.as_ref(), &state.cfg),
         };
-        hide_loading_dialog(&mut state.scene);
+        state.scene.hide_view(&LOADING_DIALOG_ID);
         if let Ok(s) = new_session {
             state.current_filename = filename.clone();
             hw.save_last_filename(&filename);
@@ -666,7 +659,7 @@ fn load_book(state: &mut AppState, hw: &mut dyn HardwareAccess, filename: &Strin
             show_error_dialog(&mut state.scene, &filename);
         }
     } else {
-        hide_loading_dialog(&mut state.scene);
+        state.scene.hide_view(&LOADING_DIALOG_ID);
         show_error_dialog(&mut state.scene, &filename);
     }
 }
@@ -687,6 +680,7 @@ fn main() {
         sdl2::Keycode, OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
     };
     use ereader::appstate::AppState;
+    use ereader::fast_paging::FastPaging;
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
@@ -1277,6 +1271,7 @@ use log::info;
 #[cfg(feature = "esp")]
 use static_cell::StaticCell;
 use Flex::{Fixed, Shrink};
+use ereader::fast_paging::{FAST_SCROLL_LABEL_ID, FAST_SCROLL_PANEL_ID};
 
 // WiFi credentials — set WIFI_SSID and WIFI_PASS at build time.
 #[cfg(feature = "esp")]
@@ -1752,6 +1747,7 @@ async fn ui_task(
     #[cfg(feature = "debug-inspect")] inspect_state: &'static ereader::inspect_esp::SharedInspectState,
 ) {
     use esp_println::println;
+    use ereader::fast_paging::FastPaging;
 
     let mut display = Display::new(pin_cfg, dma_ch0, lcd_cam, rmt_periph, display_i2c)
         .expect("display init");
@@ -1870,7 +1866,7 @@ async fn ui_task(
             }
             state.current_filename = last_file;
         }
-        hide_loading_dialog(&mut state.scene);
+        state.scene.hide_view(&LOADING_DIALOG_ID);
     }
 
     state.session = if saved_chapter > 0 || saved_anchor > 0 {
@@ -2038,7 +2034,7 @@ async fn ui_task(
             if let Some(filename) = pending_load.take() {
                 match data {
                     None => {
-                        hide_loading_dialog(&mut state.scene);
+                        state.scene.hide_view(&LOADING_DIALOG_ID);
                         show_error_dialog(&mut state.scene, &filename);
                     }
                     Some(bytes) => {
@@ -2057,7 +2053,7 @@ async fn ui_task(
                             }
                             None => BookSession::new(book.as_ref(), &state.cfg),
                         };
-                        hide_loading_dialog(&mut state.scene);
+                        state.scene.hide_view(&LOADING_DIALOG_ID);
                         match new_session {
                             Ok(session) => {
                                 hw.save_bookmark(
@@ -2433,128 +2429,6 @@ async fn ui_task(
     }
 }
 
-struct FastPaging {
-    fs_active: bool,
-    fs_target: usize,
-    fs_last_step: Instant,
-    fs_pressed_at: Option<Instant>,
-    forward: bool,
-}
-
-impl FastPaging {
-    pub(crate) fn start_backward(&mut self) {
-        self.forward = false;
-        self.fs_pressed_at = Some(Instant::now());
-    }
-    pub(crate) fn start_forward(&mut self) {
-        self.forward = true;
-        self.fs_pressed_at = Some(Instant::now());
-    }
-    pub(crate) fn end(&mut self, state: &mut AppState, hw: &mut dyn HardwareAccess) {
-        if self.fs_pressed_at.is_some() {
-            if self.fs_active {
-                state.session.reader.go_to_page(self.fs_target);
-                state.update_content(hw);
-                state.scene.hide_view(&FAST_SCROLL_PANEL_ID);
-                info!("marking dirty all after hiding the fast scroll panel");
-                state.scene.mark_dirty_all();
-            } else {
-                if self.forward {
-                    state.nav_next_page(hw);
-                } else {
-                    state.nav_prev_page(hw);
-                }
-            }
-        }
-        self.fs_active = false;
-        self.fs_pressed_at = None;
-    }
-    pub(crate) fn cancel(&mut self) {
-        self.fs_active = false;
-        self.fs_pressed_at = None;
-    }
-    pub(crate) fn handle_update_label(&mut self, mut state: &mut AppState) {
-        if let Some(fs_pressed_at) = self.fs_pressed_at {
-            if !self.fs_active && fs_pressed_at.elapsed().as_millis() >= 1000 {
-                self.fs_active = true;
-                self.fs_target = state.session.reader.current_page;
-                self.fs_last_step = Instant::now();
-                update_fast_scroll_label(
-                    &mut state.scene,
-                    state.session.chapter_idx,
-                    state.session.chapter_count(),
-                    self.fs_target,
-                    state.session.reader.page_count(),
-                );
-                state.scene.show_view(&FAST_SCROLL_PANEL_ID);
-                info!("marking layout dirty after showing fast scroll panel");
-                state.scene.mark_layout_dirty();
-            }
-        }
-
-        if self.fs_active && self.fs_last_step.elapsed().as_millis() >= 200 {
-            if self.forward {
-                if self.fs_target + 1 >= state.session.reader.page_count() {
-                    if state.session.chapter_idx + 1 < state.session.chapter_count() {
-                        state
-                            .session
-                            .go_to_chapter(
-                                state.session.chapter_idx + 1,
-                                state.book.as_ref(),
-                                &state.cfg,
-                            )
-                            .ok();
-                        self.fs_target = 0;
-                    }
-                } else {
-                    self.fs_target += 1;
-                }
-            } else if self.fs_target == 0 {
-                if state.session.chapter_idx > 0 {
-                    state
-                        .session
-                        .go_to_chapter(
-                            state.session.chapter_idx - 1,
-                            state.book.as_ref(),
-                            &state.cfg,
-                        )
-                        .ok();
-                    self.fs_target = state.session.reader.page_count().saturating_sub(1);
-                }
-            } else {
-                self.fs_target -= 1;
-            }
-            self.fs_last_step = Instant::now();
-            update_fast_scroll_label(
-                &mut state.scene,
-                state.session.chapter_idx,
-                state.session.chapter_count(),
-                self.fs_target,
-                state.session.reader.page_count(),
-            );
-        }
-    }
-}
-
-fn update_fast_scroll_label(
-    scene: &mut Scene<Rgb565>,
-    chapter: usize,
-    chapter_count: usize,
-    page: usize,
-    page_count: usize,
-) {
-    if let Some(v) = scene.get_view_mut(&FAST_SCROLL_LABEL_ID) {
-        v.title = format!(
-            "Ch {}/{} · Pg {}/{}",
-            chapter + 1,
-            chapter_count,
-            page + 1,
-            page_count
-        );
-    }
-    info!("marking fast scroll panel dirty");
-    scene.mark_dirty_view(&FAST_SCROLL_PANEL_ID);
-}
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(all(test, feature = "simulator"))]
