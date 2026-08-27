@@ -27,6 +27,18 @@ pub struct FastPaging {
     pub forward: bool,
 }
 
+impl Default for FastPaging {
+    fn default() -> Self {
+        FastPaging {
+            fs_active: false,
+            fs_target: 0usize,
+            fs_last_step: Instant::now(),
+            fs_pressed_at: None,
+            forward: false,
+        }
+    }
+}
+
 impl FastPaging {
     pub fn start_backward(&mut self) {
         self.forward = false;
@@ -59,7 +71,7 @@ impl FastPaging {
         self.fs_active = false;
         self.fs_pressed_at = None;
     }
-    pub fn handle_update_label(&mut self, mut state: &mut AppState) {
+    pub fn handle_update_label(&mut self, state: &mut AppState) {
         if let Some(fs_pressed_at) = self.fs_pressed_at {
             if !self.fs_active && fs_pressed_at.elapsed().as_millis() >= 1000 {
                 self.fs_active = true;

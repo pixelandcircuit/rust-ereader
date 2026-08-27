@@ -21,6 +21,8 @@ use ereader::hardware::SimHardware;
 
 #[cfg(feature = "simulator")]
 use std::time::Instant;
+#[cfg(feature = "simulator")]
+use embedded_graphics_simulator::{SimulatorDisplay, Window};
 
 #[cfg(feature = "esp")]
 use ereader::hardware::{
@@ -98,7 +100,6 @@ fn handle_click(event: &mut GuiEvent<Rgb565>) {
         event.scene.hide_view(&BATTERY_DIALOG_ID);
     } else if event.target == &ViewId::new("error_dismiss") {
         event.scene.hide_view(&ERROR_DIALOG_ID);
-        info!("marking dirty all for hiding error dialog");
         event.scene.mark_dirty_all();
     }
 }
@@ -108,9 +109,7 @@ fn show_error_dialog(scene: &mut Scene<Rgb565>, filename: &str) {
         v.title = String::from(filename);
     }
     scene.show_view(&ERROR_DIALOG_ID);
-    info!("marking dirty for showing error dialog");
     scene.mark_layout_dirty();
-    scene.mark_dirty_all();
 }
 
 struct ProgressBarState {
@@ -143,7 +142,6 @@ fn show_loading_dialog(scene: &mut Scene<Rgb565>, filename: &str) {
     scene.show_view(&LOADING_DIALOG_ID);
     // we need to trigger a relayout the first time a dialog is show, or if it's contents may have changed.
     scene.mark_layout_dirty_view(&LOADING_DIALOG_ID);
-    info!("show loading dialog");
 }
 
 fn set_loading_progress(scene: &mut Scene<Rgb565>, pct: u8) {
@@ -672,6 +670,48 @@ fn update_label(state: &mut AppState, label: &ViewId, value:String) {
     }
 }
 
+#[cfg(feature = "simulator")]
+pub struct SimNativeScreen {
+    pub size: Size,
+    pub display: SimulatorDisplay<Rgb565>,
+    pub settings: embedded_graphics_simulator::OutputSettings,
+    pub window: Window,
+}
+#[cfg(feature = "simulator")]
+impl SimNativeScreen {
+}
+
+#[cfg(feature = "simulator")]
+impl NativeScreen for SimNativeScreen {
+    fn resize(&mut self, size: Size) {
+        self.display = SimulatorDisplay::new(size);
+        self.window = Window::new("ereader_ui", &self.settings);
+    }
+
+    fn deep_clean(&mut self, state: &mut AppState) {
+        // no-op in simulator
+        self.refresh(state);
+    }
+
+    fn deep_sleep(&mut self, state: &mut AppState) {
+        self.refresh(state);
+    }
+
+
+    fn refresh(&mut self, state: &mut AppState) {
+        // Flush the loading screen to the window before blocking.
+        if !state.scene.dirty_rect.is_empty() {
+            info!("clip rect {}", state.scene.dirty_rect);
+            let dirty = state.scene.dirty_rect.clone();
+            let mut ctx = EmbeddedDrawingContext::new(&mut self.display);
+            ctx.clip = dirty;
+            layout_scene(&mut state.scene, &state.theme);
+            draw_scene(&mut state.scene, &mut ctx, &state.theme);
+            self.window.update(&self.display);
+        }
+    }
+}
+
 
 #[cfg(feature = "simulator")]
 fn main() {
@@ -688,12 +728,15 @@ fn main() {
     let mut sim_server = ereader::inspect_sim::spawn();
 
     let mut hw = SimHardware::new();
-    let (mut win_w, mut win_h) = hw.orientation().logical_size();
+    let (win_wx, win_hx) = hw.orientation().logical_size();
 
-    let mut display: SimulatorDisplay<Rgb565> =
-        SimulatorDisplay::new(Size::new(win_w as u32, win_h as u32));
     let settings = OutputSettingsBuilder::new().scale(1).build();
-    let mut window = Window::new("ereader_ui", &settings);
+    let mut native_screen = SimNativeScreen {
+        size: Size::new(win_wx as u32, win_hx as u32),
+        display: SimulatorDisplay::new(Size::new(win_wx as u32, win_hx as u32)),
+        settings,
+        window: Window::new("ereader_ui", &settings),
+    };
 
     let handlers: Vec<Callback<Rgb565>> = vec![handle_click];
     let mut state: AppState = init_app_state(&hw);
@@ -701,56 +744,15 @@ fn main() {
     state.update_content(&hw);
 
     // Fast-scroll hold state (Up/Down arrow keys).
-
-    let mut fast = FastPaging {
-        fs_active: false,
-        fs_target: 0usize,
-        fs_last_step: Instant::now(),
-        fs_pressed_at: None,
-        forward: false,
-    };
+    let mut fast = FastPaging::default();
 
     state.scene.mark_layout_dirty();
     'sim_running: loop {
         // Advance fast-scroll page counter while a direction key is held.
         fast.handle_update_label(&mut state);
+        native_screen.refresh(&mut state);
 
-        #[cfg(feature = "debug-inspect")]
-        if let Some(effects) = sim_server.tick(&mut state, &mut hw) {
-            if let Some(o) = effects.orientation_changed {
-                hw.set_orientation(o);
-                let (new_w, new_h) = hw.orientation().logical_size();
-                if new_w != win_w || new_h != win_h {
-                    win_w = new_w;
-                    win_h = new_h;
-                    state.scene.resize(Bounds::new(0, 0, win_w, win_h));
-                    display = SimulatorDisplay::new(Size::new(win_w as u32, win_h as u32));
-                    window = Window::new("ereader_ui", &settings);
-                    state.cfg = cfg_from_scene(&mut state.scene, &state.theme, &state.fonts, hw.font_size());
-                    state.session.reader.relayout(&state.cfg);
-                    state.update_content(&hw);
-                }
-            }
-        }
-
-        if (!state.scene.dirty_rect.is_empty()) {
-            info!("clip rect {}", state.scene.dirty_rect);
-            let dirty = state.scene.dirty_rect.clone();
-            let mut ctx = EmbeddedDrawingContext::new(&mut display);
-            ctx.clip = dirty.clone();
-            layout_scene(&mut state.scene, &state.theme);
-            draw_scene(&mut state.scene, &mut ctx, &state.theme);
-            #[cfg(feature = "debug-inspect")]
-            ereader::inspect_sim::capture_framebuffer(
-                &sim_server.fb_state,
-                display.to_le_bytes(),
-                win_w as u16,
-                win_h as u16,
-            );
-            window.update(&display);
-        }
-
-        let events: Vec<_> = window.events().collect();
+        let events: Vec<_> = native_screen.window.events().collect();
         for event in events {
             match event {
                 SimulatorEvent::Quit => break 'sim_running,
@@ -829,24 +831,17 @@ fn main() {
                             if input.source == ORIENTATION_ID {
                                 hw.set_orientation(Orientation::from_cmd(cmd.as_str()));
                                 let (new_w, new_h) = hw.orientation().logical_size();
-                                if new_w != win_w || new_h != win_h {
-                                    win_w = new_w;
-                                    win_h = new_h;
-                                    state.scene.resize(Bounds::new(0, 0, win_w, win_h));
-                                    display = SimulatorDisplay::new(Size::new(
-                                        win_w as u32,
-                                        win_h as u32,
-                                    ));
-                                    window = Window::new("ereader_ui", &settings);
-                                    state.cfg = cfg_from_scene(
-                                        &mut state.scene,
-                                        &state.theme,
-                                        &state.fonts,
-                                        hw.font_size(),
-                                    );
-                                    state.session.reader.relayout(&state.cfg);
-                                    state.update_content(&hw);
-                                }
+                                let new_size = Size::new(new_w as u32, new_h as u32);
+                                state.scene.resize(Bounds::new(0, 0, new_size.width as i32, new_size.height as i32));
+                                native_screen.resize(new_size);
+                                state.cfg = cfg_from_scene(
+                                    &mut state.scene,
+                                    &state.theme,
+                                    &state.fonts,
+                                    hw.font_size(),
+                                );
+                                state.session.reader.relayout(&state.cfg);
+                                state.update_content(&hw);
                             } else if input.source == FONT_SIZE_ID {
                                 hw.set_font_size(FontSize::from_cmd(cmd.as_str()));
                                 state.cfg = cfg_from_scene(
@@ -863,20 +858,13 @@ fn main() {
                         }
                         handle_click_action(&mut hw, &input, &mut state);
                         if input.source == DEEP_CLEAN_ID {
-                            // no-op in simulator
+                            native_screen.deep_clean(&mut state);
                         } else if input.source == DEEP_SLEEP_BUTTON_ID {
                             info!("deep sleep button pressed — showing sleep screen");
                             state.scene.hide_view(&SETTINGS_DIALOG_ID);
                             state.scene.show_view(&SLEEP_DIALOG_ID);
-                            state.scene.mark_dirty_all();
-                            {
-                                let dirty = state.scene.dirty_rect.clone();
-                                let mut ctx = EmbeddedDrawingContext::new(&mut display);
-                                ctx.clip = dirty;
-                                layout_scene(&mut state.scene, &state.theme);
-                                draw_scene(&mut state.scene, &mut ctx, &state.theme);
-                                window.update(&display);
-                            }
+                            state.scene.mark_layout_dirty();
+                            native_screen.refresh(&mut state);
                             // On simulator this is a no-op — there's no real hardware
                             // to power off, so the sleep screen just stays on screen.
                             hw.enter_deep_sleep(
@@ -892,15 +880,7 @@ fn main() {
                             if let Some(filename) = filename {
                                 state.scene.hide_view(&LIBRARY_DIALOG_ID);
                                 show_loading_dialog(&mut state.scene, &filename);
-                                // Flush the loading screen to the window before blocking.
-                                {
-                                    let dirty = state.scene.dirty_rect.clone();
-                                    let mut ctx = EmbeddedDrawingContext::new(&mut display);
-                                    ctx.clip = dirty;
-                                    layout_scene(&mut state.scene, &state.theme);
-                                    draw_scene(&mut state.scene, &mut ctx, &state.theme);
-                                    window.update(&display);
-                                }
+                                native_screen.refresh(&mut state);
                                 load_book(&mut state, &mut hw, &filename);
                             }
                         }
@@ -967,14 +947,13 @@ fn update_battery_labels(scene: &mut Scene<Rgb565>, hw: &dyn HardwareAccess) {
     if let Some(v) = scene.get_view_mut(&ViewId::new("mem_sram")) {
         v.title = format!("SRAM: {} / {} free", fmt_bytes(mem.sram_free_bytes), fmt_bytes(mem.sram_total_bytes));
     }
+    scene.mark_layout_dirty_view(&BATTERY_DIALOG_ID);
 }
 
 fn handle_click_action(hw: &mut dyn HardwareAccess, input: &InputResult, state: &mut AppState) {
     if input.source == BATTERY_BUTTON_ID {
         update_battery_labels(&mut state.scene, hw);
         info!("marking battery dialog dirty");
-        state.scene.mark_layout_dirty_view(&BATTERY_DIALOG_ID);
-        state.last_interaction = Instant::now();
     }
     if input.source == SYNC_TIME_BUTTON_ID {
         let t = hw.current_time_secs();
@@ -1239,6 +1218,7 @@ use embassy_net::{
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 #[cfg(feature = "esp")]
 use embassy_time::{with_timeout, Duration, Instant, Timer as EmbassyTimer};
+use embedded_graphics_core::geometry::Size;
 use ereader::appstate::{book_from_data, cfg_from_scene, AppState};
 use ereader::bookview::{draw_book_content, layout_cfg, update_content, BookState, CONTENT_ID};
 use ereader::h_spacer::make_h_spacer;
@@ -1272,6 +1252,7 @@ use log::info;
 use static_cell::StaticCell;
 use Flex::{Fixed, Shrink};
 use ereader::fast_paging::{FAST_SCROLL_LABEL_ID, FAST_SCROLL_PANEL_ID};
+use ereader::native_screen::NativeScreen;
 
 // WiFi credentials — set WIFI_SSID and WIFI_PASS at build time.
 #[cfg(feature = "esp")]
@@ -1731,6 +1712,70 @@ async fn main(spawner: Spawner) -> ! {
 }
 
 #[cfg(feature = "esp")]
+pub struct EspNativeScreen<'a> {
+    pub bridge: Rgb565ToGray4<'a, SharedI2c>,
+}
+#[cfg(feature = "esp")]
+impl EspNativeScreen<'_> {
+
+}
+#[cfg(feature = "esp")]
+impl NativeScreen for EspNativeScreen<'_> {
+    fn resize(&mut self, size: Size) {
+        todo!()
+    }
+
+    fn deep_clean(&mut self, state: &mut AppState) {
+        self.bridge.display.deep_clean(3).unwrap();
+        state.partial_refresh_count = 0;
+        info!("marked dirty all for deep clean");
+        state.scene.mark_dirty_all();
+    }
+
+    fn deep_sleep(&mut self, state: &mut AppState) {
+        let sleep_dirty = state.scene.dirty_rect.clone();
+        // Clear away the previous screen (e.g. the settings dialog) first —
+        // drawing straight over it without a clearing pass leaves ghosting
+        // and can leave the sleep message only partially visible.
+        self.bridge.clearing_flush_region(&sleep_dirty);
+        {
+            let mut ctx = EmbeddedDrawingContext::new(&mut self.bridge);
+            ctx.clip = sleep_dirty;
+            layout_scene(&mut state.scene, &state.theme);
+            draw_scene(&mut state.scene, &mut ctx, &state.theme);
+        }
+        self.bridge.flush();
+        self.bridge.display.power_off();
+    }
+
+    fn refresh(&mut self, state: &mut AppState) {
+        let dirty = state.scene.dirty_rect.clone();
+        self.bridge.clearing_flush_region(&dirty);
+        {
+            let mut ctx = EmbeddedDrawingContext::new(&mut self.bridge);
+            ctx.clip = dirty.clone();
+            layout_scene(&mut state.scene, &state.theme);
+            draw_scene(&mut state.scene, &mut ctx, &state.theme);
+        }
+        self.bridge.flush_region(&dirty, DrawMode::BlackOnWhite);
+        // let dirty = state.scene.dirty_rect.clone();
+        // if !dirty.is_empty() {
+        //     info!("marking manually drawing and flushing for the book load progress");
+        //     {
+        //         let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
+        //         ctx.clip = dirty.clone();
+        //         // Skip layout_scene — dialog geometry is stable between progress
+        //         // updates (was already laid out during the initial full-screen render).
+        //         draw_scene(&mut state.scene, &mut ctx, &state.theme);
+        //     }
+        //     bridge.flush_region(&dirty, DrawMode::Fast);
+        //     state.partial_refresh_count += 1;
+        // }
+    }
+}
+
+
+#[cfg(feature = "esp")]
 #[embassy_executor::task]
 async fn ui_task(
     pin_cfg: ereader::driver::PinConfig<'static>,
@@ -1811,7 +1856,9 @@ async fn ui_task(
         Orientation::from_index(ori_idx),
         tz_offset_minutes,
     );
-    let mut bridge = Rgb565ToGray4::new(display, hw.orientation());
+    let mut native_screen = EspNativeScreen {
+        bridge: Rgb565ToGray4::new(display, hw.orientation())
+    };
     let handlers = vec![handle_click as Callback<Rgb565>];
     let mut was_touching = false;
     let mut last_touch_point: Option<GPoint> = None;
@@ -1848,15 +1895,7 @@ async fn ui_task(
     if let Some(last_file) = load_last_filename() {
         show_loading_dialog(&mut state.scene, &last_file);
         {
-            let dirty = state.scene.dirty_rect.clone();
-            bridge.clearing_flush_region(&dirty);
-            {
-                let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
-                ctx.clip = dirty.clone();
-                layout_scene(&mut state.scene, &state.theme);
-                draw_scene(&mut state.scene, &mut ctx, &state.theme);
-            }
-            bridge.flush_region(&dirty, DrawMode::BlackOnWhite);
+            native_screen.refresh(&mut state);
         }
         if let Some(data) = hw.load_book_file(&last_file) {
             state.book = book_from_data(&last_file, data);
@@ -1895,13 +1934,7 @@ async fn ui_task(
     // decrease if ghosting accumulates too quickly.
     const FULL_QUALITY_INTERVAL: u32 = 5;
 
-    let mut fast = FastPaging {
-        fs_active: false,
-        fs_target: 0usize,
-        fs_last_step: Instant::now(),
-        fs_pressed_at: None,
-        forward: false,
-    };
+    let mut fast = FastPaging::default();
 
     #[derive(Clone, Copy)]
     enum Btn { Prev, Next, Face }
@@ -1983,7 +2016,6 @@ async fn ui_task(
         if let Some(info) = BATTERY_RESULT.try_take() {
             hw.update_battery(info.voltage_mv, info.percent, info.is_charging);
             update_battery_labels(&mut state.scene, &hw);
-            // state.scene.mark_layout_dirty();
         }
 
         // Refresh the time label from the RTC every 10 s (driven by time_task).
@@ -2014,19 +2046,7 @@ async fn ui_task(
         // before the next blocking SD read or before the result arrives.
         if let Some(pct) = BOOK_LOAD_PROGRESS.try_take() {
             set_loading_progress(&mut state.scene, pct);
-            let dirty = state.scene.dirty_rect.clone();
-            if !dirty.is_empty() {
-                info!("marking manually drawing and flushing for the book load progress");
-                {
-                    let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
-                    ctx.clip = dirty.clone();
-                    // Skip layout_scene — dialog geometry is stable between progress
-                    // updates (was already laid out during the initial full-screen render).
-                    draw_scene(&mut state.scene, &mut ctx, &state.theme);
-                }
-                bridge.flush_region(&dirty, DrawMode::Fast);
-                state.partial_refresh_count += 1;
-            }
+            native_screen.refresh(&mut state);
         }
 
         // Finalize the load when book_load_task delivers the raw bytes.
@@ -2079,7 +2099,7 @@ async fn ui_task(
 
         // Read GT911 touch + face-button key state in one I2C transaction so we
         // don't miss a key event that read_touch would silently discard.
-        let (touch_pt, face_key) = bridge.display.read_touch_and_key(&mut gt911);
+        let (touch_pt, face_key) = native_screen.bridge.display.read_touch_and_key(&mut gt911);
 
         // Physical button handling:
         //   BOOT (GPIO0)  → prev page
@@ -2105,7 +2125,7 @@ async fn ui_task(
                 let still_held = match btn {
                     Btn::Prev => hw.button_prev_pressed(),
                     Btn::Next => hw.button_next_pressed(),
-                    Btn::Face => bridge.display.gt911_key_pressed(&mut gt911),
+                    Btn::Face => native_screen.bridge.display.gt911_key_pressed(&mut gt911),
                 };
                 if !still_held {
                     break;
@@ -2126,13 +2146,13 @@ async fn ui_task(
                     let panel_rect = state.scene.dirty_rect.clone();
 
                     info!("flushing for fast paging");
-                    bridge.flush_region(&panel_rect, DrawMode::FastClear);
+                    native_screen.bridge.flush_region(&panel_rect, DrawMode::FastClear);
                     {
-                        let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
+                        let mut ctx = EmbeddedDrawingContext::new(&mut native_screen.bridge);
                         ctx.clip = panel_rect;
                         draw_scene(&mut state.scene, &mut ctx, &state.theme);
                     }
-                    bridge.flush_region(&panel_rect, DrawMode::Fast);
+                    native_screen.bridge.flush_region(&panel_rect, DrawMode::Fast);
                 }
 
                 EmbassyTimer::after(Duration::from_millis(10)).await;
@@ -2188,8 +2208,8 @@ async fn ui_task(
                 (DrawMode::WhiteOnBlack, DrawMode::BlackOnWhite)
             };
             if needs_full_refresh || force_full {
-                bridge.display.fill(0x0F).unwrap();
-                bridge.display.flush(clear_mode).unwrap();
+                native_screen.bridge.display.fill(0x0F).unwrap();
+                native_screen.bridge.display.flush(clear_mode).unwrap();
                 state.partial_refresh_count = 0;
                 if needs_full_refresh {
                     if use_fast {
@@ -2199,11 +2219,11 @@ async fn ui_task(
                     }
                 }
             } else {
-                bridge.clearing_flush_region(&dirty_rect);
+                native_screen.bridge.clearing_flush_region(&dirty_rect);
                 state.partial_refresh_count += 1;
             }
             {
-                let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
+                let mut ctx = EmbeddedDrawingContext::new(&mut native_screen.bridge);
                 ctx.clip = if force_full {
                     Bounds::new(0, 0, scene_w, scene_h)
                 } else {
@@ -2213,9 +2233,9 @@ async fn ui_task(
                 draw_scene(&mut state.scene, &mut ctx, &state.theme);
             }
             if needs_full_refresh || force_full {
-                bridge.flush_with_mode(draw_mode);
+                native_screen.bridge.flush_with_mode(draw_mode);
             } else {
-                bridge.flush_region(&dirty_rect, DrawMode::BlackOnWhite);
+                native_screen.bridge.flush_region(&dirty_rect, DrawMode::BlackOnWhite);
             }
         }
 
@@ -2247,7 +2267,7 @@ async fn ui_task(
                             handle_backlight_action(cmd, &mut hw);
                         } else if input.source == ORIENTATION_ID {
                             hw.set_orientation(Orientation::from_cmd(cmd.as_str()));
-                            bridge.orientation = hw.orientation();
+                            native_screen.bridge.orientation = hw.orientation();
                             let (new_w, new_h) = hw.orientation().logical_size();
                             state.scene.resize(Bounds::new(0, 0, new_w, new_h));
                             state.cfg = cfg_from_scene(
@@ -2264,9 +2284,9 @@ async fn ui_task(
                     // Refresh battery from BQ27220 fuel gauge (I2C 0x55).
                     // Voltage at reg 0x08, AverageCurrent at 0x14, StateOfCharge at 0x1E.
                     if input.source == BATTERY_BUTTON_ID {
-                        let voltage_mv = bridge.display.i2c_read_u16(0x55, 0x08) as u32;
-                        let current_ma = bridge.display.i2c_read_i16(0x55, 0x14);
-                        let percent = bridge.display.i2c_read_u16(0x55, 0x1E).min(100) as u8;
+                        let voltage_mv = native_screen.bridge.display.i2c_read_u16(0x55, 0x08) as u32;
+                        let current_ma = native_screen.bridge.display.i2c_read_i16(0x55, 0x14);
+                        let percent = native_screen.bridge.display.i2c_read_u16(0x55, 0x1E).min(100) as u8;
                         let is_charging = current_ma > 0;
                         hw.update_battery(voltage_mv, percent, is_charging);
                     }
@@ -2280,10 +2300,7 @@ async fn ui_task(
                         }
                     } else if input.source == DEEP_CLEAN_ID {
                         info!("deep clean started");
-                        bridge.display.deep_clean(3).unwrap();
-                        state.partial_refresh_count = 0;
-                        info!("marked dirty all for deep clean");
-                        state.scene.mark_dirty_all();
+                        native_screen.deep_clean(&mut state);
                     } else if input.source == DEEP_SLEEP_BUTTON_ID {
                         info!("deep sleep button pressed — entering deep sleep");
                         state.scene.hide_view(&SETTINGS_DIALOG_ID);
@@ -2291,19 +2308,7 @@ async fn ui_task(
                         info!("marked dirty all for deep sleep button");
                         state.scene.mark_dirty_all();
                         // Render the sleep message before powering off.
-                        let sleep_dirty = state.scene.dirty_rect.clone();
-                        // Clear away the previous screen (e.g. the settings dialog) first —
-                        // drawing straight over it without a clearing pass leaves ghosting
-                        // and can leave the sleep message only partially visible.
-                        bridge.clearing_flush_region(&sleep_dirty);
-                        {
-                            let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
-                            ctx.clip = sleep_dirty;
-                            layout_scene(&mut state.scene, &state.theme);
-                            draw_scene(&mut state.scene, &mut ctx, &state.theme);
-                        }
-                        bridge.flush();
-                        bridge.display.power_off();
+                        native_screen.deep_sleep(&mut state);
                         // Persist filename and position so wakeup can reopen the same book.
                         save_before_sleep(
                             &state.current_filename,
@@ -2328,14 +2333,14 @@ async fn ui_task(
                             // Flush the loading dialog (with 0% bar) to e-paper immediately.
                             {
                                 let dirty = state.scene.dirty_rect.clone();
-                                bridge.clearing_flush_region(&dirty);
+                                native_screen.bridge.clearing_flush_region(&dirty);
                                 {
-                                    let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
+                                    let mut ctx = EmbeddedDrawingContext::new(&mut native_screen.bridge);
                                     ctx.clip = dirty.clone();
                                     layout_scene(&mut state.scene, &state.theme);
                                     draw_scene(&mut state.scene, &mut ctx, &state.theme);
                                 }
-                                bridge.flush_region(&dirty, DrawMode::BlackOnWhite);
+                                native_screen.bridge.flush_region(&dirty, DrawMode::BlackOnWhite);
                                 state.partial_refresh_count += 1;
                             }
                             // Drop the old book now so its heap is free before the
@@ -2366,15 +2371,15 @@ async fn ui_task(
             let sleep_dirty = state.scene.dirty_rect.clone();
             // Clear away the previous screen first — see comment on the
             // button-triggered deep sleep path above.
-            bridge.clearing_flush_region(&sleep_dirty);
+            native_screen.bridge.clearing_flush_region(&sleep_dirty);
             {
-                let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
+                let mut ctx = EmbeddedDrawingContext::new(&mut native_screen.bridge);
                 ctx.clip = sleep_dirty;
                 layout_scene(&mut state.scene, &state.theme);
                 draw_scene(&mut state.scene, &mut ctx, &state.theme);
             }
-            bridge.flush();
-            bridge.display.power_off();
+            native_screen.bridge.flush();
+            native_screen.bridge.display.power_off();
             // Persist filename and position so wakeup can reopen the same book.
             // Unlike the fire-and-forget saves elsewhere, this one must be
             // confirmed written before we power off — there's no next tick
@@ -2399,7 +2404,7 @@ async fn ui_task(
                 const CELL: u16 = 30;
                 const GAP: u16 = 5;
                 const STRIDE: u16 = CELL + GAP;
-                bridge.display.fill(0x0F).unwrap(); // white — gaps inherit this
+                native_screen.bridge.display.fill(0x0F).unwrap(); // white — gaps inherit this
                 let pw = ereader::driver::display::DISPLAY_WIDTH;
                 let ph = ereader::driver::display::DISPLAY_HEIGHT;
                 let cols = (pw + GAP) / STRIDE;
@@ -2408,13 +2413,13 @@ async fn ui_task(
                     for col in 0..cols {
                         let x = col * STRIDE;
                         let y = row * STRIDE;
-                        bridge.display.fill_region(
+                        native_screen.bridge.display.fill_region(
                             Rectangle { x, y, width: CELL, height: CELL },
                             0x00, // black square
                         ).unwrap();
                     }
                 }
-                bridge.display.flush(DrawMode::BlackOnWhite).unwrap();
+                native_screen.bridge.display.flush(DrawMode::BlackOnWhite).unwrap();
             }
             // Backlight is turned off inside enter_light_sleep and restored on return.
             hw.enter_light_sleep();
