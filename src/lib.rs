@@ -15,12 +15,6 @@ pub mod epub;
 pub mod font;
 pub mod h_spacer;
 pub mod hardware;
-#[cfg(feature = "debug-inspect")]
-pub mod inspect_shared;
-#[cfg(all(feature = "esp", feature = "debug-inspect"))]
-pub mod inspect_esp;
-#[cfg(all(feature = "simulator", feature = "debug-inspect"))]
-pub mod inspect_sim;
 pub mod layout;
 pub mod reader;
 pub mod truncating_label;
