@@ -1172,6 +1172,7 @@ use log::info;
 #[cfg(feature = "esp")]
 use static_cell::StaticCell;
 use Flex::{Fixed, Shrink};
+use ereader::driver::DrawMode::{BlackOnWhite, WhiteOnBlack};
 
 // WiFi credentials — set WIFI_SSID and WIFI_PASS at build time.
 #[cfg(feature = "esp")]
@@ -1596,44 +1597,11 @@ impl NativeScreen for EspNativeScreen<'_> {
     }
 
     fn deep_sleep(&mut self, state: &mut AppState) {
-        let sleep_dirty = state.scene.dirty_rect.clone();
-        // Clear away the previous screen (e.g. the settings dialog) first —
-        // drawing straight over it without a clearing pass leaves ghosting
-        // and can leave the sleep message only partially visible.
-        self.bridge.clearing_flush_region(&sleep_dirty);
-        {
-            let mut ctx = EmbeddedDrawingContext::new(&mut self.bridge);
-            ctx.clip = sleep_dirty;
-            layout_scene(&mut state.scene, &state.theme);
-            draw_scene(&mut state.scene, &mut ctx, &state.theme);
-        }
-        self.bridge.flush();
+        common_refresh(self, state, DrawMode::WhiteOnBlack, DrawMode::BlackOnWhite);
         self.bridge.display.power_off();
     }
 
     fn refresh(&mut self, state: &mut AppState) {
-        let dirty = state.scene.dirty_rect.clone();
-        self.bridge.clearing_flush_region(&dirty);
-        {
-            let mut ctx = EmbeddedDrawingContext::new(&mut self.bridge);
-            ctx.clip = dirty.clone();
-            layout_scene(&mut state.scene, &state.theme);
-            draw_scene(&mut state.scene, &mut ctx, &state.theme);
-        }
-        self.bridge.flush_region(&dirty, DrawMode::BlackOnWhite);
-        // let dirty = state.scene.dirty_rect.clone();
-        // if !dirty.is_empty() {
-        //     info!("marking manually drawing and flushing for the book load progress");
-        //     {
-        //         let mut ctx = EmbeddedDrawingContext::new(&mut bridge);
-        //         ctx.clip = dirty.clone();
-        //         // Skip layout_scene — dialog geometry is stable between progress
-        //         // updates (was already laid out during the initial full-screen render).
-        //         draw_scene(&mut state.scene, &mut ctx, &state.theme);
-        //     }
-        //     bridge.flush_region(&dirty, DrawMode::Fast);
-        //     state.partial_refresh_count += 1;
-        // }
     }
 }
 
@@ -1786,11 +1754,9 @@ async fn ui_task(
     // src/hardware.rs on why a write racing a render corrupts the flash
     // cache for whichever core isn't doing the write.
     let mut last_confirmed_flash_write: u32 = 0;
-    const PARTIAL_REFRESH_FULL_INTERVAL: u32 = 8;
     // Full-quality (15-frame) refresh every N full-screen page turns.
     // In between, use the 4-frame fast waveform.  Increase to reduce flicker;
     // decrease if ghosting accumulates too quickly.
-    const FULL_QUALITY_INTERVAL: u32 = 5;
 
     let mut fast = FastPaging::default();
 
@@ -1824,8 +1790,11 @@ async fn ui_task(
         if TIME_TICK.try_take().is_some() {
             let unix_secs = hw.current_time_secs();
             if unix_secs > 0 {
-                let time_str = format_time_local(unix_secs, hw.utc_offset_minutes());
-                update_label(&mut state, &TIME_LABEL_ID, time_str);
+                update_label(
+                    &mut state,
+                    &TIME_LABEL_ID,
+                    format_time_local(unix_secs, hw.utc_offset_minutes()),
+                );
             }
         }
 
@@ -1945,31 +1914,7 @@ async fn ui_task(
 
                 fast.handle_update_label(&mut state);
 
-                // During fast paging we only ever repaint the small counter panel.
-                // If mark_layout_dirty() was called (first show of the panel), the
-                // dirty_rect is the full screen — we don't need that.  Run layout
-                // first so the panel has its centred global bounds, then rederive
-                // the dirty rect from the panel alone.
-                if !state.scene.dirty_rect.is_empty() {
-                    info!("calling layout scene for fast paging");
-                    layout_scene(&mut state.scene, &state.theme);
-                    state.scene.dirty_rect = Bounds::new_empty();
-                    state.scene.mark_dirty_view(&FAST_SCROLL_PANEL_ID);
-                    let panel_rect = state.scene.dirty_rect.clone();
-
-                    info!("flushing for fast paging");
-                    native_screen
-                        .bridge
-                        .flush_region(&panel_rect, DrawMode::FastClear);
-                    {
-                        let mut ctx = EmbeddedDrawingContext::new(&mut native_screen.bridge);
-                        ctx.clip = panel_rect;
-                        draw_scene(&mut state.scene, &mut ctx, &state.theme);
-                    }
-                    native_screen
-                        .bridge
-                        .flush_region(&panel_rect, DrawMode::Fast);
-                }
+                common_refresh(&mut native_screen, &mut state, DrawMode::FastClear, DrawMode::Fast);
 
                 EmbassyTimer::after(Duration::from_millis(10)).await;
             }
@@ -2005,57 +1950,7 @@ async fn ui_task(
         let (scene_w, scene_h) = hw.orientation().logical_size();
         let needs_full_refresh = dirty_rect.size.w >= scene_w && dirty_rect.size.h >= scene_h;
 
-        if was_dirty {
-            info!("clip rect {}", state.scene.dirty_rect);
-            // Ghost-clear pass: drives dark pixels to white so the draw pass can
-            // correctly lighten pixels that changed from dark to light.
-            // Periodic full refresh: accumulating field coupling slowly darkens
-            // white areas; every PARTIAL_REFRESH_FULL_INTERVAL partials we force a full.
-            // Fast waveforms (4 frames) are used for page turns; every
-            // FULL_QUALITY_INTERVAL full-screen turns we fall back to 15-frame quality.
-            let force_full =
-                !needs_full_refresh && state.partial_refresh_count >= PARTIAL_REFRESH_FULL_INTERVAL;
-            let use_fast = needs_full_refresh
-                && !force_full
-                && state.full_quality_count < FULL_QUALITY_INTERVAL;
-            let (clear_mode, draw_mode) = if use_fast {
-                (DrawMode::FastClear, DrawMode::Fast)
-            } else {
-                (DrawMode::WhiteOnBlack, DrawMode::BlackOnWhite)
-            };
-            if needs_full_refresh || force_full {
-                native_screen.bridge.display.fill(0x0F).unwrap();
-                native_screen.bridge.display.flush(clear_mode).unwrap();
-                state.partial_refresh_count = 0;
-                if needs_full_refresh {
-                    if use_fast {
-                        state.full_quality_count += 1;
-                    } else {
-                        state.full_quality_count = 0;
-                    }
-                }
-            } else {
-                native_screen.bridge.clearing_flush_region(&dirty_rect);
-                state.partial_refresh_count += 1;
-            }
-            {
-                let mut ctx = EmbeddedDrawingContext::new(&mut native_screen.bridge);
-                ctx.clip = if force_full {
-                    Bounds::new(0, 0, scene_w, scene_h)
-                } else {
-                    dirty_rect.clone()
-                };
-                layout_scene(&mut state.scene, &state.theme);
-                draw_scene(&mut state.scene, &mut ctx, &state.theme);
-            }
-            if needs_full_refresh || force_full {
-                native_screen.bridge.flush_with_mode(draw_mode);
-            } else {
-                native_screen
-                    .bridge
-                    .flush_region(&dirty_rect, DrawMode::BlackOnWhite);
-            }
-        }
+        common_refresh(&mut native_screen, &mut state, DrawMode::FastClear, DrawMode::Fast);
 
         if let Some((tx, ty)) = touch_pt {
             let (lx, ly) = hw.orientation().phys_to_logical(tx, ty);
@@ -2148,22 +2043,7 @@ async fn ui_task(
                         if let Some(filename) = filename {
                             state.scene.hide_view(&LIBRARY_DIALOG_ID);
                             show_loading_dialog(&mut state.scene, &filename);
-                            // Flush the loading dialog (with 0% bar) to e-paper immediately.
-                            {
-                                let dirty = state.scene.dirty_rect.clone();
-                                native_screen.bridge.clearing_flush_region(&dirty);
-                                {
-                                    let mut ctx =
-                                        EmbeddedDrawingContext::new(&mut native_screen.bridge);
-                                    ctx.clip = dirty.clone();
-                                    layout_scene(&mut state.scene, &state.theme);
-                                    draw_scene(&mut state.scene, &mut ctx, &state.theme);
-                                }
-                                native_screen
-                                    .bridge
-                                    .flush_region(&dirty, DrawMode::BlackOnWhite);
-                                state.partial_refresh_count += 1;
-                            }
+                            common_refresh(&mut native_screen, &mut state, DrawMode::WhiteOnBlack, DrawMode::BlackOnWhite);
                             // Drop the old book now so its heap is free before the
                             // background task allocates the new epub (which can be
                             // larger than the remaining free heap if the old book
@@ -2188,18 +2068,7 @@ async fn ui_task(
             state.scene.show_view(&SLEEP_DIALOG_ID);
             info!("marking dirty all for showing the sleep dialog");
             state.scene.mark_dirty_all();
-            // Render the sleep message before powering off.
-            let sleep_dirty = state.scene.dirty_rect.clone();
-            // Clear away the previous screen first — see comment on the
-            // button-triggered deep sleep path above.
-            native_screen.bridge.clearing_flush_region(&sleep_dirty);
-            {
-                let mut ctx = EmbeddedDrawingContext::new(&mut native_screen.bridge);
-                ctx.clip = sleep_dirty;
-                layout_scene(&mut state.scene, &state.theme);
-                draw_scene(&mut state.scene, &mut ctx, &state.theme);
-            }
-            native_screen.bridge.flush();
+            common_refresh(&mut native_screen, &mut state, DrawMode::WhiteOnBlack, DrawMode::BlackOnWhite);
             native_screen.bridge.display.power_off();
             // Persist filename and position so wakeup can reopen the same book.
             // Unlike the fire-and-forget saves elsewhere, this one must be
@@ -2219,42 +2088,7 @@ async fn ui_task(
             state.update_content(&hw);
         } else if elapsed_secs >= LIGHT_SLEEP_AFTER_SECS {
             info!("inactivity timeout — entering light sleep");
-            // Draw a grid of 30×30 black squares with white 5 px gaps on the physical display.
-            // fill(0x0F) sets the entire framebuffer to white, making the gaps white by default.
-            {
-                const CELL: u16 = 30;
-                const GAP: u16 = 5;
-                const STRIDE: u16 = CELL + GAP;
-                native_screen.bridge.display.fill(0x0F).unwrap(); // white — gaps inherit this
-                let pw = ereader::driver::display::DISPLAY_WIDTH;
-                let ph = ereader::driver::display::DISPLAY_HEIGHT;
-                let cols = (pw + GAP) / STRIDE;
-                let rows = (ph + GAP) / STRIDE;
-                for row in 0..rows {
-                    for col in 0..cols {
-                        let x = col * STRIDE;
-                        let y = row * STRIDE;
-                        native_screen
-                            .bridge
-                            .display
-                            .fill_region(
-                                Rectangle {
-                                    x,
-                                    y,
-                                    width: CELL,
-                                    height: CELL,
-                                },
-                                0x00, // black square
-                            )
-                            .unwrap();
-                    }
-                }
-                native_screen
-                    .bridge
-                    .display
-                    .flush(DrawMode::BlackOnWhite)
-                    .unwrap();
-            }
+            // draw_sleep_grid(&mut native_screen);
             // Backlight is turned off inside enter_light_sleep and restored on return.
             hw.enter_light_sleep();
             // Full redraw after waking so the grid is replaced with book content.
@@ -2265,6 +2099,20 @@ async fn ui_task(
         }
 
         EmbassyTimer::after(Duration::from_millis(50)).await;
+    }
+}
+
+fn common_refresh(mut native_screen: &mut EspNativeScreen, mut state: &mut AppState, clear_mode: DrawMode, draw_mode: DrawMode) {
+    // if dirty, then repaint
+    let dirty_rect = state.scene.dirty_rect;
+    if !dirty_rect.is_empty() {
+        info!("redraw {} clear {:?} draw {:?}", dirty_rect, clear_mode, draw_mode);
+        native_screen.bridge.flush_region(&dirty_rect, clear_mode);
+        let mut ctx = EmbeddedDrawingContext::new(&mut native_screen.bridge);
+        ctx.clip = dirty_rect.clone();
+        layout_scene(&mut state.scene, &state.theme);
+        draw_scene(&mut state.scene, &mut ctx, &state.theme);
+        native_screen.bridge.flush_region(&dirty_rect, draw_mode);
     }
 }
 
