@@ -1172,7 +1172,6 @@ use log::info;
 #[cfg(feature = "esp")]
 use static_cell::StaticCell;
 use Flex::{Fixed, Shrink};
-use ereader::driver::DrawMode::{BlackOnWhite, WhiteOnBlack};
 
 // WiFi credentials — set WIFI_SSID and WIFI_PASS at build time.
 #[cfg(feature = "esp")]
@@ -2018,8 +2017,6 @@ async fn ui_task(
                         info!("deep sleep button pressed — entering deep sleep");
                         state.scene.hide_view(&SETTINGS_DIALOG_ID);
                         state.scene.show_view(&SLEEP_DIALOG_ID);
-                        info!("marked dirty all for deep sleep button");
-                        state.scene.mark_dirty_all();
                         // Render the sleep message before powering off.
                         native_screen.deep_sleep(&mut state);
                         // Persist filename and position so wakeup can reopen the same book.
@@ -2066,8 +2063,6 @@ async fn ui_task(
         if elapsed_secs >= DEEP_SLEEP_AFTER_SECS {
             info!("inactivity timeout — entering deep sleep");
             state.scene.show_view(&SLEEP_DIALOG_ID);
-            info!("marking dirty all for showing the sleep dialog");
-            state.scene.mark_dirty_all();
             common_refresh(&mut native_screen, &mut state, DrawMode::WhiteOnBlack, DrawMode::BlackOnWhite);
             native_screen.bridge.display.power_off();
             // Persist filename and position so wakeup can reopen the same book.
@@ -2101,7 +2096,7 @@ async fn ui_task(
         EmbassyTimer::after(Duration::from_millis(50)).await;
     }
 }
-
+#[cfg(feature = "esp")]
 fn common_refresh(mut native_screen: &mut EspNativeScreen, mut state: &mut AppState, clear_mode: DrawMode, draw_mode: DrawMode) {
     // if dirty, then repaint
     let dirty_rect = state.scene.dirty_rect;
