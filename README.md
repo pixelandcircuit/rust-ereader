@@ -137,7 +137,7 @@ cargo sim-run --example ereader_ui
 | BOOT button (GPIO0) | Previous page / previous chapter |
 | Side button (GPIO38) | Next page / next chapter |
 | Face button (GT911 key, circle below screen) | Next page / next chapter |
-| Fast paging | Hold any button > 1 s to enter fast-scroll mode; a counter overlay shows chapter/page; release to jump |
+| Fast paging | Hold any paging button for 1 s to enter fast-scroll mode; pages advance one at a time initially, then five at a time after 5 s; release to jump |
 | Light sleep | Backlight off after 60 s of inactivity; wakes instantly on any button press |
 | Deep sleep | Full ESP32-S3 deep sleep after 60 min of inactivity, or immediately via the "Sleep Now" button in Settings; reading position saved to RTC fast memory |
 | Wake from deep sleep | Press BOOT button; position and settings restored from RTC (no flash read) |

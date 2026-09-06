@@ -17,6 +17,8 @@ use log::info;
 
 pub const FAST_SCROLL_PANEL_ID: ViewId = ViewId::new("fast_scroll_panel");
 pub const FAST_SCROLL_LABEL_ID: ViewId = ViewId::new("fast_scroll_label");
+const FAST_PAGE_INTERVAL_MS: u128 = 200;
+const FAST_PAGE_ACCELERATION_MS: u128 = 5_000;
 
 pub struct FastPaging {
     pub fs_active: bool,
@@ -89,37 +91,55 @@ impl FastPaging {
             }
         }
 
-        if self.fs_active && self.fs_last_step.elapsed().as_millis() >= 200 {
-            if self.forward {
-                if self.fs_target + 1 >= state.session.reader.page_count() {
-                    if state.session.chapter_idx + 1 < state.session.chapter_count() {
+        if self.fs_active
+            && u128::from(self.fs_last_step.elapsed().as_millis()) >= FAST_PAGE_INTERVAL_MS
+        {
+            let step_count = self
+                .fs_pressed_at
+                .map(|started| {
+                    if u128::from(started.elapsed().as_millis()) >= FAST_PAGE_ACCELERATION_MS {
+                        5
+                    } else {
+                        1
+                    }
+                })
+                .unwrap_or(1);
+            for _ in 0..step_count {
+                if self.forward {
+                    if self.fs_target + 1 >= state.session.reader.page_count() {
+                        if state.session.chapter_idx + 1 < state.session.chapter_count() {
+                            state
+                                .session
+                                .go_to_chapter(
+                                    state.session.chapter_idx + 1,
+                                    state.book.as_ref(),
+                                    &state.cfg,
+                                )
+                                .ok();
+                            self.fs_target = 0;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        self.fs_target += 1;
+                    }
+                } else if self.fs_target == 0 {
+                    if state.session.chapter_idx > 0 {
                         state
                             .session
                             .go_to_chapter(
-                                state.session.chapter_idx + 1,
+                                state.session.chapter_idx - 1,
                                 state.book.as_ref(),
                                 &state.cfg,
                             )
                             .ok();
-                        self.fs_target = 0;
+                        self.fs_target = state.session.reader.page_count().saturating_sub(1);
+                    } else {
+                        break;
                     }
                 } else {
-                    self.fs_target += 1;
+                    self.fs_target -= 1;
                 }
-            } else if self.fs_target == 0 {
-                if state.session.chapter_idx > 0 {
-                    state
-                        .session
-                        .go_to_chapter(
-                            state.session.chapter_idx - 1,
-                            state.book.as_ref(),
-                            &state.cfg,
-                        )
-                        .ok();
-                    self.fs_target = state.session.reader.page_count().saturating_sub(1);
-                }
-            } else {
-                self.fs_target -= 1;
             }
             self.fs_last_step = Instant::now();
             update_fast_scroll_label(
