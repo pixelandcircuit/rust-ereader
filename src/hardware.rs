@@ -952,7 +952,9 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
         rtc_store_write(6, chapter_idx as u32);
         // Turn off backlight PWM
         self.bl_ch.set_duty(0).unwrap();
-        // Wake on BOOT button (GPIO0 active-low); steal a new handle since we're about to sleep
+        // GPIO0 is already owned by the BOOT button input. Consume that
+        // existing driver so the wake source does not create an aliased GPIO
+        // handle (which can corrupt GPIO configuration during sleep setup).
         let wakeup_pin = unsafe { esp_hal::gpio::AnyPin::steal(0) };
         let boot_src = Ext0WakeupSource::new(wakeup_pin, WakeupLevel::Low);
         self.rtc.sleep_deep(&[&boot_src]);
