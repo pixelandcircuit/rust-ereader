@@ -38,10 +38,10 @@ The default Cargo target is `xtensa-esp32s3-none-elf`. Use the `esp-build` / `es
 
 ```sh
 # Build only
-cargo esp-build --example ereader_full
+cargo esp-build --example ereader_ui
 
 # Build and flash to device (opens serial monitor after flashing)
-cargo esp-run --example ereader_full
+cargo esp-run --example ereader_ui
 ```
 
 ```shell
@@ -50,7 +50,7 @@ cargo esp-run --example ereader_ui
 
 ## Changing the book
 
-The active book is embedded at compile time in `examples/ereader_full.rs`:
+The active book is embedded at compile time in `examples/ereader_ui.rs`:
 
 ```rust
 const EPUB_DATA: &[u8] = include_bytes!("sherlock_holmes.epub");
@@ -86,21 +86,22 @@ brew install sdl2          # macOS
 sudo apt install libsdl2-dev  # Debian/Ubuntu
 ```
 
-Run either example with `cargo sim-run`:
+Build either example with `cargo sim-build`, or build-and-run with `cargo sim-run`:
 ```sh
-cargo sim-run --example ereader_full
+cargo sim-build --example ereader_ui
+cargo sim-run --example ereader_ui
 cargo sim-run --example ereader_ui
 ```
 
 ---
 
-## Running ereader_full in the simulator (no device needed)
+## Running ereader_ui in the simulator (no device needed)
 
-`ereader_full` supports a desktop simulator via SDL2. It opens a portrait 540×960 window and lets you navigate the book with the keyboard.
+`ereader_ui` supports a desktop simulator via SDL2. It opens a portrait 540×960 window and lets you navigate the book with the keyboard.
 
 **Run:**
 ```sh
-cargo sim-run --example ereader_full
+cargo sim-run --example ereader_ui
 ```
 
 **Keyboard controls:**
@@ -111,7 +112,7 @@ cargo sim-run --example ereader_full
 | Left arrow / Backspace / P | Previous page (or previous chapter) |
 | Close window / Q | Quit |
 
-The `sim-run` alias expands to `run --no-default-features --features simulator --target aarch64-apple-darwin`. Adjust the target triple in `.cargo/config.toml` if you are on a non-Apple-Silicon machine (see table below).
+The `sim-run` alias expands to `run --no-default-features --features simulator --target aarch64-apple-darwin` (`sim-build` is the same but with `build` instead of `run`). Adjust the target triple in `.cargo/config.toml` if you are on a non-Apple-Silicon machine (see table below).
 
 ## Running ereader_ui in the simulator (no device needed)
 
@@ -169,8 +170,7 @@ src/
   font.rs       — TTF rasterizer (fontdue) with Gray4 blending
   driver/       — ESP32-S3 display (ED047TC1), touch (GT911), RMT/DMA drivers
 examples/
-  ereader_full.rs  — Main application binary
-  epub_test.rs     — Cross-platform library smoke test
+  ereader_ui.rs  — Main application binary
 fonts/           — Embedded TTF/OTF font files
 ```
 

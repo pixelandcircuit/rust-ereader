@@ -1,5 +1,11 @@
 # Changes
 
+## 2026-09-11 11:00
+
+Added a `sim-build` cargo alias (`.cargo/config.toml`) mirroring `sim-run` but
+using `build` instead of `run`, so the simulator target can be compiled
+without launching it. Updated `README.md` to document it.
+
 ## 2026-08-23 15:00
 
 Added a "Sleep Now" button to the settings dialog that manually triggers deep
