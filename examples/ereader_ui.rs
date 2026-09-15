@@ -1301,16 +1301,33 @@ fn bq27220_read_i16<I: embedded_hal::i2c::I2c>(i2c: &mut I, reg: u8) -> i16 {
     bq27220_read_u16(i2c, reg) as i16
 }
 
+/// Waits for the first "Sync Time" request before touching the radio at all —
+/// WiFi is only initialized once it's actually needed, not on every boot.
 #[cfg(feature = "esp")]
 #[embassy_executor::task]
-async fn wifi_task(
-    mut controller: esp_radio::wifi::WifiController<'static>,
-    stack: embassy_net::Stack<'static>,
-    skip_initial: bool,
-) {
-    if !skip_initial {
-        do_ntp_sync(&mut controller, stack).await;
-    }
+async fn wifi_task(spawner: Spawner, wifi: esp_hal::peripherals::WIFI<'static>, seed: u64) {
+    WIFI_SYNC_REQUEST.wait().await;
+    info!("sync_time requested — initializing WiFi for the first time");
+    info!("connecting to WIFI_SSID {} WIFI_PASS {}", SSID, PASSWORD);
+    let station_config = Config::Station(
+        StationConfig::default()
+            .with_ssid(SSID)
+            .with_password(PASSWORD.into()),
+    );
+    let (mut controller, interfaces) = esp_radio::wifi::new(
+        wifi,
+        ControllerConfig::default().with_initial_config(station_config),
+    )
+    .expect("wifi init");
+    let stack_resources = mk_static!(StackResources<3>, StackResources::<3>::new());
+    let (stack, runner) = embassy_net::new(
+        interfaces.station,
+        embassy_net::Config::dhcpv4(Default::default()),
+        stack_resources,
+        seed,
+    );
+    spawner.spawn(net_task(runner).expect("net_task spawn"));
+    do_ntp_sync(&mut controller, stack).await;
     loop {
         WIFI_SYNC_REQUEST.wait().await;
         do_ntp_sync(&mut controller, stack).await;
@@ -1531,31 +1548,12 @@ async fn main(spawner: Spawner) -> ! {
     }
 
     // ── WiFi + NTP time sync (background task, core 0) ──────────────────────
-    // wifi_task connects, syncs NTP, then disconnects. It stays alive to handle
-    // future sync requests (e.g. from the sync_time button) via WIFI_SYNC_REQUEST.
+    // wifi_task doesn't touch the radio at boot — it waits for the first
+    // "Sync Time" button press (WIFI_SYNC_REQUEST) before initializing WiFi,
+    // then stays alive to handle subsequent sync requests.
     if ENABLE_WIFI_NTP {
-        info!("connecting to WIFI_SSID {} WIFI_PASS {}", SSID, PASSWORD);
-        let station_config = Config::Station(
-            StationConfig::default()
-                .with_ssid(SSID)
-                .with_password(PASSWORD.into()),
-        );
-        let (controller, interfaces) = esp_radio::wifi::new(
-            peripherals.WIFI,
-            ControllerConfig::default().with_initial_config(station_config),
-        )
-        .expect("wifi init");
-        let stack_resources = mk_static!(StackResources<3>, StackResources::<3>::new());
-        let (stack, runner) = embassy_net::new(
-            interfaces.station,
-            embassy_net::Config::dhcpv4(Default::default()),
-            stack_resources,
-            seed,
-        );
-        spawner.spawn(net_task(runner).expect("net_task spawn"));
-        info!("spawned net_task");
-        spawner.spawn(wifi_task(controller, stack, is_sleep_wakeup).expect("wifi_task spawn"));
-        info!("spawned wifi_task");
+        spawner.spawn(wifi_task(spawner, peripherals.WIFI, seed).expect("wifi_task spawn"));
+        info!("spawned wifi_task (WiFi init deferred until first sync request)");
     } else {
         info!("WiFi/NTP disabled (ENABLE_WIFI_NTP = false)");
     }

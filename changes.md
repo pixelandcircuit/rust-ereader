@@ -1,5 +1,18 @@
 # Changes
 
+## 2026-09-15 14:40
+
+Deferred WiFi/NTP initialization until the user actually needs it. Previously
+`main` in `examples/ereader_ui.rs` unconditionally called `esp_radio::wifi::new`
+and `embassy_net::new` and connected to WiFi to attempt an NTP sync on every
+cold boot, even though the "Sync Time" button already existed for on-demand
+resync. `wifi_task` now takes the raw `WIFI` peripheral and RNG seed instead
+of a pre-built controller/stack, waits on `WIFI_SYNC_REQUEST` before doing
+any radio/network setup, and only initializes once, the first time "Sync
+Time" is pressed. Verified on device: cold boot log no longer shows any
+WiFi/NTP activity, and pressing "Sync Time" still correctly initializes and
+attempts the sync on demand.
+
 ## 2026-09-15 14:15
 
 Fixed a ~10 second stall on every SD card access (most noticeable as a slow
