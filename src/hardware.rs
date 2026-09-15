@@ -1043,6 +1043,18 @@ impl<'d, C: ChannelIFace<'d, LowSpeed>> HardwareAccess for EspHardware<'d, C> {
             return alloc::vec::Vec::new();
         };
         let sdcard = SdCard::new(spi_dev, Delay::new());
+        // 400 kHz is required for the initial CMD0/CMD8/ACMD41 handshake, but the card
+        // supports much faster clocks once initialised. Force init now (triggered by
+        // get_card_type) then re-clock, so the FAT/directory traffic below isn't stuck
+        // at 400 kHz too.
+        if sdcard.get_card_type().is_none() {
+            return alloc::vec::Vec::new();
+        }
+        sdcard.spi(|dev| {
+            let _ = dev
+                .bus_mut()
+                .apply_config(&SpiConfig::default().with_frequency(Rate::from_mhz(20)));
+        });
         let mgr = VolumeManager::<_, _, 16, 4, 1>::new_with_limits(sdcard, DummyTimesource, 0);
         let vol = match mgr.open_volume(VolumeIdx(0)) {
             Ok(v) => v,
@@ -1187,6 +1199,16 @@ pub fn sd_read_file(name: &str) -> Option<alloc::vec::Vec<u8>> {
     let _ = SpiBus::write(&mut spi, &[0xFF; 10]);
     let spi_dev = ExclusiveDevice::new(spi, cs, Delay::new()).ok()?;
     let sdcard = SdCard::new(spi_dev, Delay::new());
+    // 400 kHz is required for the initial CMD0/CMD8/ACMD41 handshake, but the card
+    // supports much faster clocks once initialised. Force init now (triggered by
+    // get_card_type) then re-clock, so the FAT/directory/file traffic below isn't stuck
+    // at 400 kHz too.
+    sdcard.get_card_type()?;
+    sdcard.spi(|dev| {
+        let _ = dev
+            .bus_mut()
+            .apply_config(&SpiConfig::default().with_frequency(Rate::from_mhz(20)));
+    });
     let mgr = VolumeManager::<_, _, 16, 4, 1>::new_with_limits(sdcard, DummyTimesource, 0);
     let vol = match mgr.open_volume(VolumeIdx(0)) {
         Ok(v) => v,

@@ -1,5 +1,18 @@
 # Changes
 
+## 2026-09-15 14:15
+
+Fixed a ~10 second stall on every SD card access (most noticeable as a slow
+wake-from-deep-sleep). `list_book_files` and `sd_read_file` in `src/hardware.rs`
+ran their entire SPI session — including FAT volume mount, directory
+traversal, and the file read — at 400 kHz, which is only required for the
+initial SD card CMD0/CMD8/ACMD41 handshake. Both functions now force that
+handshake via `sdcard.get_card_type()`, then re-clock the SPI bus to 20 MHz
+via `sdcard.spi(|dev| dev.bus_mut().apply_config(...))` before doing any
+further FAT/directory/file traffic. Verified on device: wake-to-redraw time
+dropped from ~13s to ~4s, with the SD-card stall going from ~10s to
+sub-second.
+
 ## 2026-09-11 11:00
 
 Added a `sim-build` cargo alias (`.cargo/config.toml`) mirroring `sim-run` but
