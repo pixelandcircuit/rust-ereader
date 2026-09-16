@@ -49,6 +49,9 @@ const WELCOME_HTML: &[u8] = include_bytes!("welcome.html");
 const SETTINGS_DIALOG_ID: ViewId = ViewId::new("settings_dialog");
 const LIBRARY_DIALOG_ID: ViewId = ViewId::new("library_dialog");
 const LIBRARY_BUTTON_ID: ViewId = ViewId::new("library");
+const MENU_BUTTON_ID: ViewId = ViewId::new("menu");
+const MENU_CLOSE_BUTTON_ID: ViewId = ViewId::new("menu_close");
+const MENU_POPUP_ID: ViewId = ViewId::new("menu_popup");
 const TIME_LABEL_ID: ViewId = ViewId::new("time_label");
 const LIBRARY_LIST_ID: ViewId = ViewId::new("lib_list");
 const LIBRARY_READ_BUTTON_ID: ViewId = ViewId::new("library_read");
@@ -138,23 +141,23 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene<Rgb565> {
     // ── Top bar ──────────────────────────────────────────────────────────────
     {
         let topbar_id = ViewId::new("topbar");
-        scene.add_view_to_parent(make_button(&LIBRARY_BUTTON_ID, "Library"), &topbar_id);
-        scene.add_view_to_parent(make_h_spacer(&ViewId::new("spacer1")), &topbar_id);
+        // scene.add_view_to_parent(make_button(&LIBRARY_BUTTON_ID, "Library"), &topbar_id);
+        // scene.add_view_to_parent(make_h_spacer(&ViewId::new("spacer1")), &topbar_id);
         scene.add_view_to_parent(make_label(&TIME_LABEL_ID, "--:-- --"), &topbar_id);
         scene.add_view_to_parent(make_button(&BATTERY_BUTTON_ID, "85%"), &topbar_id);
-        scene.add_view_to_parent(
-            make_full_button(&SETTINGS_BUTTON_ID, "Settings", "settings", false),
-            &topbar_id,
-        );
-        let topbar = make_panel(&topbar_id)
-            .with_layout(Some(layout_hbox))
-            .with_h_flex(Flex::Grow)
-            .with_state(Some(Box::new(PanelState {
-                border_visible: true,
-                gap: 5,
-                padding: Insets::new_same(5),
-            })));
-        scene.add_view_to_parent(topbar, &main_id);
+        // scene.add_view_to_parent(
+        //     make_full_button(&SETTINGS_BUTTON_ID, "Settings", "settings", false),
+        //     &topbar_id,
+        // );
+        // let topbar = make_panel(&topbar_id)
+        //     .with_layout(Some(layout_hbox))
+        //     .with_h_flex(Flex::Grow)
+        //     .with_state(Some(Box::new(PanelState {
+        //         border_visible: false,
+        //         gap: 5,
+        //         padding: Insets::new_same(5),
+        //     })));
+        // scene.add_view_to_parent(topbar, &main_id);
     }
 
     // content — plain View with BookState; draw_book_content renders TTF text
@@ -188,7 +191,10 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene<Rgb565> {
     // ── Bottom bar ───────────────────────────────────────────────────────────
     {
         let bottombar_id = ViewId::new("bottombar");
-        scene.add_view_to_parent(make_button(&PREV_PAGE_ID, "< Prev"), &bottombar_id);
+        // scene.add_view_to_parent(make_button(&MENU_BUTTON_ID, "M"), &bottombar_id);
+        scene.add_view_to_parent(make_full_button(&MENU_BUTTON_ID, "M", "open-main-menu",false), &bottombar_id);
+
+        // scene.add_view_to_parent(make_button(&PREV_PAGE_ID, "< Prev"), &bottombar_id);
         scene.add_view_to_parent(
             truncating_label::make_truncating_label(&ViewId::new("booktitle"), "Sherlock Holmes"),
             &bottombar_id,
@@ -199,13 +205,13 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene<Rgb565> {
             &bottombar_id,
         );
         scene.add_view_to_parent(make_label(&ViewId::new("page"), ""), &bottombar_id);
-        scene.add_view_to_parent(make_button(&NEXT_PAGE_ID, "Next >"), &bottombar_id);
+        // scene.add_view_to_parent(make_button(&NEXT_PAGE_ID, "Next >"), &bottombar_id);
         let bottombar = make_panel(&bottombar_id)
             .with_layout(Some(layout_hbox))
             .with_h_flex(Flex::Grow)
             .with_visible(true)
             .with_state(Some(Box::new(PanelState {
-                border_visible: true,
+                border_visible: false,
                 gap: 5,
                 padding: Insets::new_same(5),
             })));
@@ -213,6 +219,32 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene<Rgb565> {
     }
 
     scene.add_view_to_root(main_panel);
+    // main menu
+    {
+        let main_menu = make_panel(&MENU_POPUP_ID)
+            .with_layout(Some(layout_vbox))
+            .with_v_align(End)
+            .with_h_align(Start)
+            .with_bounds(Bounds::new(0, 0, 100,100))
+            .with_visible(true)
+            .with_state(Some(Box::new(PanelState {
+                border_visible: true,
+                gap: 5,
+                padding: Insets::new_same(5),
+            })));
+        scene.add_view_to_parent(
+            make_button(&LIBRARY_BUTTON_ID, "Library"),
+            &MENU_POPUP_ID);
+        scene.add_view_to_parent(make_button(&BATTERY_BUTTON_ID, "Battery"), &MENU_POPUP_ID);
+        scene.add_view_to_parent(
+            make_button(&SETTINGS_BUTTON_ID, "Settings"),
+            &MENU_POPUP_ID);
+        scene.add_view_to_parent(make_button(&DEEP_CLEAN_ID, "Clean Screen"), &MENU_POPUP_ID);
+        scene.add_view_to_parent(make_button(&DEEP_SLEEP_BUTTON_ID, "Sleep"), &MENU_POPUP_ID);
+        scene.add_view_to_parent(make_full_button(&MENU_CLOSE_BUTTON_ID, "Close", "close-main-menu", false), &MENU_POPUP_ID);
+
+        scene.add_view_to_root(main_menu);
+    }
 
     // --- settings dialog --------------------
     {
@@ -291,8 +323,6 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene<Rgb565> {
             make_button(&ViewId::new("sync_time"), "Sync Time"),
             &row2.name,
         );
-        scene.add_view_to_parent(make_button(&DEEP_CLEAN_ID, "Clean Screen"), &row2.name);
-        scene.add_view_to_parent(make_button(&DEEP_SLEEP_BUTTON_ID, "Sleep Now"), &row2.name);
         scene.add_view_to_parent(row2, &SETTINGS_DIALOG_ID);
 
         let row3 = make_panel(&ViewId::new("row3"))
@@ -695,6 +725,30 @@ impl NativeScreen for SimNativeScreen {
             ctx.clip = dirty;
             layout_scene(&mut state.scene, &state.theme);
             draw_scene(&mut state.scene, &mut ctx, &state.theme);
+
+            // let _hatch = BitmapPattern8x8::two_color(
+            //     [
+            //         0b1000_1000,
+            //         0b0001_0001,
+            //         0b0010_0010,
+            //         0b0100_0100,
+            //         0b1000_1000,
+            //         0b0001_0001,
+            //         0b0010_0010,
+            //         0b0100_0100,
+            //     ],
+            //     Rgb565::BLACK,
+            //     Rgb565::WHITE
+            // );
+            // let shape = Triangle::new(
+            //     Point::new(20, 20),
+            //     Point::new(100, 30),
+            //     Point::new(60, 110),
+            // )
+            //     .into_styled(PrimitiveStyle::with_fill(BinaryColor::On));
+            //
+            // draw_filled(&shape, &_hatch, &mut self.display);
+
             self.window.update(&self.display);
         }
     }
@@ -812,6 +866,13 @@ fn main() {
                         pointer_up_at(&mut state.scene, &handlers, GPoint::new(point.x, point.y))
                     {
                         if let Some(OutputAction::Command(ref cmd)) = input.action {
+                            info!("got an action {cmd}");
+                            if cmd == "close-main-menu" {
+                                state.scene.hide_view(&MENU_POPUP_ID);
+                            }
+                            if cmd == "open-main-menu" {
+                                state.scene.show_view(&MENU_POPUP_ID);
+                            }
                             if input.source == ORIENTATION_ID {
                                 hw.set_orientation(Orientation::from_cmd(cmd.as_str()));
                                 native_screen.set_orientation(
@@ -1138,7 +1199,9 @@ use embassy_net::{
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 #[cfg(feature = "esp")]
 use embassy_time::{with_timeout, Duration, Instant, Timer as EmbassyTimer};
-use embedded_graphics_core::geometry::Size;
+use embedded_graphics::primitives::{Primitive, PrimitiveStyle, Triangle};
+use embedded_graphics_core::geometry::{Point, Size};
+use embedded_graphics_core::pixelcolor::BinaryColor;
 use ereader::appstate::{book_from_data, cfg_from_scene, AppState};
 use ereader::bookview::{draw_book_content, BookState, CONTENT_ID};
 use ereader::fast_paging::{FAST_SCROLL_LABEL_ID, FAST_SCROLL_PANEL_ID};
@@ -1166,12 +1229,13 @@ use esp_hal::{
 use esp_radio::wifi::{sta::StationConfig, Config, ControllerConfig, Interface};
 use iris_ui::input::{InputEvent, InputResult, OutputAction};
 use iris_ui::panel::{make_panel, PanelState};
-use iris_ui::view::Align::Start;
+use iris_ui::view::Align::{End, Start};
 use iris_ui::view::Flex::Grow;
 use log::info;
 #[cfg(feature = "esp")]
 use static_cell::StaticCell;
 use Flex::{Fixed, Shrink};
+use iris_ui::fill::{draw_filled, BitmapPattern8x8};
 
 // WiFi credentials — set WIFI_SSID and WIFI_PASS at build time.
 #[cfg(feature = "esp")]
