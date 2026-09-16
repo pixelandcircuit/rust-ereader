@@ -226,7 +226,7 @@ fn make_scene(fonts: AppFonts, w: i32, h: i32) -> Scene<Rgb565> {
             .with_v_align(End)
             .with_h_align(Start)
             .with_bounds(Bounds::new(0, 0, 100,100))
-            .with_visible(true)
+            .with_visible(false)
             .with_state(Some(Box::new(PanelState {
                 border_visible: true,
                 gap: 5,
